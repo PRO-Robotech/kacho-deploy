@@ -1,15 +1,26 @@
 ingress-nginx:
   controller:
-    hostNetwork: false
+    # Standard kind+ingress-nginx pattern: hostPort на kind-ноде,
+    # extraPortMappings в kind-config мапит хост:80 → нода:80.
+    hostPort:
+      enabled: true
+      ports:
+        http: 80
+        https: 443
     service:
-      type: NodePort
-      nodePorts: { http: 80 }
+      type: ClusterIP
     nodeSelector:
       ingress-ready: "true"
     tolerations:
       - key: node-role.kubernetes.io/control-plane
         operator: Equal
         effect: NoSchedule
+    # На single-node kind кластере с одним replica — без anti-affinity
+    affinity: {}
+    publishService:
+      enabled: false
+    extraArgs:
+      publish-status-address: localhost
 
 pg-resource-manager:
   auth:
@@ -18,7 +29,12 @@ pg-resource-manager:
     database: kacho_resource_manager
   primary:
     persistence:
-      enabled: false   # → emptyDir в Bitnami chart
+      enabled: false
+  image:
+    repository: bitnamilegacy/postgresql   # Bitnami переехал; legacy registry имеет нужные теги
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell   # → emptyDir в Bitnami chart
 
 pg-vpc:
   auth:
@@ -28,6 +44,11 @@ pg-vpc:
   primary:
     persistence:
       enabled: false
+  image:
+    repository: bitnamilegacy/postgresql   # Bitnami переехал; legacy registry имеет нужные теги
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell
 
 pg-compute:
   auth:
@@ -37,6 +58,11 @@ pg-compute:
   primary:
     persistence:
       enabled: false
+  image:
+    repository: bitnamilegacy/postgresql   # Bitnami переехал; legacy registry имеет нужные теги
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell
 
 pg-loadbalancer:
   auth:
@@ -46,3 +72,8 @@ pg-loadbalancer:
   primary:
     persistence:
       enabled: false
+  image:
+    repository: bitnamilegacy/postgresql   # Bitnami переехал; legacy registry имеет нужные теги
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell

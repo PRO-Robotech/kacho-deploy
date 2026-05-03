@@ -16,8 +16,12 @@ dev-up: preflight
 	@start=$$(date +%s); \
 	kind get clusters | grep -q "^$(CLUSTER_NAME)$$" || ./kind/create-cluster.sh; \
 	kubectl config use-context kind-$(CLUSTER_NAME); \
-	cd helm/umbrella && helm dep update >/dev/null; \
-	helm upgrade --install kacho-umbrella . -n kacho --create-namespace -f values.dev.yaml --wait --timeout 5m; \
+	cd helm/umbrella && helm dep update >/dev/null && cd ../..; \
+	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho --create-namespace -f ./helm/umbrella/values.dev.yaml --wait --timeout 5m; \
+	echo "Waiting for ingress-nginx admission webhook..."; \
+	kubectl -n kacho wait --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=60s; \
+	echo "Applying post-install resources (ingress)..."; \
+	kubectl apply -f ./helm/post-install/; \
 	end=$$(date +%s); \
 	echo "dev-up complete in $$((end-start))s"; \
 	echo; \
