@@ -1,0 +1,48 @@
+ingress-nginx:
+  controller:
+    hostNetwork: false
+    service:
+      type: NodePort
+      nodePorts: { http: 80 }
+    nodeSelector:
+      ingress-ready: "true"
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Equal
+        effect: NoSchedule
+
+pg-resource-manager:
+  auth:
+    username: resource_manager
+    password: dev-resource-manager-password
+    database: kacho_resource_manager
+  primary:
+    persistence:
+      enabled: false   # → emptyDir в Bitnami chart
+
+pg-vpc:
+  auth:
+    username: vpc
+    password: dev-vpc-password
+    database: kacho_vpc
+  primary:
+    persistence:
+      enabled: false
+
+pg-compute:
+  auth:
+    username: compute
+    password: dev-compute-password
+    database: kacho_compute
+  primary:
+    persistence:
+      enabled: false
+
+pg-loadbalancer:
+  auth:
+    username: loadbalancer
+    password: dev-loadbalancer-password
+    database: kacho_loadbalancer
+  primary:
+    persistence:
+      enabled: false
