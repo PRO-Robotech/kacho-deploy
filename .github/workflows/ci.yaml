@@ -1,5 +1,10 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 3 * * *'   # nightly e2e
+  workflow_dispatch: {}
 jobs:
   helm-lint:
     runs-on: ubuntu-latest
@@ -7,3 +12,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
       - run: cd helm/umbrella && helm dep update && helm lint -f values.dev.yaml
+
+  e2e-on-kind:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+        with:
+          config: kind/kind-config.yaml
+          cluster_name: kacho
+      - uses: azure/setup-helm@v4
+      - name: /etc/hosts override for api.kacho.local
+        run: sudo bash -c 'echo "127.0.0.1 api.kacho.local kacho.local" >> /etc/hosts'
+      - name: run non-destructive E* scenarios (skip F1 — needs port 80 squatter)
+        run: |
+          for s in e2e/0.1/E*.sh; do
+            echo "=== $s ==="
+            bash "$s" || exit 1
+          done
