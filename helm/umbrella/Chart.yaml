@@ -1,6 +1,6 @@
 apiVersion: v2
 name: kacho-umbrella
-version: 0.1.0
+version: 0.2.0
 description: Kachō Cloud Control Plane — dev umbrella
 dependencies:
   - name: ingress-nginx
@@ -22,8 +22,10 @@ dependencies:
     alias: pg-loadbalancer
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
-  # Сервисные deps добавляются в sub-phase 0.2+:
-  # - name: resource-manager  (0.2)
+  - name: resource-manager
+    version: 0.2.0
+    repository: file://../../../kacho-resource-manager/deploy
+  # Будущие фазы:
   # - name: vpc                (0.3)
   # - name: compute            (0.4)
   # - name: loadbalancer       (0.5)
