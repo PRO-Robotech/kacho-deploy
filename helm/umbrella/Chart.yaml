@@ -37,3 +37,6 @@ dependencies:
   - name: api-gateway
     version: 0.6.0
     repository: file://../../../kacho-api-gateway/deploy
+  - name: ui
+    version: 0.7.0
+    repository: file://../../../kacho-ui/deploy
