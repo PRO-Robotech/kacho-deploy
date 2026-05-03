@@ -28,7 +28,9 @@ dependencies:
   - name: vpc
     version: 0.3.0
     repository: file://../../../kacho-vpc/deploy
+  - name: compute
+    version: 0.4.0
+    repository: file://../../../kacho-compute/deploy
   # Будущие фазы:
-  # - name: compute            (0.4)
   # - name: loadbalancer       (0.5)
   # - name: api-gateway        (0.6)
