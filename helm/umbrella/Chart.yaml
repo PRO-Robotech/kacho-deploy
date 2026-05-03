@@ -31,6 +31,9 @@ dependencies:
   - name: compute
     version: 0.4.0
     repository: file://../../../kacho-compute/deploy
-  # Будущие фазы:
-  # - name: loadbalancer       (0.5)
-  # - name: api-gateway        (0.6)
+  - name: loadbalancer
+    version: 0.5.0
+    repository: file://../../../kacho-loadbalancer/deploy
+  - name: api-gateway
+    version: 0.6.0
+    repository: file://../../../kacho-api-gateway/deploy
