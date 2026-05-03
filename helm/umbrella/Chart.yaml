@@ -25,8 +25,10 @@ dependencies:
   - name: resource-manager
     version: 0.2.0
     repository: file://../../../kacho-resource-manager/deploy
+  - name: vpc
+    version: 0.3.0
+    repository: file://../../../kacho-vpc/deploy
   # Будущие фазы:
-  # - name: vpc                (0.3)
   # - name: compute            (0.4)
   # - name: loadbalancer       (0.5)
   # - name: api-gateway        (0.6)
