@@ -35,13 +35,13 @@ ifndef SVC
 endif
 	@if [ "$(SVC)" != "resource-manager" ] && [ "$(SVC)" != "vpc" ] && [ "$(SVC)" != "compute" ] && [ "$(SVC)" != "loadbalancer" ] && [ "$(SVC)" != "api-gateway" ]; then \
 		echo "ERROR: unknown service '$(SVC)'"; exit 1; \
-	fi
-	@if ! kubectl -n kacho get deploy $(SVC) >/dev/null 2>&1; then \
+	fi; \
+	if ! kubectl -n kacho get deploy $(SVC) >/dev/null 2>&1; then \
 		echo "WARN: service '$(SVC)' is not deployed yet (planned for sub-phase 0.X — see roadmap)"; \
 		exit 0; \
-	fi
-	cd ../kacho-$(SVC) && docker build -t kacho-$(SVC):dev .
-	kind load docker-image kacho-$(SVC):dev --name $(CLUSTER_NAME)
+	fi; \
+	cd ../kacho-$(SVC) && docker build -t kacho-$(SVC):dev . && \
+	kind load docker-image kacho-$(SVC):dev --name $(CLUSTER_NAME) && \
 	kubectl rollout restart -n kacho deployment/$(SVC)
 
 logs-svc:
