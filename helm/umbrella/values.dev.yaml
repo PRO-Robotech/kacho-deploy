@@ -78,6 +78,20 @@ pg-vpc:
     image:
       repository: bitnamilegacy/os-shell
 
+pg-netbox:
+  auth:
+    username: netbox
+    password: dev-netbox-password
+    database: kacho_netbox
+  primary:
+    persistence:
+      enabled: false
+  image:
+    repository: bitnamilegacy/postgresql   # Bitnami переехал; legacy registry имеет нужные теги
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell
+
 pg-compute:
   auth:
     username: compute
