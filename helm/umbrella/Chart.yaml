@@ -18,6 +18,10 @@ dependencies:
     alias: pg-compute
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
+  - name: postgresql
+    alias: pg-netbox
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
   - name: resource-manager
     version: 1.0.0
     repository: file://../../../kacho-resource-manager/deploy
