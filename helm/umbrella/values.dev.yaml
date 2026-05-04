@@ -140,3 +140,36 @@ vpc:
   networkPolicy:
     enabled: false
     adminPodsSelector: {}
+
+netbox:
+  # Внешний Postgres (наш pg-netbox alias). Внутренний postgresql subchart выключен.
+  postgresql:
+    enabled: false
+  externalDatabase:
+    host: kacho-umbrella-pg-netbox
+    port: 5432
+    database: kacho_netbox
+    username: netbox
+    existingSecretName: kacho-umbrella-pg-netbox
+    existingSecretKey: password
+  # Valkey (Redis-совместимый) встроенный — этот chart использует valkey, не redis
+  valkey:
+    enabled: true
+  persistence:
+    enabled: false
+  reportsPersistence:
+    enabled: false
+  scriptsPersistence:
+    enabled: false
+  superuser:
+    name: admin
+    email: admin@kacho.local
+    password: admin
+    apiToken: "0123456789abcdef0123456789abcdef01234567"
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: netbox.kacho.local
+        paths:
+          - /
