@@ -41,3 +41,17 @@ newman-job ~7 мин → ~3 мин.
 ## Persistence
 
 Postgres использует `emptyDir` — данные не сохраняются между `dev-down`/`dev-up`. Это сознательно для воспроизводимости тестов (`03-deployment-and-operations.md` §5).
+
+## NetBox
+
+Dev-стенд поднимает NetBox рядом с остальными сервисами (chart: `netbox-community/netbox`, app v4.5.x). PG — alias `pg-netbox` по тому же паттерну, что `pg-vpc`/`pg-resource-manager`. Valkey (Redis-совместимый) — встроенный subchart NetBox.
+
+- В `/etc/hosts` добавить: `127.0.0.1 netbox.kacho.local`
+- UI: `http://netbox.kacho.local`
+- Dev-creds: `admin` / `admin`
+- Static API token (только для dev): `0123456789abcdef0123456789abcdef01234567`
+- Postgres: `make psql SVC=netbox`
+
+Persistence у NetBox media/reports/scripts и `pg-netbox` — `emptyDir`, как у остальных сервисов: данные пропадают при `make dev-down`.
+
+`make reload-svc SVC=netbox` и `make logs-svc SVC=netbox` не работают — NetBox не пересобирается локально (внешний образ), а `logs-svc` ожидает один Deployment с именем сервиса, у NetBox их несколько (web/worker). Используйте `kubectl logs -n kacho -l app.kubernetes.io/name=netbox -f`.
