@@ -152,9 +152,12 @@ netbox:
     username: netbox
     existingSecretName: kacho-umbrella-pg-netbox
     existingSecretKey: password
-  # Valkey (Redis-совместимый) встроенный — этот chart использует valkey, не redis
+  # Valkey (Redis-совместимый) встроенный — этот chart использует valkey, не redis.
+  # Хардкодим dev-пароль, чтобы Bitnami "PASSWORDS ERROR on upgrade" guard не падал.
   valkey:
     enabled: true
+    auth:
+      password: dev-netbox-valkey-password
   persistence:
     enabled: false
   reportsPersistence:
@@ -165,7 +168,8 @@ netbox:
     name: admin
     email: admin@kacho.local
     password: admin
-    apiToken: "0123456789abcdef0123456789abcdef01234567"
+    # apiToken не задаём: NetBox 4.x не принимает legacy v1 hex токены,
+    # API-токен берётся через UI или POST /api/users/tokens/provision/.
   ingress:
     enabled: true
     className: nginx

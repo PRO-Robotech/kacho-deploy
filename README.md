@@ -49,7 +49,7 @@ Dev-стенд поднимает NetBox рядом с остальными се
 - В `/etc/hosts` добавить: `127.0.0.1 netbox.kacho.local`
 - UI: `http://netbox.kacho.local`
 - Dev-creds: `admin` / `admin`
-- Static API token (только для dev): `0123456789abcdef0123456789abcdef01234567`
+- API token: получить через UI или `POST /api/users/tokens/provision/` с `admin`/`admin` (NetBox 4.x не принимает legacy hex-токены, поэтому статичный токен в values не задан)
 - Postgres: `make psql SVC=netbox`
 
 Persistence у NetBox media/reports/scripts и `pg-netbox` — `emptyDir`, как у остальных сервисов: данные пропадают при `make dev-down`.
