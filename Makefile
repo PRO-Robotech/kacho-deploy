@@ -35,14 +35,14 @@ reload-svc:
 ifndef SVC
 	$(error SVC variable is required, e.g. make reload-svc SVC=compute)
 endif
-	@if [ "$(SVC)" != "resource-manager" ] && [ "$(SVC)" != "vpc" ] && [ "$(SVC)" != "compute" ] && [ "$(SVC)" != "loadbalancer" ] && [ "$(SVC)" != "api-gateway" ]; then \
+	@if [ "$(SVC)" != "resource-manager" ] && [ "$(SVC)" != "vpc" ] && [ "$(SVC)" != "vpc-controllers" ] && [ "$(SVC)" != "compute" ] && [ "$(SVC)" != "loadbalancer" ] && [ "$(SVC)" != "api-gateway" ]; then \
 		echo "ERROR: unknown service '$(SVC)'"; exit 1; \
 	fi; \
 	if ! kubectl -n kacho get deploy $(SVC) >/dev/null 2>&1; then \
 		echo "WARN: service '$(SVC)' is not deployed yet (planned for sub-phase 0.X — see roadmap)"; \
 		exit 0; \
 	fi; \
-	cd ../kacho-$(SVC) && docker build -t kacho-$(SVC):dev . && \
+	cd .. && docker build -f kacho-$(SVC)/Dockerfile -t kacho-$(SVC):dev . && \
 	kind load docker-image kacho-$(SVC):dev --name $(CLUSTER_NAME) && \
 	kubectl rollout restart -n kacho deployment/$(SVC)
 
