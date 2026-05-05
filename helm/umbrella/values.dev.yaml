@@ -1,3 +1,11 @@
+# yc CLI compatibility shim (kacho-yc-shim repo) — advertised endpoint that
+# yc CLI dials AFTER calling ApiEndpointService.List for service discovery.
+# In dev we use localhost:18443 because that is the port-forward to ingress-nginx
+# (kubectl -n kacho port-forward svc/kacho-umbrella-ingress-nginx-controller 18443:443).
+# In production the value would be api.kacho.local:443.
+api-gateway:
+  advertisedEndpoint: localhost:18443
+
 ingress-nginx:
   controller:
     # Standard kind+ingress-nginx pattern: hostPort на kind-ноде,
