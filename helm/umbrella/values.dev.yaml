@@ -77,3 +77,11 @@ pg-loadbalancer:
   volumePermissions:
     image:
       repository: bitnamilegacy/os-shell
+
+# kacho-vpc — admin networkpolicy для :9091.
+# В dev-стенде disabled (port-forward kachoctl-ipam должен работать).
+# В prod values эту секцию переопределить enabled=true + adminPodsSelector.
+vpc:
+  networkPolicy:
+    enabled: false
+    adminPodsSelector: {}
