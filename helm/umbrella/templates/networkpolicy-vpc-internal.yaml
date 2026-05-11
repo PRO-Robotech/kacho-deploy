@@ -6,7 +6,7 @@ ingress для всего namespace.
 Закрывает security P0 #2 (lateral movement через :9091): без NetworkPolicy
 любой pod в namespace `kacho` может вызвать
   - InternalWatchService.Watch(from=0)  → mass exfiltration outbox
-  - InternalAddressService.SetInternalIP → подмена IP в чужом Address
+  - InternalAddressService.AllocateInternalIP/AllocateExternalIP → IPAM privileges
   - InternalAddressPoolService.{Create,Delete} → admin IPAM privileges
   - InternalCloudService.SetPoolSelector → переписать routing для cloud
 
