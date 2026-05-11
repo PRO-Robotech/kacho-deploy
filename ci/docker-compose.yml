@@ -1,24 +1,31 @@
 # kacho-deploy/ci/docker-compose.yml — lightweight CI stack for the newman E2E
-# regression suite (kacho-vpc/tests/newman/). NOT the dev-stand — that's helm+kind
-# (see ../Makefile dev-up). This compose brings up the minimum needed to run the
-# public-API black-box suite end-to-end:
+# regression suites (kacho-vpc/tests/newman/, kacho-compute/tests/newman/). NOT the
+# dev-stand — that's helm+kind (see ../Makefile dev-up). This compose brings up the
+# minimum needed to run the public-API black-box suites end-to-end:
 #
 #   pg-rm            postgres for resource-manager
 #   pg-vpc           postgres for vpc
-#   resource-manager Organization/Cloud/Folder (vpc's FolderClient backend)
+#   pg-compute       postgres for compute
+#   resource-manager Organization/Cloud/Folder (vpc's + compute's FolderClient backend)
 #   vpc              Network/Subnet/SecurityGroup/RouteTable/Address/Gateway/PE + Internal*
+#   compute          Instance/Disk/Image/Snapshot/DiskType/Zone + Internal*
 #   api-gateway      REST↔gRPC proxy — exposed on host port 28080
 #                    (NOT 18080: that's the kind-cluster dev-stand's port; avoid clash)
 #
 # Migrations: each service image's ENTRYPOINT is its binary, which accepts
 # `migrate up` / `serve` subcommands. Compose can't run two commands, so we
 # override entrypoint to `sh -c "<bin> migrate up && exec <bin> serve"`. The
-# alpine:3.20 runtime image ships /bin/sh.
+# alpine runtime image ships /bin/sh.
 #
 # DB readiness: postgres services have a pg_isready healthcheck; the app
 # services `depends_on: condition: service_healthy`, so `migrate up` never races
-# the DB coming up. The gRPC clients (vpc→rm, gateway→vpc/rm) use lazy
-# connections, so app-service start order beyond DB-healthy doesn't matter.
+# the DB coming up. The gRPC clients (vpc→rm, compute→rm/vpc, gateway→vpc/rm/compute)
+# use lazy connections, so app-service start order beyond DB-healthy doesn't matter.
+#
+# Note on compute peer validation: this CI seed (ci/seed.sh) does not create
+# VPC subnets/SGs, so KACHO_COMPUTE_SKIP_PEER_VALIDATION=true is set here — Instance
+# NIC ref-checks would otherwise NotFound the (un-seeded) subnet. The k8s dev-stand
+# keeps the default (false); seed VPC fixtures there if exercising Instance.Create.
 #
 # Fixture seeding (Org/Cloud/Folder ids, Region+Zones, default AddressPool) is a
 # separate step — see ci/seed.sh, run by `make ci-up` after the stack is up.
@@ -46,6 +53,20 @@ services:
       POSTGRES_DB: kacho_vpc
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vpc -d kacho_vpc"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  pg-compute:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: compute
+      POSTGRES_PASSWORD: ci-compute-password
+      POSTGRES_DB: kacho_compute
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U compute -d kacho_compute"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -92,6 +113,35 @@ services:
     command:
       - "/usr/local/bin/kacho-vpc migrate up && exec /usr/local/bin/kacho-vpc serve"
 
+  compute:
+    image: kacho-compute:dev
+    depends_on:
+      pg-compute:
+        condition: service_healthy
+      resource-manager:
+        condition: service_started
+      vpc:
+        condition: service_started
+    environment:
+      KACHO_COMPUTE_DB_HOST: pg-compute
+      KACHO_COMPUTE_DB_PORT: "5432"
+      KACHO_COMPUTE_DB_USER: compute
+      KACHO_COMPUTE_DB_PASSWORD: ci-compute-password
+      KACHO_COMPUTE_DB_NAME: kacho_compute
+      KACHO_COMPUTE_DB_SSLMODE: disable
+      KACHO_COMPUTE_GRPC_PORT: "9090"
+      KACHO_COMPUTE_INTERNAL_PORT: "9091"
+      KACHO_COMPUTE_RESOURCE_MANAGER_GRPC_ADDR: resource-manager:9090
+      KACHO_COMPUTE_RESOURCE_MANAGER_TLS: "false"
+      KACHO_COMPUTE_VPC_GRPC_ADDR: vpc:9090
+      KACHO_COMPUTE_VPC_TLS: "false"
+      # CI seed doesn't create VPC subnets/SGs — skip Instance NIC ref-checks.
+      KACHO_COMPUTE_SKIP_PEER_VALIDATION: "true"
+      KACHO_COMPUTE_AUTH_MODE: dev
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "/usr/local/bin/kacho-compute migrate up && exec /usr/local/bin/kacho-compute serve"
+
   api-gateway:
     image: kacho-api-gateway:dev
     depends_on:
@@ -99,11 +149,15 @@ services:
         condition: service_started
       resource-manager:
         condition: service_started
+      compute:
+        condition: service_started
     environment:
       KACHO_API_GATEWAY_LISTEN_ADDR: ":8080"
       KACHO_API_GATEWAY_RESOURCEMANAGER_GRPC: resource-manager:9090
       KACHO_API_GATEWAY_VPC_GRPC: vpc:9090
       KACHO_API_GATEWAY_VPC_INTERNAL_GRPC: vpc:9091
+      KACHO_API_GATEWAY_COMPUTE_GRPC: compute:9090
+      KACHO_API_GATEWAY_COMPUTE_INTERNAL_GRPC: compute:9091
       # TLS intentionally OFF (no TLS_LISTEN_ADDR) — newman dials plain HTTP.
     ports:
       - "28080:8080"

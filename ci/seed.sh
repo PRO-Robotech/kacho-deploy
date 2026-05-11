@@ -2,18 +2,25 @@
 # kacho-deploy/ci/seed.sh — seed fixtures into the CI compose stack and emit the
 # resulting resource IDs so the newman suite can pick them up.
 #
-# What the newman env file (kacho-vpc/tests/newman/environments/local.postman_environment.json)
-# expects to already exist:
-#   existingOrgId        — an Organization (resource-manager auto-bootstraps "default")
-#   existingCloudId      — a Cloud under it (auto-bootstrapped "default")
-#   existingFolderId     — a Folder under it (auto-bootstrapped "default")
-#   existingFolderCrossId— a SECOND folder, for cross-folder Move tests (we create it)
-#   existingZoneId       — "ru-central1-a" (we create region ru-central1 + zones a..d)
-#   existingZoneAltId    — "ru-central1-b"
-#   + a default EXTERNAL_PUBLIC AddressPool on ru-central1-a (for external-IP allocate)
+# What the newman env files expect to already exist:
+#   kacho-vpc/tests/newman:
+#     existingOrgId        — an Organization (resource-manager auto-bootstraps "default")
+#     existingCloudId      — a Cloud under it (auto-bootstrapped "default")
+#     existingFolderId     — a Folder under it (auto-bootstrapped "default")
+#     existingFolderCrossId— a SECOND folder, for cross-folder Move tests (we create it)
+#     existingZoneId       — "ru-central1-a" (we create region ru-central1 + zones a..d)
+#     existingZoneAltId    — "ru-central1-b"
+#     + a default EXTERNAL_PUBLIC AddressPool on ru-central1-a (for external-IP allocate)
+#   kacho-compute/tests/newman (in addition to the ids above):
+#     existingNetworkId    — a VPC Network in the default folder (we create it)
+#     existingSubnetId     — a /24 subnet in that network on ru-central1-a (we create it)
+#     existingSgId         — a SecurityGroup in that network (we create it)
+#     existingDiskTypeId / existingPlatformId — seeded by kacho-compute migrations / static
 #
 # resource-manager's bootstrap.EnsureDefaults creates the default Org→Cloud→Folder
 # with RANDOM ids, so we discover them via the REST API rather than hardcoding.
+# Likewise VPC Network/Subnet/SG ids are RANDOM — we create them and read the ids
+# back from the Operation metadata.
 #
 # Output: writes `KEY=value` lines to $OUT (default: ci/.seeded-ids.env). The CI
 # job sources it and passes the ids to newman via `run.sh --env-var KEY=value`.
@@ -131,6 +138,79 @@ if [[ -z "$HAS_DEFAULT" ]]; then
   treq POST "/vpc/v1/addressPools" '{"name":"default-ru-central1-a","kind":"EXTERNAL_PUBLIC","zoneId":"ru-central1-a","cidrBlocks":["198.51.100.0/24"],"isDefault":true}' >/dev/null
 fi
 
+# --- json helper: extract a top-level / metadata field from a JSON blob on stdin ---
+jget() { python3 -c "import sys,json
+try:
+  d=json.load(sys.stdin)
+  for k in '$1'.split('.'):
+    d=(d or {}).get(k)
+  print(d if d is not None else '')
+except Exception: print('')"; }
+
+# wait_op_field OP_ID METADATA_FIELD -> prints metadata.<field> once the op is done
+wait_op_field() {
+  local op_id="$1" field="$2" op done val
+  for _ in $(seq 1 30); do
+    op=$(treq GET "/operations/$op_id")
+    done=$(printf '%s' "$op" | jget done)
+    if [[ "$done" == "True" || "$done" == "true" || "$done" == "1" ]]; then
+      printf '%s' "$op" | jget "metadata.$field"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "" # timed out
+}
+
+# --- VPC fixtures for the kacho-compute newman suite: one Network + Subnet + SG ---
+# (compute Instance.Create needs a real subnet_id / security_group_id; ids are random,
+#  so we create-or-reuse by name and read the ids back from Operation metadata.)
+NET_NAME="compute-newman-net"
+SUBNET_NAME="compute-newman-subnet"
+SG_NAME="compute-newman-sg"
+
+echo "[seed] ensuring VPC network $NET_NAME in folder $FOLDER_ID ..."
+NETWORK_ID=$(treq GET "/vpc/v1/networks?folderId=$FOLDER_ID" | python3 -c "import sys,json
+try:
+  d=json.load(sys.stdin)
+  for n in d.get('networks') or []:
+    if n.get('name')=='$NET_NAME': print(n.get('id','')); break
+except Exception: pass")
+if [[ -z "$NETWORK_ID" ]]; then
+  OP_ID=$(req POST "/vpc/v1/networks" "{\"folderId\":\"$FOLDER_ID\",\"name\":\"$NET_NAME\",\"description\":\"compute newman fixture\"}" | jget id)
+  NETWORK_ID=$(wait_op_field "$OP_ID" networkId)
+fi
+[[ -n "$NETWORK_ID" ]] || { echo "[seed] FATAL: compute-newman network not created"; exit 1; }
+echo "[seed] network=$NETWORK_ID"
+
+echo "[seed] ensuring VPC subnet $SUBNET_NAME on ru-central1-a ..."
+SUBNET_ID=$(treq GET "/vpc/v1/subnets?folderId=$FOLDER_ID" | python3 -c "import sys,json
+try:
+  d=json.load(sys.stdin)
+  for s in d.get('subnets') or []:
+    if s.get('name')=='$SUBNET_NAME': print(s.get('id','')); break
+except Exception: pass")
+if [[ -z "$SUBNET_ID" ]]; then
+  OP_ID=$(req POST "/vpc/v1/subnets" "{\"folderId\":\"$FOLDER_ID\",\"name\":\"$SUBNET_NAME\",\"networkId\":\"$NETWORK_ID\",\"zoneId\":\"ru-central1-a\",\"v4CidrBlocks\":[\"10.128.0.0/24\"]}" | jget id)
+  SUBNET_ID=$(wait_op_field "$OP_ID" subnetId)
+fi
+[[ -n "$SUBNET_ID" ]] || { echo "[seed] FATAL: compute-newman subnet not created"; exit 1; }
+echo "[seed] subnet=$SUBNET_ID"
+
+echo "[seed] ensuring VPC security group $SG_NAME ..."
+SG_ID=$(treq GET "/vpc/v1/securityGroups?folderId=$FOLDER_ID" | python3 -c "import sys,json
+try:
+  d=json.load(sys.stdin)
+  for g in d.get('securityGroups') or []:
+    if g.get('name')=='$SG_NAME': print(g.get('id','')); break
+except Exception: pass")
+if [[ -z "$SG_ID" ]]; then
+  OP_ID=$(req POST "/vpc/v1/securityGroups" "{\"folderId\":\"$FOLDER_ID\",\"name\":\"$SG_NAME\",\"networkId\":\"$NETWORK_ID\",\"description\":\"compute newman fixture\"}" | jget id)
+  SG_ID=$(wait_op_field "$OP_ID" securityGroupId)
+fi
+[[ -n "$SG_ID" ]] || { echo "[seed] FATAL: compute-newman security group not created"; exit 1; }
+echo "[seed] securityGroup=$SG_ID"
+
 # --- emit ids ---
 cat > "$OUT" <<EOF
 existingOrgId=$ORG_ID
@@ -139,6 +219,11 @@ existingFolderId=$FOLDER_ID
 existingFolderCrossId=$CROSS_FOLDER_ID
 existingZoneId=ru-central1-a
 existingZoneAltId=ru-central1-b
+existingNetworkId=$NETWORK_ID
+existingSubnetId=$SUBNET_ID
+existingSgId=$SG_ID
+existingDiskTypeId=network-ssd
+existingPlatformId=standard-v3
 EOF
 echo "[seed] wrote $OUT:"
 cat "$OUT"

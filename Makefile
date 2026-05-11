@@ -4,17 +4,17 @@
 CLUSTER_NAME := kacho
 
 # --- CI docker-compose stack (newman E2E) ---------------------------------
-# Lightweight non-kind stack for the kacho-vpc/tests/newman/ regression suite.
-# Separate from the kind+helm dev-stand above; api-gateway is on host port 28080
-# (NOT 18080 — that belongs to the dev-stand). See ci/docker-compose.yml.
+# Lightweight non-kind stack for the kacho-vpc/ + kacho-compute/ newman regression
+# suites. Separate from the kind+helm dev-stand above; api-gateway is on host port
+# 28080 (NOT 18080 — that belongs to the dev-stand). See ci/docker-compose.yml.
 CI_COMPOSE   := ci/docker-compose.yml
 CI_PROJECT   := kacho-ci
 PROJECT_ROOT := $(abspath ..)        # cloud-demo/kacho-workspace/project — Docker build context
 
-# Build the three :dev images this stack needs, only if they're not present.
+# Build the :dev images this stack needs, only if they're not present.
 # (Build context is the workspace `project/` dir — same as each repo's `make docker`.)
 ci-images:
-	@for svc in resource-manager vpc api-gateway; do \
+	@for svc in resource-manager vpc compute api-gateway; do \
 		if ! docker image inspect kacho-$$svc:dev >/dev/null 2>&1; then \
 			echo "=== building kacho-$$svc:dev ==="; \
 			docker build -f $(PROJECT_ROOT)/kacho-$$svc/Dockerfile -t kacho-$$svc:dev $(PROJECT_ROOT); \
