@@ -1,6 +1,45 @@
-.PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint seed-ipam
+.PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint seed-ipam \
+        ci-images ci-up ci-down ci-logs ci-seed
 
 CLUSTER_NAME := kacho
+
+# --- CI docker-compose stack (newman E2E) ---------------------------------
+# Lightweight non-kind stack for the kacho-vpc/tests/newman/ regression suite.
+# Separate from the kind+helm dev-stand above; api-gateway is on host port 28080
+# (NOT 18080 — that belongs to the dev-stand). See ci/docker-compose.yml.
+CI_COMPOSE   := ci/docker-compose.yml
+CI_PROJECT   := kacho-ci
+PROJECT_ROOT := $(abspath ..)        # cloud-demo/kacho-workspace/project — Docker build context
+
+# Build the three :dev images this stack needs, only if they're not present.
+# (Build context is the workspace `project/` dir — same as each repo's `make docker`.)
+ci-images:
+	@for svc in resource-manager vpc api-gateway; do \
+		if ! docker image inspect kacho-$$svc:dev >/dev/null 2>&1; then \
+			echo "=== building kacho-$$svc:dev ==="; \
+			docker build -f $(PROJECT_ROOT)/kacho-$$svc/Dockerfile -t kacho-$$svc:dev $(PROJECT_ROOT); \
+		else \
+			echo "kacho-$$svc:dev already present (skip build; 'docker rmi kacho-$$svc:dev' to force rebuild)"; \
+		fi; \
+	done
+
+# Bring up the stack and seed fixtures. Writes ci/.seeded-ids.env (sourced by CI).
+ci-up: ci-images
+	docker compose -p $(CI_PROJECT) -f $(CI_COMPOSE) up -d
+	BASE_URL=http://localhost:28080 OUT=ci/.seeded-ids.env ./ci/seed.sh
+	@echo
+	@echo "CI stack up. api-gateway: http://localhost:28080  (seeded ids in ci/.seeded-ids.env)"
+
+# Re-run the seed step against an already-running stack (idempotent).
+ci-seed:
+	BASE_URL=http://localhost:28080 OUT=ci/.seeded-ids.env ./ci/seed.sh
+
+ci-down:
+	docker compose -p $(CI_PROJECT) -f $(CI_COMPOSE) down -v
+	@rm -f ci/.seeded-ids.env
+
+ci-logs:
+	docker compose -p $(CI_PROJECT) -f $(CI_COMPOSE) logs --tail=200
 
 preflight:
 	@command -v docker >/dev/null || { echo "ERROR: docker not installed"; exit 1; }

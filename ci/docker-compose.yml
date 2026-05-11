@@ -1,0 +1,109 @@
+# kacho-deploy/ci/docker-compose.yml — lightweight CI stack for the newman E2E
+# regression suite (kacho-vpc/tests/newman/). NOT the dev-stand — that's helm+kind
+# (see ../Makefile dev-up). This compose brings up the minimum needed to run the
+# public-API black-box suite end-to-end:
+#
+#   pg-rm            postgres for resource-manager
+#   pg-vpc           postgres for vpc
+#   resource-manager Organization/Cloud/Folder (vpc's FolderClient backend)
+#   vpc              Network/Subnet/SecurityGroup/RouteTable/Address/Gateway/PE + Internal*
+#   api-gateway      REST↔gRPC proxy — exposed on host port 28080
+#                    (NOT 18080: that's the kind-cluster dev-stand's port; avoid clash)
+#
+# Migrations: each service image's ENTRYPOINT is its binary, which accepts
+# `migrate up` / `serve` subcommands. Compose can't run two commands, so we
+# override entrypoint to `sh -c "<bin> migrate up && exec <bin> serve"`. The
+# alpine:3.20 runtime image ships /bin/sh.
+#
+# DB readiness: postgres services have a pg_isready healthcheck; the app
+# services `depends_on: condition: service_healthy`, so `migrate up` never races
+# the DB coming up. The gRPC clients (vpc→rm, gateway→vpc/rm) use lazy
+# connections, so app-service start order beyond DB-healthy doesn't matter.
+#
+# Fixture seeding (Org/Cloud/Folder ids, Region+Zones, default AddressPool) is a
+# separate step — see ci/seed.sh, run by `make ci-up` after the stack is up.
+
+services:
+  pg-rm:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: resource_manager
+      POSTGRES_PASSWORD: ci-resource-manager-password
+      POSTGRES_DB: kacho_resource_manager
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U resource_manager -d kacho_resource_manager"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  pg-vpc:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vpc
+      POSTGRES_PASSWORD: ci-vpc-password
+      POSTGRES_DB: kacho_vpc
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vpc -d kacho_vpc"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  resource-manager:
+    image: kacho-resource-manager:dev
+    depends_on:
+      pg-rm:
+        condition: service_healthy
+    environment:
+      KACHO_RESOURCE_MANAGER_DB_HOST: pg-rm
+      KACHO_RESOURCE_MANAGER_DB_PORT: "5432"
+      KACHO_RESOURCE_MANAGER_DB_USER: resource_manager
+      KACHO_RESOURCE_MANAGER_DB_PASSWORD: ci-resource-manager-password
+      KACHO_RESOURCE_MANAGER_DB_NAME: kacho_resource_manager
+      KACHO_RESOURCE_MANAGER_GRPC_PORT: "9090"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "/usr/local/bin/resource-manager migrate up && exec /usr/local/bin/resource-manager serve"
+
+  vpc:
+    image: kacho-vpc:dev
+    depends_on:
+      pg-vpc:
+        condition: service_healthy
+      resource-manager:
+        condition: service_started
+    environment:
+      KACHO_VPC_DB_HOST: pg-vpc
+      KACHO_VPC_DB_PORT: "5432"
+      KACHO_VPC_DB_USER: vpc
+      KACHO_VPC_DB_PASSWORD: ci-vpc-password
+      KACHO_VPC_DB_NAME: kacho_vpc
+      KACHO_VPC_DB_SSLMODE: disable
+      KACHO_VPC_GRPC_PORT: "9090"
+      KACHO_VPC_INTERNAL_PORT: "9091"
+      KACHO_VPC_RESOURCE_MANAGER_GRPC_ADDR: resource-manager:9090
+      KACHO_VPC_RESOURCE_MANAGER_TLS: "false"
+      KACHO_VPC_DEFAULT_SG_INLINE: "true"
+      KACHO_VPC_AUTH_MODE: dev
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "/usr/local/bin/kacho-vpc migrate up && exec /usr/local/bin/kacho-vpc serve"
+
+  api-gateway:
+    image: kacho-api-gateway:dev
+    depends_on:
+      vpc:
+        condition: service_started
+      resource-manager:
+        condition: service_started
+    environment:
+      KACHO_API_GATEWAY_LISTEN_ADDR: ":8080"
+      KACHO_API_GATEWAY_RESOURCEMANAGER_GRPC: resource-manager:9090
+      KACHO_API_GATEWAY_VPC_GRPC: vpc:9090
+      KACHO_API_GATEWAY_VPC_INTERNAL_GRPC: vpc:9091
+      # TLS intentionally OFF (no TLS_LISTEN_ADDR) — newman dials plain HTTP.
+    ports:
+      - "28080:8080"
