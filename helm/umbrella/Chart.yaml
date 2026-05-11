@@ -14,16 +14,21 @@ dependencies:
     alias: pg-vpc
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
+  - name: postgresql
+    alias: pg-compute
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
   - name: resource-manager
     version: 1.0.0
     repository: file://../../../kacho-resource-manager/deploy
   - name: vpc
     version: 1.0.0
     repository: file://../../../kacho-vpc/deploy
-  - name: vpc-controllers
+  - name: compute
     version: 1.0.0
-    repository: file://../../../kacho-vpc-controllers/deploy
-  # compute и loadbalancer — frozen в 1.0 (proto verbatim YC, backends ещё не переписаны)
+    repository: file://../../../kacho-compute/deploy
+  # vpc-controllers упразднён: IPAM/default-SG встроены в kacho-vpc inline (Phase 2).
+  # loadbalancer — frozen в 1.0 (proto verbatim YC, backend ещё не переписан)
   - name: api-gateway
     version: 1.0.0
     repository: file://../../../kacho-api-gateway/deploy

@@ -3,3 +3,4 @@
 .DS_Store
 helm/umbrella/charts/
 helm/umbrella/Chart.lock
+ci/.seeded-ids.env

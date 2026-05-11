@@ -1,6 +1,45 @@
-.PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint
+.PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint seed-ipam \
+        ci-images ci-up ci-down ci-logs ci-seed
 
 CLUSTER_NAME := kacho
+
+# --- CI docker-compose stack (newman E2E) ---------------------------------
+# Lightweight non-kind stack for the kacho-vpc/ + kacho-compute/ newman regression
+# suites. Separate from the kind+helm dev-stand above; api-gateway is on host port
+# 28080 (NOT 18080 — that belongs to the dev-stand). See ci/docker-compose.yml.
+CI_COMPOSE   := ci/docker-compose.yml
+CI_PROJECT   := kacho-ci
+PROJECT_ROOT := $(abspath ..)        # cloud-demo/kacho-workspace/project — Docker build context
+
+# Build the :dev images this stack needs, only if they're not present.
+# (Build context is the workspace `project/` dir — same as each repo's `make docker`.)
+ci-images:
+	@for svc in resource-manager vpc compute api-gateway; do \
+		if ! docker image inspect kacho-$$svc:dev >/dev/null 2>&1; then \
+			echo "=== building kacho-$$svc:dev ==="; \
+			docker build -f $(PROJECT_ROOT)/kacho-$$svc/Dockerfile -t kacho-$$svc:dev $(PROJECT_ROOT); \
+		else \
+			echo "kacho-$$svc:dev already present (skip build; 'docker rmi kacho-$$svc:dev' to force rebuild)"; \
+		fi; \
+	done
+
+# Bring up the stack and seed fixtures. Writes ci/.seeded-ids.env (sourced by CI).
+ci-up: ci-images
+	docker compose -p $(CI_PROJECT) -f $(CI_COMPOSE) up -d
+	BASE_URL=http://localhost:28080 OUT=ci/.seeded-ids.env ./ci/seed.sh
+	@echo
+	@echo "CI stack up. api-gateway: http://localhost:28080  (seeded ids in ci/.seeded-ids.env)"
+
+# Re-run the seed step against an already-running stack (idempotent).
+ci-seed:
+	BASE_URL=http://localhost:28080 OUT=ci/.seeded-ids.env ./ci/seed.sh
+
+ci-down:
+	docker compose -p $(CI_PROJECT) -f $(CI_COMPOSE) down -v
+	@rm -f ci/.seeded-ids.env
+
+ci-logs:
+	docker compose -p $(CI_PROJECT) -f $(CI_COMPOSE) logs --tail=200
 
 preflight:
 	@command -v docker >/dev/null || { echo "ERROR: docker not installed"; exit 1; }
@@ -8,7 +47,7 @@ preflight:
 	@command -v kubectl >/dev/null || { echo "ERROR: kubectl not installed"; exit 1; }
 	@command -v helm >/dev/null || { echo "ERROR: helm not installed"; exit 1; }
 	@docker info >/dev/null 2>&1 || { echo "ERROR: docker daemon is not running"; exit 1; }
-	@if ss -tln | grep -q ':80 '; then echo "ERROR: port 80 is already in use, free it or change kind/kind-config.yaml"; exit 1; fi
+	@if ss -tln | grep -q ':28080 '; then echo "ERROR: port 28080 is already in use, free it or change kind/kind-config.yaml"; exit 1; fi
 	@grep -q "api.kacho.local" /etc/hosts || echo "WARN: '127.0.0.1 api.kacho.local' missing in /etc/hosts — ingress will not resolve from host"
 	@echo "preflight OK"
 
@@ -35,7 +74,7 @@ reload-svc:
 ifndef SVC
 	$(error SVC variable is required, e.g. make reload-svc SVC=compute)
 endif
-	@if [ "$(SVC)" != "resource-manager" ] && [ "$(SVC)" != "vpc" ] && [ "$(SVC)" != "vpc-controllers" ] && [ "$(SVC)" != "compute" ] && [ "$(SVC)" != "loadbalancer" ] && [ "$(SVC)" != "api-gateway" ]; then \
+	@if [ "$(SVC)" != "resource-manager" ] && [ "$(SVC)" != "vpc" ] && [ "$(SVC)" != "compute" ] && [ "$(SVC)" != "loadbalancer" ] && [ "$(SVC)" != "api-gateway" ]; then \
 		echo "ERROR: unknown service '$(SVC)'"; exit 1; \
 	fi; \
 	if ! kubectl -n kacho get deploy $(SVC) >/dev/null 2>&1; then \
@@ -57,6 +96,19 @@ ifndef SVC
 	$(error SVC variable is required)
 endif
 	kubectl exec -it -n kacho statefulset/pg-$(SVC) -- psql -U $(SVC) -d kacho_$(SVC)
+
+seed-ipam:
+	@echo "seed-ipam: NOOP. Auto-seeding отключён — admin должен явно создать AddressPool через kachoctl-ipam."
+	@echo
+	@echo "  cd ../kacho-vpc && make build-ipam"
+	@echo "  kubectl -n kacho port-forward svc/vpc 19091:9091 &"
+	@echo "  ./bin/kachoctl-ipam -addr localhost:19091 pool create \\"
+	@echo "    --folder <real_folder_id_from_resource_manager> \\"
+	@echo "    --kind EXTERNAL_PUBLIC \\"
+	@echo "    --region-id ru-central1 \\"
+	@echo "    --cidr 198.51.100.0/24 \\"
+	@echo "    --is-default \\"
+	@echo "    --name production-pool"
 
 e2e-test:
 	@for sh in e2e/0.1/*.sh; do \
