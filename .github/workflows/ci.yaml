@@ -31,3 +31,15 @@ jobs:
             echo "=== $s ==="
             bash "$s" || exit 1
           done
+      # E8-dev-down-clean.sh in the loop above tears the cluster down; bring a fresh
+      # stack up, seed fixtures, and run the API-level integration suites against it.
+      - name: integration e2e (geography-move, cp-resource-model)
+        env:
+          BASE_URL: http://api.kacho.local:28080
+        run: |
+          make dev-up
+          BASE_URL="$BASE_URL" ./ci/seed.sh
+          for s in e2e/geography-move.sh e2e/cp-resource-model.sh; do
+            echo "=== $s ==="
+            BASE_URL="$BASE_URL" bash "$s" || exit 1
+          done
