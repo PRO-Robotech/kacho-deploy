@@ -107,6 +107,9 @@ services:
       KACHO_VPC_INTERNAL_PORT: "9091"
       KACHO_VPC_RESOURCE_MANAGER_GRPC_ADDR: resource-manager:9090
       KACHO_VPC_RESOURCE_MANAGER_TLS: "false"
+      # Geography (Region/Zone) is owned by kacho-compute (epic KAC-15) — vpc validates zone_id via it.
+      KACHO_VPC_COMPUTE_GRPC_ADDR: compute:9090
+      KACHO_VPC_COMPUTE_TLS: "false"
       KACHO_VPC_DEFAULT_SG_INLINE: "true"
       KACHO_VPC_AUTH_MODE: dev
     entrypoint: ["/bin/sh", "-c"]

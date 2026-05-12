@@ -8,7 +8,8 @@
 #     existingCloudId      — a Cloud under it (auto-bootstrapped "default")
 #     existingFolderId     — a Folder under it (auto-bootstrapped "default")
 #     existingFolderCrossId— a SECOND folder, for cross-folder Move tests (we create it)
-#     existingZoneId       — "ru-central1-a" (we create region ru-central1 + zones a..d)
+#     existingZoneId       — "ru-central1-a" (kacho-compute migration seeds region ru-central1 + zones a/b/d;
+#                            this script idempotently adds zone "c" via /compute/v1)
 #     existingZoneAltId    — "ru-central1-b"
 #     + a default EXTERNAL_PUBLIC AddressPool on ru-central1-a (for external-IP allocate)
 #   kacho-compute/tests/newman (in addition to the ids above):
@@ -119,11 +120,14 @@ fi
 echo "[seed] cross-folder=$CROSS_FOLDER_ID"
 
 # --- Region ru-central1 + zones ru-central1-{a,b,c,d} (idempotent: ignore AlreadyExists) ---
-echo "[seed] creating region $REGION_ID ..."
-treq POST "/vpc/v1/regions" "{\"id\":\"$REGION_ID\",\"name\":\"Russia Central 1\"}" >/dev/null
+# Geography (Region/Zone) is owned by kacho-compute (epic KAC-15); the kacho-compute migration
+# already seeds ru-central1 + ru-central1-{a,b,d}, so these POSTs are mostly no-ops (AlreadyExists,
+# ignored by treq) and only really create the extra zone "c". Admin CRUD lives on /compute/v1.
+echo "[seed] ensuring region $REGION_ID (compute) ..."
+treq POST "/compute/v1/regions" "{\"id\":\"$REGION_ID\",\"name\":\"Russia Central 1\"}" >/dev/null
 for z in "${ZONES[@]}"; do
-  echo "[seed] creating zone $z ..."
-  treq POST "/vpc/v1/zones" "{\"id\":\"$z\",\"regionId\":\"$REGION_ID\",\"name\":\"$z\"}" >/dev/null
+  echo "[seed] ensuring zone $z (compute) ..."
+  treq POST "/compute/v1/zones" "{\"id\":\"$z\",\"regionId\":\"$REGION_ID\",\"name\":\"$z\"}" >/dev/null
 done
 
 # --- default EXTERNAL_PUBLIC AddressPool on ru-central1-a (for external-IP allocate) ---
