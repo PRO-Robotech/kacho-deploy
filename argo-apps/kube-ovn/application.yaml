@@ -27,6 +27,13 @@ spec:
         # ClusterRoleBinding'и) живут в kacho-kube-ovn, не в kube-system.
         namespace: kacho-kube-ovn
 
+        # Master-нода для ovn-central (одна — single-master deployment).
+        # IP узла e2c825-client-e71297-jrg82-s6v7v (отлейблена `kube-ovn/role=master`).
+        # Без явного MASTER_NODES env-var ovn-central стартует с пустым NODE_IPS,
+        # ovsdb остаётся non-clustered, а liveness probe (`cluster/status`)
+        # требует clustered DB → бесконечный рестарт. Перечисляем явно.
+        MASTER_NODES: "10.16.0.19"
+
         cni_conf:
           # NON_PRIMARY_CNI=true — Kube-OVN не выкатывает 01-kube-ovn.conflist
           # на ноды (primary остаётся Cilium), работает только через Multus
