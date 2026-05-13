@@ -48,6 +48,32 @@ spec:
           DEFAULT_SUBNET: "ovn-default"
           DEFAULT_VPC: "ovn-cluster"
           NODE_SUBNET: "join"
+          # Default ovn-default 10.16.0.0/16 пересекается с node-network (ноды
+          # на 10.16.0.x). Уводим default-pod-subnet в 10.99.0.0/16 — не
+          # используется ни для primary CNI (Cilium), ни для underlay.
+          ENABLE_EIP_SNAT: false
+
+        # Для secondary-CNI режима не нужны OVN-овые LB / NetworkPolicy / NAT-GW
+        # (это всё Cilium делает на primary path). Disable'им — упрощает init
+        # и уменьшает поверхность Kube-OVN.
+        func:
+          ENABLE_LB: false
+          ENABLE_NP: false
+          ENABLE_NAT_GW: false
+
+        ipv4:
+          POD_CIDR: "10.99.0.0/16"
+          POD_GATEWAY: "10.99.0.1"
+          SVC_CIDR: "10.100.0.0/12"
+          JOIN_CIDR: "100.64.0.0/16"
+          PINGER_EXTERNAL_ADDRESS: "1.1.1.1"
+
+        dual_stack:
+          POD_CIDR: "10.99.0.0/16,fd00:10:99::/112"
+          POD_GATEWAY: "10.99.0.1,fd00:10:99::1"
+          SVC_CIDR: "10.100.0.0/12,fd00:10:96::/112"
+          JOIN_CIDR: "100.64.0.0/16,fd00:100:64::/112"
+          PINGER_EXTERNAL_ADDRESS: "1.1.1.1,2606:4700:4700::1111"
   syncPolicy:
     automated:
       prune: true
