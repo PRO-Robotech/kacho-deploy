@@ -1,0 +1,12 @@
+# Kustomize-обёртка над upstream Multus thick-daemonset (v4.2.2).
+# Меняет hardcoded namespace `kube-system` на `kacho-multus` — все Kachō-аддоны
+# деплоятся каждый в свой namespace `kacho-*`, в kube-system не лезем.
+# Multus сам по себе официального публичного Helm-chart'а не имеет, поэтому
+# vendor'им один upstream manifest и перенацеливаем kustomize'ом.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: kacho-multus
+
+resources:
+  - multus-daemonset-thick.yml

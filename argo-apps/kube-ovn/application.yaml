@@ -1,0 +1,50 @@
+# ArgoCD Application — Kube-OVN в NON_PRIMARY_CNI режиме, namespace kacho-kube-ovn.
+# Primary CNI на eth0 — Cilium (стоит в beget-cilium). Kube-OVN тут поднимает
+# OVN northbound/southbound + OVS, но НЕ перезаписывает primary CNI conf-file
+# на нодах (выставляем `cni_conf.NON_PRIMARY_CNI=true`). К pod'ам Kube-OVN
+# подключается только через Multus + NetworkAttachmentDefinition как secondary
+# CNI — для tenant-NIC из Kachō VPC/Subnet.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kacho-kube-ovn
+  namespace: in-cloud-argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  destination:
+    namespace: kacho-kube-ovn
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    chart: kube-ovn
+    repoURL: https://kubeovn.github.io/kube-ovn
+    targetRevision: v1.16.1
+    helm:
+      releaseName: kube-ovn
+      values: |
+        # ВСЕ системные ресурсы Kube-OVN (DaemonSet'ы, Deployment'ы, SA,
+        # ClusterRoleBinding'и) живут в kacho-kube-ovn, не в kube-system.
+        namespace: kacho-kube-ovn
+
+        cni_conf:
+          # NON_PRIMARY_CNI=true — Kube-OVN не выкатывает 01-kube-ovn.conflist
+          # на ноды (primary остаётся Cilium), работает только через Multus
+          # как secondary CNI по NetworkAttachmentDefinition.
+          NON_PRIMARY_CNI: true
+
+        networking:
+          # IPv4-overlay geneve — стандартный режим Kube-OVN для multi-VPC.
+          NET_STACK: ipv4
+          NETWORK_TYPE: geneve
+          TUNNEL_TYPE: geneve
+          DEFAULT_SUBNET: "ovn-default"
+          DEFAULT_VPC: "ovn-cluster"
+          NODE_SUBNET: "join"
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

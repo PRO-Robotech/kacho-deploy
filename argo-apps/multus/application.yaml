@@ -1,0 +1,28 @@
+# ArgoCD Application — Multus CNI thick mode в namespace kacho-multus.
+# Источник — этот же репо (kacho-deploy), kustomize-overlay в `argo-apps/multus/`
+# поверх vendor'нутого upstream YAML (v4.2.2). Primary CNI на eth0 — Cilium;
+# Multus — dispatcher для secondary NIC, который вызывает Kube-OVN-CNI по
+# NetworkAttachmentDefinition (см. argo-apps/kube-ovn/application.yaml).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kacho-multus
+  namespace: in-cloud-argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  destination:
+    namespace: kacho-multus
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    repoURL: https://github.com/PRO-Robotech/kacho-deploy.git
+    path: argo-apps/multus
+    targetRevision: feat/kacho-k8s-addons
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
