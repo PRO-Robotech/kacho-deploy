@@ -1,8 +1,13 @@
 # Kustomize-обёртка над upstream Multus thick-daemonset (v4.2.2).
-# Меняет hardcoded namespace `kube-system` на `kacho-multus` — все Kachō-аддоны
-# деплоятся каждый в свой namespace `kacho-*`, в kube-system не лезем.
-# Multus сам по себе официального публичного Helm-chart'а не имеет, поэтому
-# vendor'им один upstream manifest и перенацеливаем kustomize'ом.
+# Меняет hardcoded namespace `kube-system` на `kacho-multus`. Multus не имеет
+# официального публичного Helm-chart'а, поэтому vendor'им upstream YAML и
+# перенацеливаем kustomize'ом.
+#
+# Дополнительно: явно фиксируем `multusConfigFile` на `05-cilium.conflist`,
+# а не `auto`. По умолчанию Multus auto-detect берёт первый CNI conflist по
+# алфавиту, что в нашем кластере = `01-kube-ovn.conflist`. Это ломает сетку
+# подов: primary должен быть Cilium (`05-cilium.conflist`), kube-ovn — только
+# secondary через Multus NAD. Cм. KAC-49.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -10,3 +15,22 @@ namespace: kacho-multus
 
 resources:
   - multus-daemonset-thick.yml
+
+patches:
+  - target:
+      kind: ConfigMap
+      name: multus-daemon-config
+    patch: |-
+      - op: replace
+        path: /data/daemon-config.json
+        value: |
+          {
+              "chrootDir": "/hostroot",
+              "cniVersion": "0.3.1",
+              "logLevel": "verbose",
+              "logToStderr": true,
+              "cniConfigDir": "/host/etc/cni/net.d",
+              "multusAutoconfigDir": "/host/etc/cni/net.d",
+              "multusConfigFile": "/host/etc/cni/net.d/05-cilium.conflist",
+              "socketDir": "/host/run/multus/"
+          }
