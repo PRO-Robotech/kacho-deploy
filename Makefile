@@ -1,5 +1,6 @@
 .PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint seed-ipam \
-        ci-images ci-up ci-down ci-logs ci-seed
+        ci-images ci-up ci-down ci-logs ci-seed \
+        loadtest-address-allocate loadtest-address-allocate-clean
 
 CLUSTER_NAME := kacho
 
@@ -115,3 +116,17 @@ e2e-test:
 		echo "=== $$sh ==="; \
 		bash "$$sh" || exit 1; \
 	done
+
+# ─── Load testing ────────────────────────────────────────────────
+
+loadtest-address-allocate:
+	@kubectl -n kacho delete job k6-address-allocate --ignore-not-found
+	@kubectl -n kacho apply -f load-tests/k6-address-allocate.yaml
+	@echo "→ Job created, waiting for completion (max 600s)…"
+	@kubectl -n kacho wait --for=condition=complete job/k6-address-allocate --timeout=600s || \
+	  kubectl -n kacho wait --for=condition=failed job/k6-address-allocate --timeout=10s
+	@kubectl -n kacho logs -l job-name=k6-address-allocate --tail=-1
+
+loadtest-address-allocate-clean:
+	@kubectl -n kacho delete job k6-address-allocate --ignore-not-found
+	@kubectl -n kacho delete cm k6-address-allocate --ignore-not-found

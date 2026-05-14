@@ -30,8 +30,21 @@ pg-resource-manager:
   primary:
     persistence:
       enabled: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+    extendedConfiguration: |
+      synchronous_commit = local
+      max_connections = 300
+      shared_buffers = 256MB
+      work_mem = 16MB
+      effective_cache_size = 1GB
   image:
-    repository: bitnamilegacy/postgresql   # Bitnami переехал; legacy registry имеет нужные теги
+    repository: bitnamilegacy/postgresql
   volumePermissions:
     image:
       repository: bitnamilegacy/os-shell   # → emptyDir в Bitnami chart
@@ -44,8 +57,23 @@ pg-vpc:
   primary:
     persistence:
       enabled: false
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 4000m
+        memory: 4Gi
+    extendedConfiguration: |
+      synchronous_commit = local
+      max_connections = 300
+      shared_buffers = 512MB
+      work_mem = 16MB
+      effective_cache_size = 2GB
+      checkpoint_timeout = 15min
+      max_wal_size = 2GB
   image:
-    repository: bitnamilegacy/postgresql   # Bitnami переехал; legacy registry имеет нужные теги
+    repository: bitnamilegacy/postgresql
   volumePermissions:
     image:
       repository: bitnamilegacy/os-shell
@@ -58,8 +86,21 @@ pg-compute:
   primary:
     persistence:
       enabled: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+    extendedConfiguration: |
+      synchronous_commit = local
+      max_connections = 300
+      shared_buffers = 256MB
+      work_mem = 16MB
+      effective_cache_size = 1GB
   image:
-    repository: bitnamilegacy/postgresql   # Bitnami переехал; legacy registry имеет нужные теги
+    repository: bitnamilegacy/postgresql
   volumePermissions:
     image:
       repository: bitnamilegacy/os-shell
