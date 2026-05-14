@@ -1,20 +1,19 @@
-# Kustomize-обёртка над upstream Multus thick-daemonset (v4.2.2).
+# Kustomize-обёртка над upstream Multus **thin** daemonset (v4.2.2).
 # Меняет hardcoded namespace `kube-system` на `kacho-multus`. Multus не имеет
-# официального публичного Helm-chart'а, поэтому vendor'им upstream YAML и
-# перенацеливаем kustomize'ом.
+# официального публичного Helm-chart'а, поэтому vendor'им upstream YAML.
 #
-# Дополнительно: явно фиксируем `multusConfigFile` на `05-cilium.conflist`,
-# а не `auto`. По умолчанию Multus auto-detect берёт первый CNI conflist по
-# алфавиту, что в нашем кластере = `01-kube-ovn.conflist`. Это ломает сетку
-# подов: primary должен быть Cilium (`05-cilium.conflist`), kube-ovn — только
-# secondary через Multus NAD. Cм. KAC-49.
+# Почему thin, а не thick: thick mode (отдельный multus-daemon long-running
+# процесс) в этом кластере молча exit 0 после `API readiness check done!` —
+# debug непосильный для прототипа. Thin — простой CNI binary `multus-shim`
+# + `/thin_entrypoint`, который только генерирует `00-multus.conf` из primary
+# conflist (auto-detect, алфавитная сортировка).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 namespace: kacho-multus
 
 resources:
-  - multus-daemonset-thick.yml
+  - multus-daemonset-thin.yml
 
 patches:
   # Upstream daemonset выставляет main-container limit memory=50Mi —
