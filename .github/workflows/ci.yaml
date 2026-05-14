@@ -5,49 +5,11 @@ on:
   schedule:
     - cron: '0 3 * * *'   # nightly e2e
   workflow_dispatch: {}
-
-permissions:
-  contents: read
-
-# kacho-deploy umbrella ссылается на sibling-чарты через
-# `repository: file://../../../kacho-<svc>/deploy` (см. helm/umbrella/Chart.yaml).
-# Чтобы `helm dep build` нашёл их в CI — клонируем все нужные siblings рядом с
-# main-репо в одинаковом layout: kacho-workspace/project/{kacho-deploy, kacho-vpc, ...}.
-# Это тот же паттерн, что используют kacho-vpc / kacho-compute / kacho-resource-manager
-# CI workflows.
-
-defaults:
-  run:
-    working-directory: kacho-deploy
-
 jobs:
   helm-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { path: kacho-deploy }
-
-      - uses: actions/checkout@v4
-        with:
-          repository: PRO-Robotech/kacho-resource-manager
-          path: kacho-resource-manager
-      - uses: actions/checkout@v4
-        with:
-          repository: PRO-Robotech/kacho-vpc
-          path: kacho-vpc
-      - uses: actions/checkout@v4
-        with:
-          repository: PRO-Robotech/kacho-compute
-          path: kacho-compute
-      - uses: actions/checkout@v4
-        with:
-          repository: PRO-Robotech/kacho-api-gateway
-          path: kacho-api-gateway
-      - uses: actions/checkout@v4
-        with:
-          repository: PRO-Robotech/kacho-ui
-          path: kacho-ui
-
       - uses: azure/setup-helm@v4
       - run: cd helm/umbrella && helm dep update && helm lint -f values.dev.yaml
 
@@ -56,19 +18,6 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
-        with: { path: kacho-deploy }
-
-      - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-resource-manager, path: kacho-resource-manager }
-      - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-vpc, path: kacho-vpc }
-      - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-compute, path: kacho-compute }
-      - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-api-gateway, path: kacho-api-gateway }
-      - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-ui, path: kacho-ui }
-
       - uses: helm/kind-action@v1
         with:
           config: kind/kind-config.yaml
