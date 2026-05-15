@@ -56,6 +56,8 @@ dev-up: preflight
 	@start=$$(date +%s); \
 	kind get clusters | grep -q "^$(CLUSTER_NAME)$$" || ./kind/create-cluster.sh; \
 	kubectl config use-context kind-$(CLUSTER_NAME); \
+	kubectl create namespace kacho --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
+	./scripts/gen-tls-cert.sh; \
 	cd helm/umbrella && helm dep update >/dev/null && cd ../..; \
 	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho --create-namespace -f ./helm/umbrella/values.dev.yaml --wait --timeout 5m; \
 	echo "Waiting for ingress-nginx admission webhook..."; \
@@ -63,7 +65,10 @@ dev-up: preflight
 	end=$$(date +%s); \
 	echo "dev-up complete in $$((end-start))s"; \
 	echo; \
-	echo "API endpoint: http://api.kacho.local (add '127.0.0.1 api.kacho.local' to /etc/hosts if missing)"
+	echo "API endpoint:"; \
+	echo "  REST   http://api.kacho.local         (add '127.0.0.1 api.kacho.local' to /etc/hosts if missing)"; \
+	echo "  TLS    https://api.kacho.local        (cert = /tmp/kacho-tls/tls.crt)"; \
+	echo "  Local  https://localhost:18443        (через kubectl port-forward svc/api-gateway 18443:8443)"
 
 dev-down:
 	kind delete cluster --name $(CLUSTER_NAME) || true
