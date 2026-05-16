@@ -88,6 +88,26 @@ except Exception: print("")' )
 done
 echo "[seed] org=$ORG_ID cloud=$CLOUD_ID folder=$FOLDER_ID"
 
+# Wait until VPC and Compute backends are reachable through the gateway.
+# api-gateway answers /healthz from itself; without this wait the first VPC call
+# (network create) hits the gateway before VPC has finished its parallel.ExecAbstract
+# listener wiring and returns 503 (no upstream).
+echo "[seed] waiting for VPC backend through gateway ..."
+for i in $(seq 1 60); do
+  # /vpc/v1/networks?folderId=__warmup__ — backend up returns 200 with empty list; backend down → 503.
+  code=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/vpc/v1/networks?folderId=__warmup__")
+  if [[ "$code" == "200" ]]; then break; fi
+  sleep 2
+  if [[ "$i" == 60 ]]; then echo "[seed] FATAL: VPC backend never became reachable (last code=$code)"; exit 1; fi
+done
+echo "[seed] waiting for Compute backend through gateway ..."
+for i in $(seq 1 60); do
+  code=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/compute/v1/regions")
+  if [[ "$code" == "200" ]]; then break; fi
+  sleep 2
+  if [[ "$i" == 60 ]]; then echo "[seed] FATAL: Compute backend never became reachable (last code=$code)"; exit 1; fi
+done
+
 # --- second folder for cross-folder Move tests (Folder.Create returns an Operation) ---
 echo "[seed] creating cross-folder ..."
 CROSS_FOLDER_ID=""
