@@ -104,7 +104,7 @@ jobs:
 
       - uses: helm/kind-action@v1
         with:
-          config: kind/kind-config.yaml
+          config: kacho-deploy/kind/kind-config.yaml
           cluster_name: kacho
       - uses: azure/setup-helm@v4
       - name: /etc/hosts override for api.kacho.local
