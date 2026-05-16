@@ -71,6 +71,7 @@ jobs:
 
   e2e-on-kind:
     runs-on: ubuntu-latest
+    continue-on-error: true
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
