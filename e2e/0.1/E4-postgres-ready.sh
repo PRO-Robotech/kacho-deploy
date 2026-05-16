@@ -24,12 +24,17 @@ for pod in "${!DBS[@]}"; do
   # migrations runs из app-side init-container; pg pod ready != tables applied,
   # дай до 60s на migrations завершиться.
   for attempt in $(seq 1 12); do
-    count=$(kubectl -n kacho exec "$pod" -- psql -U "$user" -d "$db" -tAXqc "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')" 2>&1 | tr -d '[:space:]')
+    # `set -euo pipefail` + non-zero kubectl exit убил бы script досрочно —
+    # explicit `|| echo ERR` гасит non-zero exit и сохраняет stderr.
+    out=$(kubectl -n kacho exec "$pod" -- psql -U "$user" -d "$db" -tAXqc \
+      "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')" 2>&1 \
+      || echo "ERR")
+    count=$(printf '%s' "$out" | tr -d '[:space:]')
     if [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -gt 0 ]; then
       echo "  $db: $count tables (attempt $attempt)"
       break
     fi
-    echo "  $db: count=[$count] attempt $attempt — retrying..."
+    echo "  $db: out=[$out] attempt $attempt — retrying..."
     sleep 5
     count=""
   done
