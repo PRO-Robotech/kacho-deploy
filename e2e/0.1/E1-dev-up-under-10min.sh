@@ -6,5 +6,5 @@ make dev-up
 END=$(date +%s)
 ELAPSED=$((END - START))
 echo "dev-up took ${ELAPSED}s"
-[ $ELAPSED -lt 300 ] || { echo "FAIL: dev-up took ${ELAPSED}s (>= 300s)"; exit 1; }
+[ $ELAPSED -lt 600 ] || { echo "FAIL: dev-up took ${ELAPSED}s (>= 600s)"; exit 1; }
 echo "PASS: E1"
