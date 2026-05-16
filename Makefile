@@ -59,7 +59,7 @@ dev-up: preflight
 	kubectl create namespace kacho --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
 	./scripts/gen-tls-cert.sh; \
 	cd helm/umbrella && helm dep update >/dev/null && cd ../..; \
-	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho --create-namespace -f ./helm/umbrella/values.dev.yaml --wait --timeout 5m; \
+	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho --create-namespace -f ./helm/umbrella/values.dev.yaml --wait --timeout 10m; \
 	echo "Waiting for ingress-nginx admission webhook..."; \
 	kubectl -n kacho wait --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=60s; \
 	end=$$(date +%s); \
