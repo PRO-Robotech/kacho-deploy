@@ -20,8 +20,23 @@ declare -A DBS=(
 )
 for pod in "${!DBS[@]}"; do
   read -r user db <<< "${DBS[$pod]}"
-  count=$(kubectl -n kacho exec "$pod" -- psql -U "$user" -d "$db" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')" 2>/dev/null)
-  [ "$count" -gt 0 ] || { echo "FAIL: $db has $count user tables (expected > 0 after migrations)"; exit 1; }
+  count=""
+  # migrations runs из app-side init-container; pg pod ready != tables applied,
+  # дай до 60s на migrations завершиться.
+  for attempt in $(seq 1 12); do
+    count=$(kubectl -n kacho exec "$pod" -- psql -U "$user" -d "$db" -tAXqc "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')" 2>&1 | tr -d '[:space:]')
+    if [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -gt 0 ]; then
+      echo "  $db: $count tables (attempt $attempt)"
+      break
+    fi
+    echo "  $db: count=[$count] attempt $attempt — retrying..."
+    sleep 5
+    count=""
+  done
+  [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -gt 0 ] || {
+    echo "FAIL: $db has count=[$count] (expected > 0 after migrations, waited 60s)"
+    exit 1
+  }
 done
 
 echo "PASS: E4 — 3 postgres ready, migrations applied"
