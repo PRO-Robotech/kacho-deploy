@@ -43,10 +43,28 @@ jobs:
         with:
           repository: PRO-Robotech/kacho-api-gateway
           path: kacho-api-gateway
+      # kacho-ui is a private repo; the default GITHUB_TOKEN cannot access it
+      # (Not Found - https://docs.github.com/rest/repos/repos#get-a-repository).
+      # Best-effort checkout: continue on failure and create a stub chart below so
+      # the umbrella's `file://../../../kacho-ui/deploy` dependency resolves for lint.
       - uses: actions/checkout@v4
+        continue-on-error: true
         with:
           repository: PRO-Robotech/kacho-ui
           path: kacho-ui
+      - name: stub kacho-ui/deploy if checkout was skipped (private repo)
+        run: |
+          if [ ! -f kacho-ui/deploy/Chart.yaml ]; then
+            mkdir -p kacho-ui/deploy/templates
+            cat >kacho-ui/deploy/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: ui
+          version: 1.0.0
+          description: stub for CI (real chart in private repo PRO-Robotech/kacho-ui)
+          EOF
+            : >kacho-ui/deploy/values.yaml
+          fi
+        working-directory: ${{ github.workspace }}
 
       - uses: azure/setup-helm@v4
       - run: cd helm/umbrella && helm dep update && helm lint -f values.dev.yaml
@@ -66,8 +84,23 @@ jobs:
         with: { repository: PRO-Robotech/kacho-compute, path: kacho-compute }
       - uses: actions/checkout@v4
         with: { repository: PRO-Robotech/kacho-api-gateway, path: kacho-api-gateway }
+      # kacho-ui is a private repo; best-effort checkout (see helm-lint job).
       - uses: actions/checkout@v4
+        continue-on-error: true
         with: { repository: PRO-Robotech/kacho-ui, path: kacho-ui }
+      - name: stub kacho-ui/deploy if checkout was skipped (private repo)
+        run: |
+          if [ ! -f kacho-ui/deploy/Chart.yaml ]; then
+            mkdir -p kacho-ui/deploy/templates
+            cat >kacho-ui/deploy/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: ui
+          version: 1.0.0
+          description: stub for CI (real chart in private repo PRO-Robotech/kacho-ui)
+          EOF
+            : >kacho-ui/deploy/values.yaml
+          fi
+        working-directory: ${{ github.workspace }}
 
       - uses: helm/kind-action@v1
         with:
