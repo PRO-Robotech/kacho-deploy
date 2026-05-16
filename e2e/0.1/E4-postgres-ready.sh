@@ -20,18 +20,19 @@ declare -A DBS=(
 )
 for pod in "${!DBS[@]}"; do
   read -r user db <<< "${DBS[$pod]}"
-  # Bitnami stores app password в secret `<release>-<alias>` под key `password`.
-  # release="kacho-umbrella"; alias = pod-name без `-0` суффикса.
+  # Use postgres-admin pour видеть tables across all schemas (kacho_vpc создан
+  # migrations under admin; app-user может не иметь SELECT permissions на schema-объекты).
   secret="${pod%-0}"
-  password=$(kubectl -n kacho get secret "$secret" -o jsonpath='{.data.password}' | base64 -d)
+  password=$(kubectl -n kacho get secret "$secret" -o jsonpath='{.data.postgres-password}' | base64 -d)
+  pguser="postgres"
   count=""
   # migrations runs из app-side init-container; pg pod ready != tables applied,
   # дай до 60s на migrations завершиться.
   for attempt in $(seq 1 12); do
     # `set -euo pipefail` + non-zero kubectl exit убил бы script досрочно —
     # explicit `|| echo ERR` гасит non-zero exit и сохраняет stderr.
-    out=$(kubectl -n kacho exec "$pod" -- env PGPASSWORD="$password" psql -U "$user" -d "$db" -tAXqc \
-      "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')" 2>&1 \
+    out=$(kubectl -n kacho exec "$pod" -- env PGPASSWORD="$password" psql -U "$pguser" -d "$db" -tAXqc \
+      "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema')" 2>&1 \
       || echo "ERR")
     count=$(printf '%s' "$out" | tr -d '[:space:]')
     if [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -gt 0 ]; then
