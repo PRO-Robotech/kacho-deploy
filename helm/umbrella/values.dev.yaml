@@ -86,19 +86,6 @@ pg-vpc:
     image:
       repository: bitnamilegacy/os-shell
 
-pg-netbox:
-  auth:
-    username: netbox
-    password: dev-netbox-password
-    database: kacho_netbox
-  primary:
-    persistence:
-      enabled: false
-  image:
-    repository: bitnamilegacy/postgresql   # Bitnami переехал; legacy registry имеет нужные теги
-  volumePermissions:
-    image:
-      repository: bitnamilegacy/os-shell
 
 pg-compute:
   auth:
@@ -149,39 +136,3 @@ vpc:
     enabled: false
     adminPodsSelector: {}
 
-netbox:
-  # Внешний Postgres (наш pg-netbox alias). Внутренний postgresql subchart выключен.
-  postgresql:
-    enabled: false
-  externalDatabase:
-    host: kacho-umbrella-pg-netbox
-    port: 5432
-    database: kacho_netbox
-    username: netbox
-    existingSecretName: kacho-umbrella-pg-netbox
-    existingSecretKey: password
-  # Valkey (Redis-совместимый) встроенный — этот chart использует valkey, не redis.
-  # Хардкодим dev-пароль, чтобы Bitnami "PASSWORDS ERROR on upgrade" guard не падал.
-  valkey:
-    enabled: true
-    auth:
-      password: dev-netbox-valkey-password
-  persistence:
-    enabled: false
-  reportsPersistence:
-    enabled: false
-  scriptsPersistence:
-    enabled: false
-  superuser:
-    name: admin
-    email: admin@kacho.local
-    password: admin
-    # apiToken не задаём: NetBox 4.x не принимает legacy v1 hex токены,
-    # API-токен берётся через UI или POST /api/users/tokens/provision/.
-  ingress:
-    enabled: true
-    className: nginx
-    hosts:
-      - host: netbox.kacho.local
-        paths:
-          - /
