@@ -5,7 +5,7 @@ set -euo pipefail
 # pod names: <release>-pg-<svc>-0  (release="kacho-umbrella")
 PODS=$(kubectl -n kacho get pods -l 'app.kubernetes.io/component=primary,app.kubernetes.io/instance=kacho-umbrella' -o jsonpath='{.items[*].metadata.name}')
 COUNT=$(echo "$PODS" | wc -w)
-[ "$COUNT" -eq 4 ] || { echo "FAIL: expected 4 postgres pods, got $COUNT"; exit 1; }
+[ "$COUNT" -eq 3 ] || { echo "FAIL: expected 3 postgres pods, got $COUNT"; exit 1; }
 
 for pod in $PODS; do
   kubectl -n kacho wait --for=condition=ready pod/"$pod" --timeout=180s
@@ -16,7 +16,6 @@ declare -A DBS=(
   [kacho-umbrella-pg-resource-manager-0]="resource_manager kacho_resource_manager"
   [kacho-umbrella-pg-vpc-0]="vpc kacho_vpc"
   [kacho-umbrella-pg-compute-0]="compute kacho_compute"
-  [kacho-umbrella-pg-loadbalancer-0]="loadbalancer kacho_loadbalancer"
 )
 for pod in "${!DBS[@]}"; do
   read -r user db <<< "${DBS[$pod]}"
@@ -24,4 +23,4 @@ for pod in "${!DBS[@]}"; do
   [ "$count" = "0" ] || { echo "FAIL: $db has $count user tables (expected 0)"; exit 1; }
 done
 
-echo "PASS: E4 — 4 postgres ready, all DBs empty"
+echo "PASS: E4 — 3 postgres ready, all DBs empty"

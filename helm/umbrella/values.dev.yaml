@@ -114,19 +114,6 @@ pg-compute:
     image:
       repository: bitnamilegacy/os-shell
 
-pg-loadbalancer:
-  auth:
-    username: loadbalancer
-    password: dev-loadbalancer-password
-    database: kacho_loadbalancer
-  primary:
-    persistence:
-      enabled: false
-  image:
-    repository: bitnamilegacy/postgresql   # Bitnami переехал; legacy registry имеет нужные теги
-  volumePermissions:
-    image:
-      repository: bitnamilegacy/os-shell
 
 # kacho-vpc — admin networkpolicy для :9091.
 # В dev-стенде disabled (port-forward kachoctl-ipam должен работать).
