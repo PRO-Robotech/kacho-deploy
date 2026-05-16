@@ -20,13 +20,17 @@ declare -A DBS=(
 )
 for pod in "${!DBS[@]}"; do
   read -r user db <<< "${DBS[$pod]}"
+  # Bitnami stores app password в secret `<release>-<alias>` под key `password`.
+  # release="kacho-umbrella"; alias = pod-name без `-0` суффикса.
+  secret="${pod%-0}"
+  password=$(kubectl -n kacho get secret "$secret" -o jsonpath='{.data.password}' | base64 -d)
   count=""
   # migrations runs из app-side init-container; pg pod ready != tables applied,
   # дай до 60s на migrations завершиться.
   for attempt in $(seq 1 12); do
     # `set -euo pipefail` + non-zero kubectl exit убил бы script досрочно —
     # explicit `|| echo ERR` гасит non-zero exit и сохраняет stderr.
-    out=$(kubectl -n kacho exec "$pod" -- psql -U "$user" -d "$db" -tAXqc \
+    out=$(kubectl -n kacho exec "$pod" -- env PGPASSWORD="$password" psql -U "$user" -d "$db" -tAXqc \
       "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')" 2>&1 \
       || echo "ERR")
     count=$(printf '%s' "$out" | tr -d '[:space:]')
