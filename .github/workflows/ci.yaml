@@ -67,7 +67,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - uses: azure/setup-helm@v4
-      - run: cd helm/umbrella && helm dep update && helm lint -f values.dev.yaml
+      - run: cd helm/umbrella && helm dep update && helm lint . -f values.dev.yaml
 
   e2e-on-kind:
     runs-on: ubuntu-latest
