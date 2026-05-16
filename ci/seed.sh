@@ -159,7 +159,10 @@ try:
   d=json.load(sys.stdin); print("1" if any(p.get("isDefault") for p in (d.get("pools") or [])) else "")
 except Exception: print("")')
 if [[ -z "$HAS_DEFAULT" ]]; then
-  treq POST "/vpc/v1/addressPools" '{"name":"default-ru-central1-a","kind":"EXTERNAL_PUBLIC","zoneId":"ru-central1-a","cidrBlocks":["198.51.100.0/24"],"isDefault":true}' >/dev/null
+  # KAC-71: cidr_blocks split на v4_cidr_blocks + v6_cidr_blocks (proto tag 7 reserved).
+  # Старое поле cidrBlocks теперь игнорируется и pool создаётся пустым → пакет не валидируется,
+  # после чего address.Create не может зарезолвить default pool.
+  treq POST "/vpc/v1/addressPools" '{"name":"default-ru-central1-a","kind":"EXTERNAL_PUBLIC","zoneId":"ru-central1-a","v4CidrBlocks":["198.51.100.0/24"],"isDefault":true}' >/dev/null
 fi
 
 # --- json helper: extract a top-level / metadata field from a JSON blob on stdin ---
