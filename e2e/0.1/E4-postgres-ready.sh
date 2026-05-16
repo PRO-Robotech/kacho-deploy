@@ -11,7 +11,8 @@ for pod in $PODS; do
   kubectl -n kacho wait --for=condition=ready pod/"$pod" --timeout=180s
 done
 
-# Каждая БД доступна и пуста
+# Каждая БД доступна; migrations applied (count > 0).
+# After KAC-94 schema rename vpc lives in `kacho_vpc` schema, not `public`.
 declare -A DBS=(
   [kacho-umbrella-pg-resource-manager-0]="resource_manager kacho_resource_manager"
   [kacho-umbrella-pg-vpc-0]="vpc kacho_vpc"
@@ -19,8 +20,8 @@ declare -A DBS=(
 )
 for pod in "${!DBS[@]}"; do
   read -r user db <<< "${DBS[$pod]}"
-  count=$(kubectl -n kacho exec "$pod" -- psql -U "$user" -d "$db" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>/dev/null)
-  [ "$count" = "0" ] || { echo "FAIL: $db has $count user tables (expected 0)"; exit 1; }
+  count=$(kubectl -n kacho exec "$pod" -- psql -U "$user" -d "$db" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')" 2>/dev/null)
+  [ "$count" -gt 0 ] || { echo "FAIL: $db has $count user tables (expected > 0 after migrations)"; exit 1; }
 done
 
-echo "PASS: E4 — 3 postgres ready, all DBs empty"
+echo "PASS: E4 — 3 postgres ready, migrations applied"
