@@ -45,7 +45,7 @@ ui:
 
 kacho-iam:
   image:
-    repository: ttl.sh/kacho-118-1779058224/kacho-iam
+    repository: ttl.sh/kacho-119d-1779061297/kacho-iam
     tag: "24h"
     pullPolicy: Always
   initContainer:
@@ -55,8 +55,14 @@ kacho-iam:
     KACHO_DEBUG_PRINCIPAL: "1"
     # KAC-116: AuthZ backend → Keto (replaces OpenFGA).
     KACHO_IAM_AUTHZ_BACKEND: "keto"
-    KACHO_IAM_KETO_READ_URL: "http://kacho-umbrella-keto-read.kacho.svc.cluster.local:4466"
-    KACHO_IAM_KETO_WRITE_URL: "http://kacho-umbrella-keto-write.kacho.svc.cluster.local:4467"
+    # Service expose'ит port 80 (Read API REST). 4466 — это headless container port.
+    KACHO_IAM_KETO_READ_URL: "http://kacho-umbrella-keto-read.kacho.svc.cluster.local:80"
+    KACHO_IAM_KETO_WRITE_URL: "http://kacho-umbrella-keto-write.kacho.svc.cluster.local:80"
+    # KAC-119: bootstrap admin matcher.
+    # Format: exact email (`admin@prorobotech.ru`) либо domain suffix
+    # начинается с `@` (`@prorobotech.ru` — любой user с этим domain → admin).
+    # Domain-based — для corporate setup (все сотрудники @prorobotech.ru — админы).
+    KACHO_IAM_BOOTSTRAP_ADMIN_EMAIL: "@prorobotech.ru"
 
 # === Deprecated stack (KAC-115 migration): disabled ===
 zitadel:

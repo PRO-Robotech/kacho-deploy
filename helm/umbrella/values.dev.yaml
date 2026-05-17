@@ -231,6 +231,31 @@ zitadel:
             Password: dev-zitadel-password
             SSL:
               Mode: disable
+      # Machine user (service account) — Zitadel setup-Job создаст SA + private key,
+      # положит в /machinekey/sa.json; sidecar machinekey-writer затем создаст
+      # k8s Secret `zitadel-admin-sa` (имя == Username). Используется post-install
+      # Job zitadel-oidc-bootstrap для создания OIDC app `kacho-console` через
+      # jwt-bearer grant.
+      FirstInstance:
+        Org:
+          Machine:
+            Machine:
+              Username: zitadel-admin-sa
+              Name: "Zitadel Admin SA"
+            MachineKey:
+              Type: 1  # JSON enum (PEM RSA + metadata)
+              ExpirationDate: "2030-01-01T00:00:00Z"
+  # machinekey-writer sidecar — bitnami/kubectl. Default registry depreced
+  # (Bitnami переехал на bitnamilegacy/). На e2c825 без этого override
+  # sidecar падает с ErrImagePull → setup-Job DeadlineExceeded.
+  setupJob:
+    machinekeyWriter:
+      image:
+        # `bitnami/kubectl` resolves tag из k8s version (1.35) — но такого tag нет
+        # ни в bitnami, ни в bitnamilegacy. Используем alpine/k8s — multi-arch
+        # альтернатива с фиксированным tag-номером.
+        repository: alpine/k8s
+        tag: "1.30.0"
   ingress:
     enabled: true
     className: nginx
@@ -239,6 +264,271 @@ zitadel:
         paths:
           - path: /
             pathType: Prefix
+
+# OIDC application bootstrap — post-install Job через Zitadel Management API.
+# Создаёт OIDC app `kacho-console` + пишет client_id в Secret `kacho-iam-oidc-client`.
+# api-gateway читает client_id из этого Secret через valueFrom.secretKeyRef.
+# MailHog — SMTP catch-all (UI на :8025). Включается per-cluster в overrides.
+mailhog:
+  enabled: false
+  image:
+    repository: mailhog/mailhog
+    tag: "v1.0.1"
+
+# KAC-115: Ory stack — Kratos (identity) + Hydra (OIDC) + Keto (REBAC).
+# Включаются вместо Zitadel+OpenFGA через overrides.yaml.
+
+pg-kratos:
+  enabled: false
+  global: { security: { allowInsecureImages: true } }
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/postgresql
+    tag: "16.4.0-debian-12-r0"
+  auth:
+    username: kratos
+    password: dev-kratos-password
+    database: kratos
+  primary:
+    persistence: { enabled: false }
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 1, memory: 1Gi }
+
+pg-hydra:
+  enabled: false
+  global: { security: { allowInsecureImages: true } }
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/postgresql
+    tag: "16.4.0-debian-12-r0"
+  auth:
+    username: hydra
+    password: dev-hydra-password
+    database: hydra
+  primary:
+    persistence: { enabled: false }
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 1, memory: 1Gi }
+
+pg-keto:
+  enabled: false
+  global: { security: { allowInsecureImages: true } }
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/postgresql
+    tag: "16.4.0-debian-12-r0"
+  auth:
+    username: keto
+    password: dev-keto-password
+    database: keto
+  primary:
+    persistence: { enabled: false }
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 1, memory: 1Gi }
+
+kratos:
+  enabled: false
+  kratos:
+    development: true
+    automigration:
+      enabled: true
+    config:
+      dsn: "postgres://kratos:dev-kratos-password@kacho-umbrella-pg-kratos:5432/kratos?sslmode=disable"
+      serve:
+        public:
+          base_url: "http://5.35.93.58/.ory/kratos/public/"
+          cors:
+            enabled: true
+            allowed_origins: ["http://5.35.93.58"]
+        admin:
+          base_url: "http://kacho-umbrella-kratos-admin:80/"
+      selfservice:
+        default_browser_return_url: "http://5.35.93.58/"
+        allowed_return_urls: ["http://5.35.93.58"]
+        methods:
+          password: { enabled: true }
+          oidc: { enabled: false }
+          totp: { enabled: false }
+        flows:
+          registration:
+            enabled: true
+            ui_url: "http://5.35.93.58/registration"
+            after:
+              password: { hooks: [{ hook: "session" }] }
+          login:
+            ui_url: "http://5.35.93.58/login"
+          settings:
+            ui_url: "http://5.35.93.58/settings"
+          recovery:
+            enabled: true
+            ui_url: "http://5.35.93.58/recovery"
+          verification:
+            enabled: false
+          error:
+            ui_url: "http://5.35.93.58/error"
+      log:
+        level: info
+        format: json
+      secrets:
+        cookie: ["please-change-this-32-bytes-A1Bx"]
+        cipher: ["please-change-this-32-bytes-A1Bx"]
+      session:
+        lifespan: "24h"
+      identity:
+        default_schema_id: default
+        schemas:
+          # Inline schema через base64 — не зависим от extra ConfigMap.
+          - id: default
+            url: "base64://eyIkaWQiOiJodHRwczovL3NjaGVtYXMua2FjaG8ubG9jYWwvaWRlbnRpdHkvdjEuMC4wL2RlZmF1bHQuanNvbiIsIiRzY2hlbWEiOiJodHRwOi8vanNvbi1zY2hlbWEub3JnL2RyYWZ0LTA3L3NjaGVtYSMiLCJ0aXRsZSI6IlBlcnNvbiIsInR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InRyYWl0cyI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJlbWFpbCI6eyJ0eXBlIjoic3RyaW5nIiwiZm9ybWF0IjoiZW1haWwiLCJ0aXRsZSI6IkUtTWFpbCIsIm9yeS5zaC9rcmF0b3MiOnsiY3JlZGVudGlhbHMiOnsicGFzc3dvcmQiOnsiaWRlbnRpZmllciI6dHJ1ZX19LCJyZWNvdmVyeSI6eyJ2aWEiOiJlbWFpbCJ9LCJ2ZXJpZmljYXRpb24iOnsidmlhIjoiZW1haWwifX19LCJuYW1lIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7ImZpcnN0Ijp7InR5cGUiOiJzdHJpbmciLCJ0aXRsZSI6IkZpcnN0IE5hbWUifSwibGFzdCI6eyJ0eXBlIjoic3RyaW5nIiwidGl0bGUiOiJMYXN0IE5hbWUifX19fSwicmVxdWlyZWQiOlsiZW1haWwiXSwiYWRkaXRpb25hbFByb3BlcnRpZXMiOmZhbHNlfX19"
+      courier:
+        smtp:
+          connection_uri: "smtp://mailhog.kacho.svc.cluster.local:1025/?disable_starttls=true"
+          from_address: "noreply@kacho.local"
+          from_name: "Kacho"
+  identitySchemas:
+    "identity.default.schema.json": |
+      {
+        "$id": "https://schemas.kacho.local/identity/v1.0.0/default.json",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Person",
+        "type": "object",
+        "properties": {
+          "traits": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "type": "string", "format": "email",
+                "title": "E-Mail",
+                "ory.sh/kratos": {
+                  "credentials": { "password": { "identifier": true } },
+                  "recovery": { "via": "email" },
+                  "verification": { "via": "email" }
+                }
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "first": { "type": "string", "title": "First Name" },
+                  "last":  { "type": "string", "title": "Last Name" }
+                }
+              }
+            },
+            "required": ["email"],
+            "additionalProperties": false
+          }
+        }
+      }
+
+hydra:
+  enabled: false
+  hydra:
+    automigration:
+      enabled: true
+      type: job
+    dev: true
+    config:
+      dsn: "postgres://hydra:dev-hydra-password@kacho-umbrella-pg-hydra:5432/hydra?sslmode=disable"
+      serve:
+        public:
+          cors:
+            enabled: true
+            allowed_origins: ["http://5.35.93.58"]
+      urls:
+        self:
+          public: "http://5.35.93.58/.ory/hydra/public/"
+          issuer: "http://5.35.93.58/.ory/hydra/public/"
+        consent: "http://5.35.93.58/consent"
+        login: "http://5.35.93.58/login"
+        logout: "http://5.35.93.58/logout"
+        error: "http://5.35.93.58/error"
+        post_logout_redirect: "http://5.35.93.58/"
+      secrets:
+        system: ["please-change-this-32-bytes-A1Bx"]
+      oauth2:
+        expose_internal_errors: true
+      log:
+        level: info
+        format: json
+        leak_sensitive_values: true
+
+keto:
+  enabled: false
+  keto:
+    config:
+      dsn: "postgres://keto:dev-keto-password@kacho-umbrella-pg-keto:5432/keto?sslmode=disable"
+      # KAC-119: full namespace catalog. id-numbers стабильны.
+      namespaces:
+        - id: 0
+          name: user
+        - id: 1
+          name: service_account
+        - id: 2
+          name: group
+        - id: 3
+          name: account
+        - id: 4
+          name: project
+        - id: 5
+          name: vpc_network
+        - id: 6
+          name: compute_instance
+        - id: 7
+          name: kacho_system        # KAC-119 system-wide admin marker
+        - id: 8
+          name: vpc_subnet
+        - id: 9
+          name: vpc_address
+        - id: 10
+          name: vpc_security_group
+        - id: 11
+          name: vpc_route_table
+        - id: 12
+          name: vpc_gateway
+        - id: 13
+          name: compute_disk
+        - id: 14
+          name: compute_image
+        - id: 15
+          name: compute_snapshot
+      log:
+        level: info
+        format: json
+    automigration:
+      enabled: true
+      type: initContainer
+
+# Ory Kratos self-service UI (login/registration/recovery/verification/settings).
+# Образ oryd/kratos-selfservice-ui-node. UI nginx проксирует /login,/registration,
+# /recovery,/verification,/settings,/error → этот pod на :3000.
+kratosSelfServiceUI:
+  enabled: false
+  image:
+    repository: oryd/kratos-selfservice-ui-node
+    tag: "v1.3.1"
+  kratosBrowserUrl: "http://5.35.93.58/.ory/kratos/public"
+  kratosPublicUrl: "http://kacho-umbrella-kratos-public:80"
+  hydraAdminUrl: "http://kacho-umbrella-hydra-admin:4445"
+  cookieSecret: "please-change-this-32-bytes-A1Bx"
+
+zitadelOidcBootstrap:
+  enabled: false
+  appName: "kacho-console"
+  projectName: "kacho-console"
+  redirectUri: "http://localhost/iam/v1/auth/callback"  # override в cluster overrides
+  clientSecretName: "kacho-iam-oidc-client"
+  zitadelInternal: "http://kacho-umbrella-zitadel.kacho.svc.cluster.local:8080"
+  machineSaSecretName: "zitadel-admin-sa"
+  machineSaKeyFile: "zitadel-admin-sa.json"
+  # Admin human user — создаётся через Admin API с isEmailVerified=true и
+  # passwordChangeRequired=false (без SMTP не получим verification codes).
+  adminEmail: "admin@kacho.local"
+  adminPassword: "Admin1234!"
+  image:
+    repository: python
+    tag: "3.12-slim"
 
   # KAC-107 — chicken-and-egg fix: Zitadel chart по умолчанию рендерит
   # `zitadel-init` / `zitadel-setup` как Helm `pre-install,pre-upgrade` hooks
