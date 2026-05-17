@@ -57,6 +57,11 @@ initContainer:
   migrator:
     enabled: true
     command: ["/usr/local/bin/kacho-migrator", "up"]
+  # wait-for-zitadel + wait-for-openfga init-container'ы. На E0/E1 (без auth) —
+  # ставь false (Zitadel/OpenFGA ещё не задеплоены, pod иначе застрянет в Init).
+  # На E2/E3 — true (стандартная gate-проверка startup-порядка).
+  waitForExtAuth:
+    enabled: true
 
 resources:
   requests:
