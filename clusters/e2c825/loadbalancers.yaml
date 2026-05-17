@@ -1,0 +1,43 @@
+---
+# Beget LoadBalancer для api-gateway + UI.
+# Аннотации `lb.beget.com/*` — облако-специфичные.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-lb
+  namespace: kacho
+  annotations:
+    lb.beget.com/algorithm: round_robin
+    lb.beget.com/healthcheck-interval-seconds: "60"
+    lb.beget.com/healthcheck-timeout-seconds: "5"
+    lb.beget.com/type: external
+spec:
+  type: LoadBalancer
+  selector:
+    app: api-gateway
+  ports:
+    - name: cmux
+      port: 8080
+      targetPort: cmux
+    - name: tls
+      port: 8443
+      targetPort: tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui-lb
+  namespace: kacho
+  annotations:
+    lb.beget.com/algorithm: round_robin
+    lb.beget.com/healthcheck-interval-seconds: "60"
+    lb.beget.com/healthcheck-timeout-seconds: "5"
+    lb.beget.com/type: external
+spec:
+  type: LoadBalancer
+  selector:
+    app: ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

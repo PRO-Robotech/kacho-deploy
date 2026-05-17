@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kacho-iam.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kacho-iam.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "kacho-iam.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kacho-iam.labels" . | nindent 8 }}
+      annotations:
+        # ConfigMap-content hash → pod rolling-restart при изменении config.yaml.
+        kacho.cloud/config-checksum: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "kacho-iam.fullname" . }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "kacho-iam.fullname" . }}-config
+      initContainers:
+        {{- if .Values.initContainer.migrator.enabled }}
+        # skill evgeniy §9 K.1: миграции БД исполняет отдельный binary `kacho-migrator`
+        # (тот же image, отдельный entrypoint). DSN собирается мигратором из
+        # KACHO_IAM_DB_* env (через config-fallback).
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            {{- toYaml .Values.initContainer.migrator.command | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/kacho-iam
+              readOnly: true
+          env:
+            - name: KACHO_IAM_CONFIG_PATH
+              value: /etc/kacho-iam/config.yaml
+            - name: KACHO_IAM_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.db.passwordSecretName }}
+                  key: {{ .Values.db.passwordSecretKey }}
+        {{- end }}
+        # KAC-105 / sub-phase-2.0-iam-overview-acceptance NFR-9:
+        # «kacho-iam config-load fails-fast, если Zitadel issuer недоступен;
+        #  ordering managed через post-install hook / init-container, пингующий
+        #  issuer/OpenFGA HTTP-ready endpoint».
+        # На E0 коду kacho-iam ещё не нужны Zitadel/OpenFGA (это E2/E3). НО:
+        # init-container остаётся в шаблоне как infrastructure-readiness гарантия,
+        # чтобы при включении extapi в E2/E3 startup-порядок уже работал.
+        # Заглушка — wait-for-it на TCP-уровне (curl недоступен в distroless).
+        - name: wait-for-zitadel
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "wait-for-zitadel: ожидаем kacho-umbrella-zitadel:8080 (max 300s)…"
+              for i in $(seq 1 60); do
+                if nc -z kacho-umbrella-zitadel 8080 2>/dev/null; then
+                  echo "wait-for-zitadel: OK"
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "wait-for-zitadel: TIMEOUT — kacho-umbrella-zitadel:8080 недоступен"
+              exit 1
+        - name: wait-for-openfga
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "wait-for-openfga: ожидаем kacho-umbrella-openfga:8080 (max 300s)…"
+              for i in $(seq 1 60); do
+                if nc -z kacho-umbrella-openfga 8080 2>/dev/null; then
+                  echo "wait-for-openfga: OK"
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "wait-for-openfga: TIMEOUT — kacho-umbrella-openfga:8080 недоступен"
+              exit 1
+      containers:
+        - name: {{ include "kacho-iam.fullname" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/kacho-iam", "serve"]
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.ports.grpc }}
+            - name: grpc-internal
+              containerPort: {{ .Values.ports.internalGrpc }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/kacho-iam
+              readOnly: true
+          env:
+            - name: KACHO_IAM_CONFIG_PATH
+              value: /etc/kacho-iam/config.yaml
+            - name: KACHO_IAM_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.db.passwordSecretName }}
+                  key: {{ .Values.db.passwordSecretKey }}
+            # OpenFGA store-id создаётся bootstrap-job'ом, см. umbrella/templates/openfga-bootstrap-job.yaml.
+            # На E0 secret может ещё не существовать к моменту первого старта;
+            # `optional: true` позволяет pod'у стартовать без него (kacho-iam
+            # начнёт использовать OpenFGA только в E3, до этого — no-op).
+            - name: KACHO_IAM_OPENFGA_STORE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.config.extapi.openfga.storeIdSecretName }}
+                  key: {{ .Values.config.extapi.openfga.storeIdSecretKey }}
+                  optional: true
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

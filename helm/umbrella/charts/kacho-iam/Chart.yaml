@@ -1,0 +1,6 @@
+apiVersion: v2
+name: kacho-iam
+version: 1.0.0
+appVersion: 1.0.0
+type: application
+description: Kachō IAM — Account / Project / User / ServiceAccount / Group / Role / AccessBinding (E0 skeleton)

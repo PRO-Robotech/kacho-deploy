@@ -18,6 +18,20 @@ dependencies:
     alias: pg-compute
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
+  # KAC-105: IAM stack — отдельные Postgres-инстансы под kacho-iam / Zitadel / OpenFGA
+  # (запрет #8: database-per-service; +«независимые БД» из sub-phase-2.0-iam-overview §4).
+  - name: postgresql
+    alias: pg-iam
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
+  - name: postgresql
+    alias: pg-zitadel
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
+  - name: postgresql
+    alias: pg-openfga
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
   - name: resource-manager
     version: 1.0.0
     repository: file://../../../kacho-resource-manager/deploy
@@ -35,3 +49,17 @@ dependencies:
   - name: ui
     version: 1.0.0
     repository: file://../../../kacho-ui/deploy
+  # KAC-105 (sub-phase 2.0 IAM, E0 skeleton). Sub-chart живёт в umbrella/charts/kacho-iam/
+  # (file:// относительно Chart.yaml). На E0 image скорее всего ещё не существует —
+  # см. values.dev.yaml `kacho-iam.image.repository` / `tag` для конкретики.
+  - name: kacho-iam
+    version: 1.0.0
+    repository: file://./charts/kacho-iam
+  # External charts для IAM stack. Версии резолвнуты `helm dependency update`
+  # на 2026-05-17 (KAC-105): zitadel-8.13.4, openfga-0.2.62.
+  - name: zitadel
+    version: 8.x
+    repository: https://charts.zitadel.com
+  - name: openfga
+    version: 0.2.x
+    repository: https://openfga.github.io/helm-charts

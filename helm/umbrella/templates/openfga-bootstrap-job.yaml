@@ -1,0 +1,59 @@
+{{- if .Values.openfgaBootstrap.enabled }}
+{{/*
+KAC-105 / overview-acceptance §4 / E0.GWT-01:
+post-install Job, который создаёт OpenFGA store + загружает stub authorization-model
++ пишет store_id в Secret kacho-iam-openfga-store.
+
+Hook policy:
+  - post-install,post-upgrade — гарантирует, что OpenFGA Deployment уже создан.
+  - hook-weight=10 — после bootstrap-rbac (weight=0).
+  - hook-delete-policy: before-hook-creation,hook-succeeded — удалить старый Job
+    перед запуском нового; удалить после успеха.
+
+Можно запустить вручную через `make fga-bootstrap` для дебага.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openfga-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: helm
+    kacho.cloud/component: openfga-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: openfga-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: openfga-bootstrap
+      volumes:
+        - name: model
+          configMap:
+            name: {{ .Values.openfgaBootstrap.authorizationModelConfigMap }}
+            defaultMode: 0755
+      containers:
+        - name: bootstrap
+          image: {{ .Values.openfgaBootstrap.image | quote }}
+          command: ["/bin/sh", "/etc/openfga-model/bootstrap.sh"]
+          env:
+            - name: OPENFGA_URL
+              value: "http://kacho-umbrella-openfga:8080"
+            - name: STORE_NAME
+              value: {{ .Values.openfgaBootstrap.storeName | quote }}
+            - name: SECRET_NAME
+              value: "kacho-iam-openfga-store"
+            - name: NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+          volumeMounts:
+            - name: model
+              mountPath: /etc/openfga-model
+              readOnly: true
+{{- end }}

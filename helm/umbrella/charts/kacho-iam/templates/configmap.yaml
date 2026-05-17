@@ -1,0 +1,55 @@
+{{/*
+ConfigMap с YAML-конфигом kacho-iam.
+
+Соответствует convention'у kacho-vpc / kacho-compute (skill evgeniy §8 J.1):
+сервис читает config из /etc/kacho-iam/config.yaml; поля можно override через
+ENV `KACHO_IAM_<SECTION>__<KEY>=...`.
+
+DB-пароль НЕ кладётся сюда (secret); подтягивается через
+`repository.postgres.password-from-env: KACHO_IAM_DB_PASSWORD` и Secret-ENV
+в deployment.yaml.
+
+KAC-105: на E0 extapi.zitadel / extapi.openfga endpoints — заглушки (сервис
+скорее всего ещё не использует их в коде до E2/E3).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kacho-iam.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kacho-iam.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    logger:
+      level: {{ default "INFO" .Values.config.logger.level | quote }}
+
+    api-server:
+      endpoint: {{ printf "tcp://0.0.0.0:%v" .Values.ports.grpc | quote }}
+      internal-endpoint: {{ printf "tcp://0.0.0.0:%v" .Values.ports.internalGrpc | quote }}
+      graceful-shutdown: {{ default "10s" .Values.config.apiServer.gracefulShutdown | quote }}
+
+    metrics:
+      enable: {{ default true .Values.config.metrics.enable }}
+    healthcheck:
+      enable: {{ default true .Values.config.healthcheck.enable }}
+
+    repository:
+      type: POSTGRES
+      postgres:
+        url: {{ printf "postgres://%s@%s:%v/%s" .Values.db.user .Values.db.host .Values.db.port .Values.db.name | quote }}
+        max-conns: {{ default 0 .Values.config.repository.postgres.maxConns }}
+        ssl-mode: {{ default "disable" .Values.config.repository.postgres.sslMode | quote }}
+        password-from-env: KACHO_IAM_DB_PASSWORD
+
+    authn:
+      mode: {{ default "dev" .Values.config.authn.mode | quote }}
+
+    extapi:
+      def-dial-duration: 10s
+      zitadel:
+        endpoint: {{ .Values.config.extapi.zitadel.endpoint | quote }}
+        issuer: {{ .Values.config.extapi.zitadel.issuer | quote }}
+      openfga:
+        endpoint: {{ .Values.config.extapi.openfga.endpoint | quote }}
+        store-id-from-env: KACHO_IAM_OPENFGA_STORE_ID

@@ -4,12 +4,20 @@
 
 ## Команды
 
-- `make dev-up` — поднять кластер (< 5 мин)
+- `make dev-up` — поднять кластер (< 5 мин; с IAM-stack — < 8 мин, см. NFR-9 sub-phase-2.0)
 - `make dev-down` — снести
-- `make reload-svc SVC=<svc>` — пересобрать и перезагрузить один сервис
+- `make reload-svc SVC=<svc>` — пересобрать и перезагрузить один сервис (включая `SVC=iam`)
 - `make logs-svc SVC=<svc>` — `kubectl logs -f`
 - `make psql SVC=<svc>` — psql в pod-е
 - `make e2e-test` — bash-сценарии в `e2e/` (см. ниже)
+
+### IAM stack (KAC-105, sub-phase 2.0)
+
+- `make reload-svc-iam` — alias for `make reload-svc SVC=iam`
+- `make psql-iam` — psql в `kacho_iam`-БД (pg-iam)
+- `make logs-iam` — `kubectl logs -f deploy/kacho-iam`
+- `make zitadel-admin` — pod-листинг + initial admin credentials Zitadel (читает из логов)
+- `make fga-bootstrap` — вручную запустить openfga-bootstrap Job (создаёт store + загружает model)
 
 ## E2E (`e2e/`) и CI
 
@@ -36,7 +44,8 @@ newman-job ~7 мин → ~3 мин.
 
 - docker, kind v0.20+, kubectl, helm 3, bats-core
 - Свободный порт 80 на host-машине
-- В `/etc/hosts`: `127.0.0.1 api.kacho.local kacho.local`
+- В `/etc/hosts`: `127.0.0.1 api.kacho.local kacho.local zitadel.kacho.local openfga.kacho.local`
+  (последние два — для KAC-105 IAM stack, см. ниже)
 
 ## Persistence
 
@@ -55,3 +64,37 @@ Dev-стенд поднимает NetBox рядом с остальными се
 Persistence у NetBox media/reports/scripts и `pg-netbox` — `emptyDir`, как у остальных сервисов: данные пропадают при `make dev-down`.
 
 `make reload-svc SVC=netbox` и `make logs-svc SVC=netbox` не работают — NetBox не пересобирается локально (внешний образ), а `logs-svc` ожидает один Deployment с именем сервиса, у NetBox их несколько (web/worker). Используйте `kubectl logs -n kacho -l app.kubernetes.io/name=netbox -f`.
+
+## IAM stack (KAC-105, sub-phase 2.0)
+
+Dev-стенд поднимает три новых компонента рядом с остальными сервисами:
+
+- **kacho-iam** — control-plane сервис IAM (Account / Project / User / ServiceAccount /
+  Group / Role / AccessBinding). gRPC `:9090` (public) + `:9091` (internal, admin-only).
+  Sub-chart живёт в `helm/umbrella/charts/kacho-iam/`. Image: `kacho-iam:dev`
+  (build из `project/kacho-iam/`).
+- **Zitadel** — OIDC issuer (источник identity, signup, JWT). UI на
+  `http://zitadel.kacho.local`. Внешний chart `charts.zitadel.com`.
+- **OpenFGA** — REBAC engine (Zanzibar-модель, tuple-store, Check-API). gRPC `:8081`,
+  HTTP `:8080` (playground enabled в dev — `http://openfga.kacho.local`). Внешний chart
+  `openfga.github.io/helm-charts`.
+
+Постгресы — три отдельных инстанса (запрет #8: DB-per-service):
+
+- `pg-iam` → `kacho_iam` БД (`iam` / `dev-iam-password`)
+- `pg-zitadel` → `zitadel` БД (`zitadel` / `dev-zitadel-password`)
+- `pg-openfga` → `openfga` БД (`openfga` / `dev-openfga-password`)
+
+**Bootstrap-order** (NFR-9): Zitadel-postgres → Zitadel → kacho-iam (init-container
+`wait-for-zitadel` / `wait-for-openfga` блокирует startup до :8080 ready). OpenFGA store
+создаётся `openfga-bootstrap` post-install Job'ом (helm hook), store_id пишется в Secret
+`kacho-iam-openfga-store`, kacho-iam читает его при старте через `optional: true` secretKeyRef.
+
+**Полезные команды** (см. секцию «IAM stack» выше):
+- `make psql-iam` — psql в `kacho_iam`
+- `make logs-iam` — логи kacho-iam
+- `make zitadel-admin` — credentials Zitadel UI
+- `make fga-bootstrap` — пересоздать OpenFGA store + model вручную
+
+**Persistence**: `pg-iam` / `pg-zitadel` / `pg-openfga` — все `emptyDir`, данные пропадают
+при `make dev-down`. Bootstrap-job и default-roles seed выполнятся заново при `make dev-up`.

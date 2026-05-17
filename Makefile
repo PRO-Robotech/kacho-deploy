@@ -1,6 +1,7 @@
 .PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint seed-ipam \
         ci-images ci-up ci-down ci-logs ci-seed \
-        loadtest-address-allocate loadtest-address-allocate-clean
+        loadtest-address-allocate loadtest-address-allocate-clean \
+        reload-svc-iam psql-iam logs-iam zitadel-admin fga-bootstrap
 
 CLUSTER_NAME := kacho
 
@@ -80,16 +81,18 @@ reload-svc:
 ifndef SVC
 	$(error SVC variable is required, e.g. make reload-svc SVC=compute)
 endif
-	@if [ "$(SVC)" != "resource-manager" ] && [ "$(SVC)" != "vpc" ] && [ "$(SVC)" != "compute" ] && [ "$(SVC)" != "loadbalancer" ] && [ "$(SVC)" != "api-gateway" ]; then \
+	@if [ "$(SVC)" != "resource-manager" ] && [ "$(SVC)" != "vpc" ] && [ "$(SVC)" != "compute" ] && [ "$(SVC)" != "loadbalancer" ] && [ "$(SVC)" != "api-gateway" ] && [ "$(SVC)" != "iam" ]; then \
 		echo "ERROR: unknown service '$(SVC)'"; exit 1; \
 	fi; \
-	if ! kubectl -n kacho get deploy $(SVC) >/dev/null 2>&1; then \
-		echo "WARN: service '$(SVC)' is not deployed yet (planned for sub-phase 0.X — see roadmap)"; \
+	DEPLOY_NAME=$(SVC); \
+	if [ "$(SVC)" = "iam" ]; then DEPLOY_NAME=kacho-iam; fi; \
+	if ! kubectl -n kacho get deploy $$DEPLOY_NAME >/dev/null 2>&1; then \
+		echo "WARN: service '$(SVC)' (deployment '$$DEPLOY_NAME') is not deployed yet (planned for sub-phase 0.X — see roadmap)"; \
 		exit 0; \
 	fi; \
 	cd .. && docker build -f kacho-$(SVC)/Dockerfile -t kacho-$(SVC):dev . && \
 	kind load docker-image kacho-$(SVC):dev --name $(CLUSTER_NAME) && \
-	kubectl rollout restart -n kacho deployment/$(SVC)
+	kubectl rollout restart -n kacho deployment/$$DEPLOY_NAME
 
 logs-svc:
 ifndef SVC
@@ -135,3 +138,41 @@ loadtest-address-allocate:
 loadtest-address-allocate-clean:
 	@kubectl -n kacho delete job k6-address-allocate --ignore-not-found
 	@kubectl -n kacho delete cm k6-address-allocate --ignore-not-found
+
+# ─── KAC-105: IAM stack (Zitadel + OpenFGA + kacho-iam) ──────────────
+
+# alias для reload-svc SVC=iam — пересобрать и перезагрузить kacho-iam.
+reload-svc-iam:
+	@$(MAKE) reload-svc SVC=iam
+
+# psql в kacho_iam-БД (база, пользователь, схема — все kacho_iam).
+psql-iam:
+	kubectl exec -it -n kacho statefulset/kacho-umbrella-pg-iam -- psql -U iam -d kacho_iam
+
+# Логи kacho-iam deployment.
+logs-iam:
+	kubectl logs -n kacho -f deploy/kacho-iam
+
+# Вывести pod + admin-credentials Zitadel (для UI в http://zitadel.kacho.local).
+# Bootstrap-creds Zitadel: по умолчанию admin@zitadel.kacho.local / RandomPasswordFromLog
+# (читаем из pod-логов; либо после первого UI-логина — стандартный flow setup).
+zitadel-admin:
+	@echo "Zitadel pods:"
+	@kubectl -n kacho get pods -l app.kubernetes.io/name=zitadel
+	@echo
+	@echo "Initial admin credentials (если не настроены через secrets) — ищем в pod-логе:"
+	@kubectl -n kacho logs -l app.kubernetes.io/name=zitadel --tail=200 | grep -iE 'admin|password|bootstrap' || true
+	@echo
+	@echo "UI: http://zitadel.kacho.local (добавь '127.0.0.1 zitadel.kacho.local' в /etc/hosts)"
+
+# Вручную запустить openfga-bootstrap-job (для дебага / повторного применения model).
+# Helm hook удаляет старый Job при post-install/upgrade, поэтому здесь используем
+# `helm template` для рендера манифеста + apply.
+fga-bootstrap:
+	@echo "Запускаем openfga-bootstrap Job (idempotent):"
+	@kubectl -n kacho delete job openfga-bootstrap --ignore-not-found
+	@helm template kacho-umbrella ./helm/umbrella -f ./helm/umbrella/values.dev.yaml --show-only templates/openfga-bootstrap-job.yaml | kubectl -n kacho apply -f -
+	@echo "Ждём завершения…"
+	@kubectl -n kacho wait --for=condition=complete job/openfga-bootstrap --timeout=300s || \
+	 kubectl -n kacho wait --for=condition=failed job/openfga-bootstrap --timeout=10s
+	@kubectl -n kacho logs -l job-name=openfga-bootstrap --tail=-1
