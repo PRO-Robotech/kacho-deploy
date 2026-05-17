@@ -14,8 +14,15 @@ compute:
   imagePullPolicy: Always
   iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
 api-gateway:
-  image: ttl.sh/kacho-kac106-202605171800/kacho-api-gateway:24h
+  # KAC-107 followup REST-Principal fix (apigw#13 + mux WithMetadata + IncomingHeaderMatcher):
+  # HTTP middleware extracts JWT → Grpc-Metadata-X-Kacho-Principal-* (then mux
+  # WithMetadata callback forwards them as outgoing gRPC metadata for the
+  # gateway→backend hop) → backend ctx via UnaryPrincipalExtract.
+  image: ttl.sh/kacho-debug-173134-202605172040/kacho-api-gateway:24h
   imagePullPolicy: Always
+  authn:
+    mode: dev
+    devSecret: "kacho-dev-jwt-secret-2026"
 ui:
   image: ttl.sh/kacho-kac109-202605171612/kacho-ui:24h
   imagePullPolicy: Always
@@ -24,8 +31,12 @@ ui:
 # после merge всей IAM-цепочки (proto#16/corelib#3/iam#1/apigw#9+#10/vpc#98+#99/
 # compute#21/rm#6/iam#2). KAC-104 DoD #6 closure.
 kacho-iam:
+  # KAC-107 followup (corelib#7 + iam#5 + corelib debug-extract): scanOperation
+  # Principal-assign + operationToProto Principal-copy — closes DoD #4
+  # (Operation.principal real). Image rebuilt with KACHO_DEBUG_PRINCIPAL env hook
+  # in corelib/grpcsrv principal_extract.go for debugging incoming metadata.
   image:
-    repository: ttl.sh/kacho-iam-202605170650/kacho-iam
+    repository: ttl.sh/kacho-iam-principal-fix2-202605172100/kacho-iam
     tag: "24h"
     pullPolicy: Always
   initContainer:
@@ -33,20 +44,23 @@ kacho-iam:
     # init-container'ы (иначе pod зависает в Init на 300s timeout).
     waitForExtAuth:
       enabled: false
+  env:
+    KACHO_DEBUG_PRINCIPAL: "1"
 
-# Disable Zitadel + OpenFGA в e2c825: они нужны только для E2/E3 IAM-эпика
-# (auth-interceptor + REBAC). На E0 (текущая фаза) kacho-iam работает standalone
-# без auth (Operation.principal = stub 'system'). Включим chart'ы после KAC-107/KAC-108.
+# KAC-108 (E3 DoD #5): OpenFGA + pg-openfga + bootstrap deployed.
+# Zitadel disabled — chart pre-upgrade hook (zitadel-init) фейлится на DNS
+# resolve `kacho-umbrella-pg-zitadel`: статефулсет ещё не создан, hook
+# выполняется раньше → BackoffLimitExceeded. Нужен либо chart fix
+# (init-container wait-for-DB на zitadel-init Job), либо ручной 2-этапный
+# install (deploy pg-zitadel сначала, потом zitadel). DoD #1 wait.
 zitadel:
   enabled: false
 openfga:
-  enabled: false
+  enabled: true
 pg-zitadel:
   enabled: false
 pg-openfga:
-  enabled: false
-# Disable post-install bootstrap-Job который создаёт OpenFGA store — он зависит
-# от живого OpenFGA Deployment'а (выключен выше).
+  enabled: true
 openfgaBootstrap:
   enabled: false
 
