@@ -40,12 +40,12 @@ api-gateway:
     KACHO_API_GATEWAY_KRATOS_PUBLIC_URL: "http://kacho-umbrella-kratos-public.kacho.svc.cluster.local:80"
 
 ui:
-  image: ttl.sh/kacho-117-ui-1779057596/kacho-ui:24h
+  image: ttl.sh/kacho-118-ui-1779058241/kacho-ui:24h
   imagePullPolicy: Always
 
 kacho-iam:
   image:
-    repository: ttl.sh/kacho-117-1779057387/kacho-iam
+    repository: ttl.sh/kacho-118-1779058224/kacho-iam
     tag: "24h"
     pullPolicy: Always
   initContainer:
