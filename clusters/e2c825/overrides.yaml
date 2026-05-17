@@ -1,0 +1,23 @@
+# Cluster e2c825-specific overrides (Beget hosting).
+# Use: helm install -f helm/umbrella/values.dev.yaml -f clusters/e2c825/overrides.yaml
+
+resource-manager:
+  image: ttl.sh/kacho-kac111-202605170506/kacho-resource-manager:24h
+  imagePullPolicy: Always
+vpc:
+  image: ttl.sh/kacho-kac111-202605170506/kacho-vpc:24h
+  imagePullPolicy: Always
+compute:
+  image: ttl.sh/kacho-kac111-202605170506/kacho-compute:24h
+  imagePullPolicy: Always
+api-gateway:
+  image: ttl.sh/kacho-kac111-202605170506/kacho-api-gateway:24h
+  imagePullPolicy: Always
+ui:
+  image: ttl.sh/kacho-kac111-202605170506/kacho-ui:24h
+  imagePullPolicy: Always
+
+# Disable kind-style ingress-nginx (требует node-label `ingress-ready=true`).
+# Внешний доступ — через LoadBalancer Services (clusters/e2c825/loadbalancers.yaml).
+ingress-nginx:
+  enabled: false
