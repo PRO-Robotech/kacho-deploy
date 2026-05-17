@@ -30,14 +30,30 @@ Production-like dev stand. KAC-111 baseline deploy artifacts.
    kubectl apply -f clusters/e2c825/cert.yaml
    kubectl apply -f clusters/e2c825/loadbalancers.yaml
    ```
-4. Helm install:
+4. Helm install — **two-stage** (KAC-107 fix: pre-install hook'и `zitadel-init` / `zitadel-setup` зависят от `kacho-umbrella-pg-zitadel:5432`, который создаётся в основной фазе install → одностадийный install падает с `BackoffLimitExceeded`):
    ```bash
-   helm install kacho-umbrella ../../helm/umbrella \
+   # stage 1/2: pg-zitadel only (zitadel disabled — pre-install hook'и не рендерятся)
+   helm upgrade --install kacho-umbrella ../../helm/umbrella \
      -n kacho --create-namespace \
      -f ../../helm/umbrella/values.dev.yaml \
      -f clusters/e2c825/overrides.yaml \
-     --timeout 15m
+     --set zitadel.enabled=false \
+     --wait --timeout 15m
+
+   # ждём pg-zitadel ready
+   kubectl -n kacho rollout status statefulset/kacho-umbrella-pg-zitadel --timeout=5m
+
+   # stage 2/2: full install (zitadel enabled; pre-install hooks теперь резолвят pg-Service)
+   helm upgrade --install kacho-umbrella ../../helm/umbrella \
+     -n kacho \
+     -f ../../helm/umbrella/values.dev.yaml \
+     -f clusters/e2c825/overrides.yaml \
+     --set zitadel.enabled=true \
+     --wait --timeout 15m
    ```
+   Дополнительно `wait-for-pg` init-container в `setupJob.initContainers` /
+   `initJob.initContainers` (см. `helm/umbrella/values.dev.yaml`) служит
+   safety-net'ом на случай pg-Service flap между stage 1 и stage 2.
 5. `gen-tls-cert.sh` НЕ запускать — cert-manager выдаст secret автоматически.
 
 ## Squashed baseline

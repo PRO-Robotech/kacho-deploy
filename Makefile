@@ -60,7 +60,19 @@ dev-up: preflight
 	kubectl create namespace kacho --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
 	./scripts/gen-tls-cert.sh; \
 	cd helm/umbrella && helm dep update >/dev/null && cd ../..; \
-	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho --create-namespace -f ./helm/umbrella/values.dev.yaml --wait --timeout 10m; \
+	echo "=== KAC-107 two-stage helm install (chicken-and-egg pg-zitadel + pre-install hooks) ==="; \
+	echo "--- stage 1/2: pg-zitadel only (zitadel disabled to keep pre-install hook out of the way) ---"; \
+	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho --create-namespace \
+	  -f ./helm/umbrella/values.dev.yaml \
+	  --set zitadel.enabled=false \
+	  --wait --timeout 10m; \
+	echo "--- stage 1/2 wait: kacho-umbrella-pg-zitadel StatefulSet ready ---"; \
+	kubectl -n kacho rollout status statefulset/kacho-umbrella-pg-zitadel --timeout=5m; \
+	echo "--- stage 2/2: full install (zitadel enabled; pre-install hooks now find pg-zitadel) ---"; \
+	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho \
+	  -f ./helm/umbrella/values.dev.yaml \
+	  --set zitadel.enabled=true \
+	  --wait --timeout 10m; \
 	echo "Waiting for ingress-nginx admission webhook..."; \
 	kubectl -n kacho wait --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=60s; \
 	end=$$(date +%s); \
