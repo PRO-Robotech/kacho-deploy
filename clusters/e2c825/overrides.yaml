@@ -48,17 +48,20 @@ kacho-iam:
     KACHO_DEBUG_PRINCIPAL: "1"
 
 # KAC-108 (E3 DoD #5): OpenFGA + pg-openfga + bootstrap deployed.
-# Zitadel disabled — chart pre-upgrade hook (zitadel-init) фейлится на DNS
-# resolve `kacho-umbrella-pg-zitadel`: статефулсет ещё не создан, hook
-# выполняется раньше → BackoffLimitExceeded. Нужен либо chart fix
-# (init-container wait-for-DB на zitadel-init Job), либо ручной 2-этапный
-# install (deploy pg-zitadel сначала, потом zitadel). DoD #1 wait.
+# KAC-107 (E2 DoD #1): chicken-and-egg pg-zitadel resolved через
+# `values.dev.yaml#zitadel.{initJob,setupJob}` override:
+#   - annotations: {} → снимает `helm.sh/hook: pre-install,pre-upgrade`
+#     (Job создаётся в основной фазе install ВМЕСТЕ с pg-zitadel Service,
+#     а не в pre-фазе, когда pg ещё нет).
+#   - initContainers: wait-for-pg busybox loop на kacho-umbrella-pg-zitadel:5432.
+# Теперь одной командой `helm upgrade --install` deploy'ит весь IAM-стек
+# (pg-zitadel + zitadel) — no two-stage manual ordering.
 zitadel:
-  enabled: false
+  enabled: true
 openfga:
   enabled: true
 pg-zitadel:
-  enabled: false
+  enabled: true
 pg-openfga:
   enabled: true
 openfgaBootstrap:

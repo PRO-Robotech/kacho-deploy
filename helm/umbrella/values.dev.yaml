@@ -240,6 +240,67 @@ zitadel:
           - path: /
             pathType: Prefix
 
+  # KAC-107 — chicken-and-egg fix: Zitadel chart по умолчанию рендерит
+  # `zitadel-init` / `zitadel-setup` как Helm `pre-install,pre-upgrade` hooks
+  # (см. zitadel/templates/{init,setup}job.yaml + defaults в `setupJob.annotations`).
+  # Pre-install hook'и выполняются ДО основной фазы install, а зависимый
+  # `pg-zitadel` StatefulSet (Bitnami postgresql sub-chart, не hook) создаётся
+  # уже в основной фазе → init/setup Job пытаются открыть TCP-connect к
+  # `kacho-umbrella-pg-zitadel:5432`, DNS не резолвится, backoffLimit=5
+  # исчерпывается → `BackoffLimitExceeded` → helm upgrade fail.
+  #
+  # Fix (двухсоставной — Makefile + values):
+  #   1. **Two-stage install в Makefile** (см. `dev-up` target): stage 1
+  #      устанавливает только pg-zitadel (`--set zitadel.enabled=false`),
+  #      ждёт `kubectl wait sts/...-pg-zitadel`, stage 2 включает zitadel
+  #      (`--set zitadel.enabled=true`) — pre-install hook'и теперь стартуют
+  #      ПОСЛЕ того как pg-Service+Endpoints существуют.
+  #      Через values.yaml (`annotations: ~`/`{}`) hook-метки убрать **нельзя**
+  #      — Helm v3 deep-merge отбрасывает null/empty overlay, оставляя
+  #      chart-default (helm/helm#9136). `--set ...=null` через CLI работал бы,
+  #      но прятать критичную семантику в командной строке — хуже, чем
+  #      явный two-stage в Makefile.
+  #   2. **`wait-for-pg` init-container** ниже — safety-net на случай flap'а
+  #      pg-Service между stage 1 и stage 2 или ручного helm-upgrade без
+  #      Makefile. Init-container крутит `nc -z` loop до 600s.
+  initJob:
+    enabled: true
+    backoffLimit: 5
+    activeDeadlineSeconds: 600
+    initContainers:
+      - name: wait-for-pg
+        image: busybox:1.36
+        command:
+          - sh
+          - -c
+          - |
+            set -e
+            echo "[wait-for-pg] waiting for kacho-umbrella-pg-zitadel:5432..."
+            until nc -z kacho-umbrella-pg-zitadel 5432; do
+              echo "[wait-for-pg] not ready, sleep 2s"
+              sleep 2
+            done
+            echo "[wait-for-pg] pg-zitadel reachable, proceeding"
+  setupJob:
+    backoffLimit: 5
+    activeDeadlineSeconds: 600
+    additionalArgs:
+      - "--init-projections=true"
+    initContainers:
+      - name: wait-for-pg
+        image: busybox:1.36
+        command:
+          - sh
+          - -c
+          - |
+            set -e
+            echo "[wait-for-pg] waiting for kacho-umbrella-pg-zitadel:5432..."
+            until nc -z kacho-umbrella-pg-zitadel 5432; do
+              echo "[wait-for-pg] not ready, sleep 2s"
+              sleep 2
+            done
+            echo "[wait-for-pg] pg-zitadel reachable, proceeding"
+
 # OpenFGA — REBAC engine для kacho-iam.
 # В dev — playground enabled (доступен на openfga.kacho.local через ingress).
 # store-id создаётся bootstrap-job'ом (templates/openfga-bootstrap-job.yaml).
