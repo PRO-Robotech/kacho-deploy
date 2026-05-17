@@ -4,14 +4,17 @@
 resource-manager:
   image: ttl.sh/kacho-kac111-202605170506/kacho-resource-manager:24h
   imagePullPolicy: Always
+# KAC-106 (E1): folder_id → project_id; peers switched to kacho-iam
 vpc:
-  image: ttl.sh/kacho-kac111-202605170506/kacho-vpc:24h
+  image: ttl.sh/kacho-kac106-202605171800/kacho-vpc:24h
   imagePullPolicy: Always
+  iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
 compute:
-  image: ttl.sh/kacho-kac111-202605170506/kacho-compute:24h
+  image: ttl.sh/kacho-kac106-202605171800/kacho-compute:24h
   imagePullPolicy: Always
+  iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
 api-gateway:
-  image: ttl.sh/kacho-iam-202605170650/kacho-api-gateway:24h
+  image: ttl.sh/kacho-kac106-202605171800/kacho-api-gateway:24h
   imagePullPolicy: Always
 ui:
   image: ttl.sh/kacho-kac109-202605171612/kacho-ui:24h
