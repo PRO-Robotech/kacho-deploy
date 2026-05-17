@@ -28,10 +28,12 @@ dependencies:
     alias: pg-zitadel
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
+    condition: pg-zitadel.enabled
   - name: postgresql
     alias: pg-openfga
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
+    condition: pg-openfga.enabled
   - name: resource-manager
     version: 1.0.0
     repository: file://../../../kacho-resource-manager/deploy
@@ -57,9 +59,14 @@ dependencies:
     repository: file://./charts/kacho-iam
   # External charts для IAM stack. Версии резолвнуты `helm dependency update`
   # на 2026-05-17 (KAC-105): zitadel-8.13.4, openfga-0.2.62.
+  # Conditions добавлены 2026-05-17 — позволяют выключать chart'ы через values
+  # (`zitadel.enabled: false` / `openfga.enabled: false`). Нужны для E0/E1 deploy,
+  # пока Zitadel/OpenFGA-инфраструктура не развернута; включить на E2/E3.
   - name: zitadel
     version: 8.x
     repository: https://charts.zitadel.com
+    condition: zitadel.enabled
   - name: openfga
     version: 0.2.x
     repository: https://openfga.github.io/helm-charts
+    condition: openfga.enabled

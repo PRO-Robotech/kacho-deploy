@@ -18,6 +18,11 @@ spec:
         # ConfigMap-content hash → pod rolling-restart при изменении config.yaml.
         kacho.cloud/config-checksum: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
+      # KACHO_IAM_* — собственный config-namespace сервиса. К-net auto-инжектит
+      # KACHO_IAM_INTERNAL_PORT=tcp://<ip>:9091 (из Service `kacho-iam-internal`),
+      # что viper-binding путает с config-полями → "too many colons in address" на listen.
+      # Гасим service-link-инъекцию: всё конфигурим из своих env / config.yaml.
+      enableServiceLinks: false
       serviceAccountName: {{ include "kacho-iam.fullname" . }}
       volumes:
         - name: config
@@ -54,6 +59,9 @@ spec:
         # init-container остаётся в шаблоне как infrastructure-readiness гарантия,
         # чтобы при включении extapi в E2/E3 startup-порядок уже работал.
         # Заглушка — wait-for-it на TCP-уровне (curl недоступен в distroless).
+        # Условие `initContainer.waitForExtAuth.enabled` (default `true`) позволяет
+        # отключить ожидание для E0/E1-стендов где Zitadel/OpenFGA ещё не задеплоены.
+        {{- if .Values.initContainer.waitForExtAuth.enabled }}
         - name: wait-for-zitadel
           image: busybox:1.36
           command:
@@ -86,6 +94,7 @@ spec:
               done
               echo "wait-for-openfga: TIMEOUT — kacho-umbrella-openfga:8080 недоступен"
               exit 1
+        {{- end }}
       containers:
         - name: {{ include "kacho-iam.fullname" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

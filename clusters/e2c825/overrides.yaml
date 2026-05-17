@@ -11,11 +11,41 @@ compute:
   image: ttl.sh/kacho-kac111-202605170506/kacho-compute:24h
   imagePullPolicy: Always
 api-gateway:
-  image: ttl.sh/kacho-kac111-202605170506/kacho-api-gateway:24h
+  image: ttl.sh/kacho-iam-202605170650/kacho-api-gateway:24h
   imagePullPolicy: Always
 ui:
   image: ttl.sh/kacho-kac111-202605170506/kacho-ui:24h
   imagePullPolicy: Always
+
+# KAC-105 (IAM E0): kacho-iam control-plane deployed в e2c825 2026-05-17
+# после merge всей IAM-цепочки (proto#16/corelib#3/iam#1/apigw#9+#10/vpc#98+#99/
+# compute#21/rm#6/iam#2). KAC-104 DoD #6 closure.
+kacho-iam:
+  image:
+    repository: ttl.sh/kacho-iam-202605170650/kacho-iam
+    tag: "24h"
+    pullPolicy: Always
+  initContainer:
+    # E0/E1 (текущая фаза): Zitadel/OpenFGA не deployed → отключаем wait-for-*
+    # init-container'ы (иначе pod зависает в Init на 300s timeout).
+    waitForExtAuth:
+      enabled: false
+
+# Disable Zitadel + OpenFGA в e2c825: они нужны только для E2/E3 IAM-эпика
+# (auth-interceptor + REBAC). На E0 (текущая фаза) kacho-iam работает standalone
+# без auth (Operation.principal = stub 'system'). Включим chart'ы после KAC-107/KAC-108.
+zitadel:
+  enabled: false
+openfga:
+  enabled: false
+pg-zitadel:
+  enabled: false
+pg-openfga:
+  enabled: false
+# Disable post-install bootstrap-Job который создаёт OpenFGA store — он зависит
+# от живого OpenFGA Deployment'а (выключен выше).
+openfgaBootstrap:
+  enabled: false
 
 # Disable kind-style ingress-nginx (требует node-label `ingress-ready=true`).
 # Внешний доступ — через LoadBalancer Services (clusters/e2c825/loadbalancers.yaml).
