@@ -14,7 +14,7 @@ api-gateway:
   image: ttl.sh/kacho-iam-202605170650/kacho-api-gateway:24h
   imagePullPolicy: Always
 ui:
-  image: ttl.sh/kacho-kac111-202605170506/kacho-ui:24h
+  image: ttl.sh/kacho-kac109-202605171612/kacho-ui:24h
   imagePullPolicy: Always
 
 # KAC-105 (IAM E0): kacho-iam control-plane deployed в e2c825 2026-05-17
