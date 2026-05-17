@@ -1,0 +1,69 @@
+# Default values for kacho-iam sub-chart.
+# Все ключи здесь — fallback'и для umbrella values.dev.yaml (которая override'ит через
+# `kacho-iam: { ... }`). НЕ ставить здесь production-secret'ы.
+
+name: kacho-iam
+replicas: 1
+image:
+  repository: kacho-iam
+  tag: dev
+  pullPolicy: IfNotPresent
+
+ports:
+  grpc: 9090
+  internalGrpc: 9091
+
+service:
+  public:
+    type: ClusterIP
+    port: 9090
+  internal:
+    type: ClusterIP
+    port: 9091
+
+db:
+  host: kacho-umbrella-pg-iam
+  port: "5432"
+  user: iam
+  name: kacho_iam
+  passwordSecretName: kacho-umbrella-pg-iam
+  passwordSecretKey: password
+
+config:
+  logger:
+    level: INFO
+  apiServer:
+    gracefulShutdown: 10s
+  metrics:
+    enable: true
+  healthcheck:
+    enable: true
+  repository:
+    postgres:
+      maxConns: 100
+      sslMode: disable
+  authn:
+    mode: dev
+  extapi:
+    zitadel:
+      endpoint: http://zitadel:8080
+      issuer: http://zitadel.kacho.local
+    openfga:
+      endpoint: openfga:8081
+      storeIdSecretName: kacho-iam-openfga-store
+      storeIdSecretKey: store_id
+
+initContainer:
+  migrator:
+    enabled: true
+    command: ["/usr/local/bin/kacho-migrator", "up"]
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+env: {}

@@ -123,3 +123,220 @@ vpc:
     enabled: false
     adminPodsSelector: {}
 
+# ─── KAC-105: IAM stack (sub-phase 2.0) ─────────────────────────────────
+# Три отдельные Postgres-инстанса (запрет #8: database-per-service):
+#   pg-iam      → kacho-iam (схема kacho_iam)
+#   pg-zitadel  → Zitadel internal state
+#   pg-openfga  → OpenFGA tuple-store
+# Все три в dev — emptyDir (без persistence), небольшие resource-лимиты.
+
+pg-iam:
+  auth:
+    username: iam
+    password: dev-iam-password
+    database: kacho_iam
+  primary:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+    extendedConfiguration: |
+      synchronous_commit = local
+      max_connections = 200
+      shared_buffers = 128MB
+      work_mem = 8MB
+      effective_cache_size = 512MB
+  image:
+    repository: bitnamilegacy/postgresql
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell
+
+pg-zitadel:
+  auth:
+    username: zitadel
+    password: dev-zitadel-password
+    database: zitadel
+  primary:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+  image:
+    repository: bitnamilegacy/postgresql
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell
+
+pg-openfga:
+  auth:
+    username: openfga
+    password: dev-openfga-password
+    database: openfga
+  primary:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+  image:
+    repository: bitnamilegacy/postgresql
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell
+
+# Zitadel — OIDC issuer для kacho-iam.
+# Dev-конфиг: TLS отключён, ExternalDomain=zitadel.kacho.local (нужна запись в /etc/hosts).
+# masterkey должен быть ровно 32 символа; в dev — статичный (создаётся отдельным Secret-манифестом
+# kacho-iam-zitadel-masterkey в charts/kacho-iam/templates/ либо вручную).
+zitadel:
+  zitadel:
+    masterkeySecretName: zitadel-masterkey
+    configmapConfig:
+      ExternalDomain: zitadel.kacho.local
+      ExternalSecure: false
+      ExternalPort: 80
+      TLS:
+        Enabled: false
+      Database:
+        Postgres:
+          Host: kacho-umbrella-pg-zitadel
+          Port: 5432
+          Database: zitadel
+          MaxOpenConns: 20
+          MaxIdleConns: 10
+          MaxConnLifetime: 30m
+          MaxConnIdleTime: 5m
+          User:
+            Username: zitadel
+            Password: dev-zitadel-password
+            SSL:
+              Mode: disable
+          Admin:
+            Username: zitadel
+            Password: dev-zitadel-password
+            SSL:
+              Mode: disable
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: zitadel.kacho.local
+        paths:
+          - path: /
+            pathType: Prefix
+
+# OpenFGA — REBAC engine для kacho-iam.
+# В dev — playground enabled (доступен на openfga.kacho.local через ingress).
+# store-id создаётся bootstrap-job'ом (templates/openfga-bootstrap-job.yaml).
+openfga:
+  datastore:
+    engine: postgres
+    uri: postgres://openfga:dev-openfga-password@kacho-umbrella-pg-openfga:5432/openfga?sslmode=disable
+  service:
+    type: ClusterIP
+    grpc:
+      port: 8081
+    http:
+      port: 8080
+  playground:
+    enabled: true
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: openfga.kacho.local
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              port: http
+
+# kacho-iam — control-plane сервис IAM (Account / Project / User / ServiceAccount /
+# Group / Role / AccessBinding). E0 — skeleton + CRUD; интеграция с Zitadel/OpenFGA — E2/E3.
+kacho-iam:
+  name: kacho-iam
+  replicas: 1
+  image:
+    repository: kacho-iam
+    tag: dev
+    pullPolicy: IfNotPresent
+  ports:
+    grpc: 9090
+    internalGrpc: 9091
+  service:
+    public:
+      type: ClusterIP
+      port: 9090
+    internal:
+      type: ClusterIP
+      port: 9091
+  db:
+    host: kacho-umbrella-pg-iam
+    port: "5432"
+    user: iam
+    name: kacho_iam
+    passwordSecretName: kacho-umbrella-pg-iam
+    passwordSecretKey: password
+  config:
+    logger:
+      level: INFO
+    apiServer:
+      gracefulShutdown: 10s
+    metrics:
+      enable: true
+    healthcheck:
+      enable: true
+    repository:
+      postgres:
+        maxConns: 100
+        sslMode: disable
+    authn:
+      mode: dev
+    extapi:
+      zitadel:
+        endpoint: http://zitadel:8080
+        issuer: http://zitadel.kacho.local
+      openfga:
+        endpoint: openfga:8081
+        # store-id заполняется bootstrap-job'ом в Secret kacho-iam-openfga-store
+        storeIdSecretName: kacho-iam-openfga-store
+        storeIdSecretKey: store_id
+  initContainer:
+    migrator:
+      enabled: true
+      command: ["/usr/local/bin/kacho-migrator", "up"]
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+  env: {}
+
+# ─── KAC-105: OpenFGA bootstrap-job ─────────────────────────────────────
+# post-install hook, который (1) ждёт OpenFGA готовности, (2) создаёт store
+# `kacho-store` (idempotent), (3) загружает authorization-model (заглушка
+# на E0; E3 заменит на полноценную DSL-модель), (4) пишет store_id в
+# Secret kacho-iam-openfga-store (kacho-iam читает на старте).
+openfgaBootstrap:
+  enabled: true
+  image: curlimages/curl:8.5.0
+  storeName: kacho-store
+  authorizationModelConfigMap: openfga-model-stub
+

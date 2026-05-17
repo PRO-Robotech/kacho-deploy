@@ -1,0 +1,19 @@
+{{/*
+Internal-port :9091 — отдельный Service для admin/cluster-internal traffic.
+На external TLS endpoint api-gateway эти RPC НЕ публикуются (запрет #6 workspace CLAUDE.md).
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kacho-iam.fullname" . }}-internal
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kacho-iam.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.internal.type }}
+  selector:
+    {{- include "kacho-iam.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: grpc-internal
+      port: {{ .Values.service.internal.port }}
+      targetPort: grpc-internal
