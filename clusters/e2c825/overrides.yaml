@@ -3,9 +3,7 @@
 #
 # KAC-115: Zitadel + OpenFGA stack REPLACED by Ory Kratos + Hydra + Keto.
 
-resource-manager:
-  image: ttl.sh/kacho-kac111-202605170506/kacho-resource-manager:24h
-  imagePullPolicy: Always
+# KAC-124: resource-manager image override удалён — backend упразднён.
 
 # KAC-106 (E1): folder_id → project_id; peers switched to kacho-iam
 vpc:
@@ -52,7 +50,7 @@ api-gateway:
     KACHO_API_GATEWAY_KRATOS_PUBLIC_URL: "http://kacho-umbrella-kratos-public.kacho.svc.cluster.local:80"
 
 ui:
-  image: ttl.sh/kacho-118-ui-1779058241/kacho-ui:24h
+  image: ttl.sh/kacho-120-ui-1779063104/kacho-ui:24h
   imagePullPolicy: Always
 
 kacho-iam:

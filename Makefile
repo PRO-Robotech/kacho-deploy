@@ -16,7 +16,7 @@ PROJECT_ROOT := $(abspath ..)        # cloud-demo/kacho-workspace/project — Do
 # Build the :dev images this stack needs, only if they're not present.
 # (Build context is the workspace `project/` dir — same as each repo's `make docker`.)
 ci-images:
-	@for svc in resource-manager vpc compute api-gateway; do \
+	@for svc in vpc compute api-gateway; do \
 		if ! docker image inspect kacho-$$svc:dev >/dev/null 2>&1; then \
 			echo "=== building kacho-$$svc:dev ==="; \
 			docker build -f $(PROJECT_ROOT)/kacho-$$svc/Dockerfile -t kacho-$$svc:dev $(PROJECT_ROOT); \
@@ -93,7 +93,7 @@ reload-svc:
 ifndef SVC
 	$(error SVC variable is required, e.g. make reload-svc SVC=compute)
 endif
-	@if [ "$(SVC)" != "resource-manager" ] && [ "$(SVC)" != "vpc" ] && [ "$(SVC)" != "compute" ] && [ "$(SVC)" != "loadbalancer" ] && [ "$(SVC)" != "api-gateway" ] && [ "$(SVC)" != "iam" ]; then \
+	@if [ "$(SVC)" != "vpc" ] && [ "$(SVC)" != "compute" ] && [ "$(SVC)" != "loadbalancer" ] && [ "$(SVC)" != "api-gateway" ] && [ "$(SVC)" != "iam" ]; then \
 		echo "ERROR: unknown service '$(SVC)'"; exit 1; \
 	fi; \
 	DEPLOY_NAME=$(SVC); \

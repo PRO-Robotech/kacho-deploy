@@ -30,32 +30,7 @@ ingress-nginx:
     extraArgs:
       publish-status-address: localhost
 
-pg-resource-manager:
-  auth:
-    username: resource_manager
-    password: dev-resource-manager-password
-    database: kacho_resource_manager
-  primary:
-    persistence:
-      enabled: false
-    resources:
-      requests:
-        cpu: 200m
-        memory: 512Mi
-      limits:
-        cpu: 2000m
-        memory: 2Gi
-    extendedConfiguration: |
-      synchronous_commit = local
-      max_connections = 300
-      shared_buffers = 256MB
-      work_mem = 16MB
-      effective_cache_size = 1GB
-  image:
-    repository: bitnamilegacy/postgresql
-  volumePermissions:
-    image:
-      repository: bitnamilegacy/os-shell   # → emptyDir в Bitnami chart
+# KAC-124: pg-resource-manager values удалён — Postgres-инстанс упразднён вместе с backend'ом.
 
 pg-vpc:
   auth:
