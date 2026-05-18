@@ -12,11 +12,23 @@ vpc:
   image: ttl.sh/kacho-kac106-202605171800/kacho-vpc:24h
   imagePullPolicy: Always
   iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
+  # KAC-120: per-RPC Check через kacho-iam.InternalIAMService.Check (port 9091).
+  authz:
+    iamEndpoint: "kacho-iam-internal.kacho.svc.cluster.local:9091"
+    breakglass: false
+    checkTimeout: 2s
+    cacheTtl: 5s
+    denyRateLimitPerSec: 100
 
 compute:
   image: ttl.sh/kacho-kac106-202605171800/kacho-compute:24h
   imagePullPolicy: Always
   iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
+  # KAC-120: env для Check-interceptor.
+  env:
+    KACHO_COMPUTE_AUTHZ_IAM_GRPC_ADDR: "kacho-iam-internal.kacho.svc.cluster.local:9091"
+    KACHO_COMPUTE_AUTHZ_IAM_TLS: "false"
+    KACHO_COMPUTE_AUTHZ_BREAKGLASS: "false"
 
 api-gateway:
   image: ttl.sh/kacho-ory-116-1779055873/kacho-api-gateway:24h

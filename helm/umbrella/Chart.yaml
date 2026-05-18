@@ -1,6 +1,6 @@
 apiVersion: v2
 name: kacho-umbrella
-version: 1.0.0
+version: 1.0.6
 description: Kachō Cloud Control Plane — dev umbrella (flat API + Operations)
 dependencies:
   - name: ingress-nginx
@@ -46,10 +46,10 @@ dependencies:
   # vpc-controllers упразднён: IPAM/default-SG встроены в kacho-vpc inline (Phase 2).
   # loadbalancer — frozen в 1.0 (proto verbatim YC, backend ещё не переписан)
   - name: api-gateway
-    version: 1.0.0
+    version: 1.2.0
     repository: file://../../../kacho-api-gateway/deploy
   - name: ui
-    version: 1.0.0
+    version: 1.4.0
     repository: file://../../../kacho-ui/deploy
   # KAC-105 (sub-phase 2.0 IAM, E0 skeleton). Sub-chart живёт в umbrella/charts/kacho-iam/
   # (file:// относительно Chart.yaml). На E0 image скорее всего ещё не существует —
@@ -70,3 +70,33 @@ dependencies:
     version: 0.2.x
     repository: https://openfga.github.io/helm-charts
     condition: openfga.enabled
+  # KAC-115: Ory stack — Kratos (identity+self-service flows), Hydra (OAuth2/OIDC),
+  # Keto (REBAC ≈ OpenFGA). Включаются через `<chart>.enabled` в overrides;
+  # заменяют Zitadel+OpenFGA одной командой helm upgrade.
+  - name: kratos
+    version: 0.x
+    repository: https://k8s.ory.sh/helm/charts
+    condition: kratos.enabled
+  - name: hydra
+    version: 0.x
+    repository: https://k8s.ory.sh/helm/charts
+    condition: hydra.enabled
+  - name: keto
+    version: 0.x
+    repository: https://k8s.ory.sh/helm/charts
+    condition: keto.enabled
+  - name: postgresql
+    alias: pg-kratos
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: pg-kratos.enabled
+  - name: postgresql
+    alias: pg-hydra
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: pg-hydra.enabled
+  - name: postgresql
+    alias: pg-keto
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: pg-keto.enabled
