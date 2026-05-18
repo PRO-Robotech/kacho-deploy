@@ -7,7 +7,7 @@
 
 # KAC-106 (E1): folder_id → project_id; peers switched to kacho-iam
 vpc:
-  image: ttl.sh/kacho-kac106-202605171800/kacho-vpc:24h
+  image: ttl.sh/kac125-1779140193/kacho-vpc:24h
   imagePullPolicy: Always
   iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
   # KAC-120: per-RPC Check через kacho-iam.InternalIAMService.Check (port 9091).
@@ -19,7 +19,7 @@ vpc:
     denyRateLimitPerSec: 100
 
 compute:
-  image: ttl.sh/kacho-kac106-202605171800/kacho-compute:24h
+  image: ttl.sh/kac125-1779140195/kacho-compute:24h
   imagePullPolicy: Always
   iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
   # KAC-120: env для Check-interceptor.
