@@ -1,0 +1,71 @@
+{{- if .Values.kratosSelfServiceUI.enabled }}
+# kratos-selfservice-ui-node — официальный Ory UI для login/registration/recovery/
+# verification/settings flows. Интегрируется с Kratos через ENV (KRATOS_BROWSER_URL,
+# KRATOS_PUBLIC_URL) + опционально с Hydra (HYDRA_ADMIN_URL для consent flow).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kratos-selfservice-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kratos-selfservice-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kratos-selfservice-ui
+  template:
+    metadata:
+      labels:
+        app: kratos-selfservice-ui
+    spec:
+      containers:
+        - name: ui
+          image: "{{ .Values.kratosSelfServiceUI.image.repository }}:{{ .Values.kratosSelfServiceUI.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: KRATOS_BROWSER_URL
+              value: {{ .Values.kratosSelfServiceUI.kratosBrowserUrl | quote }}
+            - name: KRATOS_PUBLIC_URL
+              value: {{ .Values.kratosSelfServiceUI.kratosPublicUrl | quote }}
+            {{- if .Values.kratosSelfServiceUI.hydraAdminUrl }}
+            - name: HYDRA_ADMIN_URL
+              value: {{ .Values.kratosSelfServiceUI.hydraAdminUrl | quote }}
+            {{- end }}
+            - name: COOKIE_SECRET
+              value: {{ .Values.kratosSelfServiceUI.cookieSecret | quote }}
+            - name: CSRF_COOKIE_NAME
+              value: "csrf_ory"
+            - name: CSRF_COOKIE_SECRET
+              value: {{ .Values.kratosSelfServiceUI.cookieSecret | quote }}
+            - name: NODE_TLS_REJECT_UNAUTHORIZED
+              value: "0"
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kratos-selfservice-ui
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: kratos-selfservice-ui
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+{{- end }}

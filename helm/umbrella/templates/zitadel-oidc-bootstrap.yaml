@@ -1,0 +1,530 @@
+{{- if .Values.zitadelOidcBootstrap.enabled }}
+# zitadel-oidc-bootstrap — post-install/upgrade Helm hook Job.
+# Создаёт OIDC application `{{ .Values.zitadelOidcBootstrap.appName }}` через
+# Zitadel Management API (jwt-bearer grant с machine SA private-key), пишет
+# полученный client_id в Secret `{{ .Values.zitadelOidcBootstrap.clientSecretName }}`.
+# api-gateway читает оттуда через valueFrom.secretKeyRef (oidc.clientIdSecretRef).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zitadel-oidc-bootstrap
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zitadel-oidc-bootstrap
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zitadel-oidc-bootstrap
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: zitadel-oidc-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: zitadel-oidc-bootstrap
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zitadel-oidc-bootstrap-script
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  bootstrap.py: |
+    """OIDC application bootstrap для Zitadel — idempotent.
+    Создаёт project + OIDC app если их ещё нет; пишет client_id в k8s Secret.
+    """
+    import json, os, sys, time, subprocess
+    from urllib.parse import urlencode
+
+    try:
+        import jwt
+        import requests
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet",
+                               "pyjwt==2.10.1", "cryptography==44.0.0", "requests==2.32.3"])
+        import jwt
+        import requests
+
+    ZITADEL = os.environ["ZITADEL_INTERNAL"]
+    # Zitadel валидирует HTTP Host против ExternalDomain. Внутри cluster мы
+    # ходим по cluster-internal DNS, но Host header должен совпадать с public
+    # ExternalDomain (`5.35.93.58`). requests.Session() добавляет header на
+    # все requests — это правильный pattern instance-detection в Zitadel.
+    ZITADEL_HOST = os.environ.get("ZITADEL_HOST", "5.35.93.58")
+    REDIRECT_URI = os.environ["REDIRECT_URI"]
+    APP_NAME = os.environ["APP_NAME"]
+    PROJECT_NAME = os.environ["PROJECT_NAME"]
+    SECRET_NAME = os.environ["CLIENT_SECRET_NAME"]
+    NAMESPACE = os.environ["NAMESPACE"]
+    SA_KEY_PATH = os.environ["SA_KEY_PATH"]
+
+    def log(msg): print(f"[oidc-bootstrap] {msg}", flush=True)
+
+    # Single session с Host header — Zitadel routes по Host (а не по URL host).
+    S = requests.Session()
+    S.headers.update({"Host": ZITADEL_HOST})
+
+    # 1. Wait Zitadel ready
+    for i in range(120):
+        try:
+            r = S.get(f"{ZITADEL}/debug/ready", timeout=3)
+            if r.status_code == 200:
+                log(f"Zitadel ready (after {i*2}s)")
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+    else:
+        log("FATAL: Zitadel /debug/ready timeout 240s"); sys.exit(1)
+
+    # 2. Read machine SA private key (mounted from secret)
+    with open(SA_KEY_PATH) as f:
+        sa = json.load(f)
+    log(f"loaded SA key: userId={sa['userId']} keyId={sa['keyId']}")
+
+    # 3. Sign JWT assertion + exchange for access_token
+    now = int(time.time())
+    payload = {
+        "iss": sa["userId"],
+        "sub": sa["userId"],
+        "aud": ZITADEL,
+        "iat": now,
+        "exp": now + 60,
+    }
+    # NB: aud в JWT = ExternalDomain Zitadel (Issuer URL который Zitadel сам себе
+    # презентует), не cluster-internal URL.
+    payload["aud"] = f"http://{ZITADEL_HOST}"
+    token = jwt.encode(payload, sa["key"], algorithm="RS256", headers={"kid": sa["keyId"]})
+    r = S.post(f"{ZITADEL}/oauth/v2/token", data={
+        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        "scope": "openid urn:zitadel:iam:org:project:id:zitadel:aud",
+        "assertion": token,
+    }, timeout=10)
+    if r.status_code != 200:
+        log(f"FATAL: jwt-bearer exchange {r.status_code}: {r.text}"); sys.exit(1)
+    access_token = r.json()["access_token"]
+    H = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    log("got access_token via jwt-bearer")
+
+    # 4. Find or create project (idempotent)
+    r = S.post(f"{ZITADEL}/management/v1/projects/_search", headers=H, json={
+        "queries": [{"nameQuery": {"name": PROJECT_NAME, "method": "TEXT_QUERY_METHOD_EQUALS"}}],
+    }, timeout=10)
+    if r.status_code != 200:
+        log(f"FATAL: search projects {r.status_code}: {r.text}"); sys.exit(1)
+    proj_results = r.json().get("result", [])
+    if proj_results:
+        proj_id = proj_results[0]["id"]
+        log(f"project found: {proj_id}")
+    else:
+        r = S.post(f"{ZITADEL}/management/v1/projects", headers=H,
+                          json={"name": PROJECT_NAME}, timeout=10)
+        if r.status_code not in (200, 201):
+            log(f"FATAL: create project {r.status_code}: {r.text}"); sys.exit(1)
+        proj_id = r.json()["id"]
+        log(f"project created: {proj_id}")
+
+    # 5. Find or create OIDC app (idempotent)
+    r = S.post(f"{ZITADEL}/management/v1/projects/{proj_id}/apps/_search", headers=H, json={
+        "queries": [{"nameQuery": {"name": APP_NAME, "method": "TEXT_QUERY_METHOD_EQUALS"}}],
+    }, timeout=10)
+    app_results = r.json().get("result", []) if r.status_code == 200 else []
+    if app_results:
+        app_id = app_results[0]["id"]
+        log(f"app found: {app_id}")
+        # Fetch OIDC config to get clientId
+        r = S.get(f"{ZITADEL}/management/v1/projects/{proj_id}/apps/{app_id}", headers=H, timeout=10)
+        client_id = r.json()["app"]["oidcConfig"]["clientId"]
+    else:
+        r = S.post(f"{ZITADEL}/management/v1/projects/{proj_id}/apps/oidc",
+                          headers=H, json={
+            "name": APP_NAME,
+            "redirectUris": [REDIRECT_URI],
+            "responseTypes": ["OIDC_RESPONSE_TYPE_CODE"],
+            "grantTypes": ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
+            "appType": "OIDC_APP_TYPE_WEB",
+            "authMethodType": "OIDC_AUTH_METHOD_TYPE_NONE",
+            "oidcVersion": "OIDC_VERSION_1_0",
+            "devMode": True,
+            "accessTokenType": "OIDC_TOKEN_TYPE_BEARER",
+            "idTokenRoleAssertion": True,
+            "idTokenUserinfoAssertion": True,
+        }, timeout=10)
+        if r.status_code not in (200, 201):
+            log(f"FATAL: create OIDC app {r.status_code}: {r.text}"); sys.exit(1)
+        body = r.json()
+        client_id = body["clientId"]
+        log(f"OIDC app created: clientId={client_id}")
+
+    # 6. Configure Default LoginPolicy + PasswordComplexity + PrivacyPolicy.
+    # Без этого Zitadel login page: (a) скрывает "Sign up" link (AllowRegister=false),
+    # (b) требует сложный пароль (фрустрация для dev), (c) ругается на отсутствие
+    # PrivacyPolicy ToS-links. Применяем default-policies на instance-level.
+    def upsert_policy(path, body, label):
+        # Zitadel: POST создаёт policy, PUT обновляет. Сначала пробуем PUT (обновление),
+        # на 404 — fallback к POST (первое создание).
+        for verb in ("PUT", "POST"):
+            r = S.request(verb, f"{ZITADEL}{path}", headers=H, json=body, timeout=10)
+            if r.status_code in (200, 201):
+                log(f"{label}: {verb} ok")
+                return
+            if verb == "PUT" and r.status_code == 404:
+                continue
+            log(f"{label}: {verb} {r.status_code}: {r.text[:200]}")
+            break
+
+    upsert_policy("/admin/v1/policies/login", {
+        "allowUsernamePassword": True,
+        "allowRegister": True,
+        "allowExternalIdp": True,
+        "forceMfa": False,
+        "forceMfaLocalOnly": False,
+        "passwordlessType": "PASSWORDLESS_TYPE_ALLOWED",
+        "hidePasswordReset": False,
+        "ignoreUnknownUsernames": False,
+        "allowDomainDiscovery": True,
+        "defaultRedirectUri": "",
+        "disableLoginWithEmail": False,
+        "disableLoginWithPhone": False,
+    }, "LoginPolicy")
+
+    upsert_policy("/admin/v1/policies/password/complexity", {
+        "minLength": "8",
+        "hasUppercase": False,
+        "hasLowercase": False,
+        "hasNumber": False,
+        "hasSymbol": False,
+    }, "PasswordComplexity")
+
+    upsert_policy("/admin/v1/policies/privacy", {
+        "tosLink": "",
+        "privacyLink": "",
+        "helpLink": "",
+        "supportEmail": "",
+    }, "PrivacyPolicy")
+
+    # 6.5 Create/upsert admin human user. Use `_import` endpoint с
+    # `isEmailVerified=true` + `passwordChangeRequired=false` → state ACTIVE,
+    # минуя email-verification (без SMTP коды некуда отправлять).
+    # Если user уже есть, но в state INITIAL — force-recreate (DELETE → CREATE),
+    # потому что Zitadel не позволяет напрямую перевести INITIAL → ACTIVE без email.
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@kacho.local")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "Admin1234!")
+
+    def find_user(email):
+        rs = S.post(f"{ZITADEL}/management/v1/users/_search", headers=H, json={
+            "queries": [{"userNameQuery": {"userName": email, "method": "TEXT_QUERY_METHOD_EQUALS"}}],
+        }, timeout=10)
+        users = rs.json().get("result", []) if rs.status_code == 200 else []
+        return users[0] if users else None
+
+    existing = find_user(admin_email)
+    if existing:
+        state = existing.get("state", "")
+        log(f"existing admin: id={existing['id']} state={state}")
+        # **Всегда** DELETE + recreate через v2 API — гарантия что email.isVerified=true
+        # корректно проставится (v1 _import часто оставляет email в state UNVERIFIED,
+        # и PUT /email с тем же значением отбрасывается с "Email not changed").
+        d = S.delete(f"{ZITADEL}/management/v1/users/{existing['id']}", headers=H, timeout=10)
+        log(f"delete (force-recreate via v2): {d.status_code}")
+        existing = None
+
+    if existing:
+        admin_id = existing["id"]
+        # Reset password to current value (idempotent — user уже ACTIVE).
+        r = S.post(f"{ZITADEL}/management/v1/users/{admin_id}/password",
+                   headers=H, json={"password": admin_password}, timeout=10)
+        log(f"reset admin password: {r.status_code}")
+    else:
+        # v2 API создаёт user сразу в state=ACTIVE при email.isVerified=true +
+        # password.changeRequired=false. v1 `_import` оставлял в INITIAL → Zitadel
+        # требовал ввести код активации на каждом login → "Активация учётной записи".
+        r = S.post(f"{ZITADEL}/v2/users/human", headers=H, json={
+            "username": admin_email,
+            "profile": {
+                "givenName": "Admin",
+                "familyName": "Kacho",
+                "displayName": "Kacho Admin",
+                "preferredLanguage": "en",
+            },
+            "email": {
+                "email": admin_email,
+                "isVerified": True,
+            },
+            "password": {
+                "password": admin_password,
+                "changeRequired": False,
+            },
+        }, timeout=10)
+        if r.status_code not in (200, 201):
+            # Fallback на v1 если v2 не сработал
+            log(f"v2 create failed {r.status_code} ({r.text[:120]}); fallback to v1 _import")
+            r = S.post(f"{ZITADEL}/management/v1/users/human/_import", headers=H, json={
+                "userName": admin_email,
+                "profile": {"firstName": "Admin", "lastName": "Kacho",
+                            "displayName": "Kacho Admin", "preferredLanguage": "en"},
+                "email": {"email": admin_email, "isEmailVerified": True},
+                "password": admin_password,
+                "passwordChangeRequired": False,
+                "requestPasswordlessRegistration": False,
+            }, timeout=10)
+    if existing:
+        # admin_id уже задан выше; reset_password r-status уже залогирован.
+        pass
+    elif r.status_code in (200, 201):
+        # v2 API returns userId; v1 _import returns userId; объединяем.
+        body = r.json()
+        admin_id = body.get("userId") or body.get("user", {}).get("userId", "")
+        log(f"admin user created: {admin_email} (id={admin_id}) password={admin_password}")
+    elif r.status_code == 409 or "already exists" in r.text.lower():
+        log(f"admin user already exists: {admin_email}")
+        # Find existing user id
+        rs = S.post(f"{ZITADEL}/management/v1/users/_search", headers=H, json={
+            "queries": [{"userNameQuery": {"userName": admin_email, "method": "TEXT_QUERY_METHOD_EQUALS"}}],
+        }, timeout=10)
+        users = rs.json().get("result", [])
+        admin_id = users[0]["id"] if users else ""
+    else:
+        log(f"WARNING: create admin {r.status_code}: {r.text[:300]}")
+        admin_id = ""
+
+    # 6.55 Force-verify email через PUT (idempotent — повторно безопасно).
+    if admin_id:
+        r = S.put(f"{ZITADEL}/management/v1/users/{admin_id}/email",
+                  headers=H, json={"email": admin_email, "isEmailVerified": True}, timeout=10)
+        log(f"force email verify: {r.status_code} {r.text[:120] if r.status_code >= 400 else 'ok'}")
+
+    # 6.56 Setup SMTPConfig (MailHog) + extract init-code + verify via code.
+    # Без SMTP Zitadel не доставляет init-code → user застрял в "Активация учётной записи".
+    # MailHog работает как catch-all SMTP, его REST API даёт нам код programmatically.
+    mailhog_smtp = os.environ.get("MAILHOG_SMTP", "")  # host:port, e.g. mailhog.kacho.svc.cluster.local:1025
+    mailhog_api = os.environ.get("MAILHOG_API", "")    # http://mailhog.kacho.svc.cluster.local:8025
+    if admin_id and mailhog_smtp and mailhog_api:
+        # Create or update SMTP config
+        smtp_body = {
+            "senderAddress": "noreply@kacho.local",
+            "senderName": "Kacho",
+            "tls": False,
+            "host": mailhog_smtp,
+            "user": "",
+            "password": "",
+            "replyToAddress": "",
+        }
+        r = S.post(f"{ZITADEL}/admin/v1/smtp", headers=H, json=smtp_body, timeout=10)
+        if r.status_code == 400 and "already exists" in r.text.lower():
+            # update existing — нужен provider id, listим
+            lr = S.post(f"{ZITADEL}/admin/v1/smtp/_search", headers=H, json={}, timeout=10)
+            providers = lr.json().get("result", []) if lr.status_code == 200 else []
+            if providers:
+                pid = providers[0].get("id", "")
+                r = S.put(f"{ZITADEL}/admin/v1/smtp/{pid}", headers=H, json=smtp_body, timeout=10)
+        log(f"SMTPConfig setup: {r.status_code}")
+        # Activate the SMTP provider (Zitadel может создавать его inactive)
+        try:
+            providers = S.post(f"{ZITADEL}/admin/v1/smtp/_search", headers=H, json={}, timeout=10).json().get("result", [])
+            for p in providers:
+                pid = p.get("id", "")
+                if pid:
+                    S.post(f"{ZITADEL}/admin/v1/smtp/{pid}/_activate", headers=H, json={}, timeout=10)
+        except Exception as e:
+            log(f"SMTP activate: {e}")
+        # Re-trigger init-code (now SMTP works — MailHog catches it)
+        r = S.post(f"{ZITADEL}/management/v1/users/{admin_id}/_resendInitialization",
+                   headers=H, json={"email": admin_email}, timeout=10)
+        log(f"resend init-code: {r.status_code} {r.text[:120] if r.status_code >= 400 else 'ok'}")
+        # Wait up to 30s + fetch from MailHog
+        code = None
+        for i in range(15):
+            time.sleep(2)
+            try:
+                mr = requests.get(f"{mailhog_api}/api/v2/search?kind=to&query={admin_email}", timeout=5)
+                msgs = mr.json().get("items", [])
+                if msgs:
+                    body = msgs[0].get("Content", {}).get("Body", "")
+                    import re as _re
+                    m = _re.search(r"\b([A-Z0-9]{6,10})\b", body)
+                    if m:
+                        code = m.group(1)
+                        break
+            except Exception:
+                pass
+        if code:
+            log(f"got init code from MailHog: {code}")
+            # POST verify
+            r = S.post(f"{ZITADEL}/management/v1/users/{admin_id}/_skipMFAInit",
+                       headers=H, json={}, timeout=10)
+            # Verify init code via initialization/_verify
+            r = S.post(f"{ZITADEL}/management/v1/users/{admin_id}/initialization",
+                       headers=H, json={"verificationCode": code, "password": admin_password}, timeout=10)
+            log(f"initialization verify with code: {r.status_code} {r.text[:120] if r.status_code >= 400 else 'ok'}")
+        else:
+            log("WARNING: init code not found in MailHog (SMTP may not be wired). User stays in INITIAL — login form requires code from MailHog UI.")
+
+    # 6.6 Force-activate admin user (idempotent):
+    #   а) verify email (skip SMTP-зависимый activation flow)
+    #   b) если state=INITIAL → set initial password (sets active)
+    #   c) reactivate если locked/disabled
+    # Без этого Zitadel шлёт password-reset email на каждый login attempt и user
+    # застрял в "Активация учётной записи" (требует SMTP-кода).
+    if admin_id:
+        r = S.post(f"{ZITADEL}/management/v1/users/{admin_id}/email/_verify",
+                   headers=H, json={"userId": admin_id}, timeout=10)
+        log(f"verify email: {r.status_code} {r.text[:120] if r.status_code >= 400 else 'ok'}")
+        # set initial password (idempotent — Zitadel принимает повторно)
+        r = S.post(f"{ZITADEL}/management/v1/users/{admin_id}/password/_initialize",
+                   headers=H, json={"password": admin_password}, timeout=10)
+        if r.status_code >= 400:
+            # fallback: set permanent password
+            r = S.post(f"{ZITADEL}/management/v1/users/{admin_id}/password",
+                       headers=H, json={"password": admin_password}, timeout=10)
+        log(f"set password: {r.status_code} {r.text[:120] if r.status_code >= 400 else 'ok'}")
+        r = S.post(f"{ZITADEL}/management/v1/users/{admin_id}/_reactivate",
+                   headers=H, json={}, timeout=10)
+        log(f"reactivate: {r.status_code} {r.text[:120] if r.status_code >= 400 else 'ok (or already active)'}")
+        # Grant IAM_OWNER role (instance-level) — admin может всё в Zitadel UI
+        r = S.post(f"{ZITADEL}/admin/v1/members",
+                   headers=H, json={"userId": admin_id, "roles": ["IAM_OWNER"]}, timeout=10)
+        log(f"IAM_OWNER grant: {r.status_code} {r.text[:120] if r.status_code >= 400 else 'ok (or already)'}")
+
+    # 7. Apply k8s Secret with client_id (idempotent kubectl apply)
+    secret_manifest = {
+        "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+        "metadata": {"name": SECRET_NAME, "namespace": NAMESPACE,
+                     "labels": {"app.kubernetes.io/managed-by": "Helm",
+                                "kacho.cloud/created-by": "zitadel-oidc-bootstrap"}},
+        "stringData": {"client_id": client_id},
+    }
+    p = subprocess.run(["kubectl", "apply", "-f", "-"],
+                       input=json.dumps(secret_manifest), text=True,
+                       capture_output=True, check=False)
+    if p.returncode != 0:
+        log(f"FATAL: kubectl apply secret: {p.stderr}"); sys.exit(1)
+    log(f"secret {SECRET_NAME}.client_id applied: {client_id}")
+    log("done")
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: zitadel-oidc-bootstrap
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 5
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      name: zitadel-oidc-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: zitadel-oidc-bootstrap
+      # NB: secret zitadel-admin-sa создаётся машin-key-writer'ом из Zitadel setup-Job.
+      # Этот Job — post-install hook (weight=10), запускается ПОСЛЕ setup-Job, но
+      # в редком race-window secret ещё может отсутствовать → init-container ждёт
+      # его через kubectl get (а не через volumeMount — иначе pod stuck в FailedMount).
+      initContainers:
+        - name: wait-for-sa-secret
+          image: "{{ .Values.zitadelOidcBootstrap.image.repository }}:{{ .Values.zitadelOidcBootstrap.image.tag }}"
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              apt-get update -qq && apt-get install -y -qq curl
+              curl -fsSLo /usr/local/bin/kubectl \
+                "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+              chmod +x /usr/local/bin/kubectl
+              for i in $(seq 1 120); do
+                if kubectl -n {{ .Release.Namespace }} get secret {{ .Values.zitadelOidcBootstrap.machineSaSecretName }} >/dev/null 2>&1; then
+                  echo "[wait-for-sa-secret] secret found (after ${i}*5s)"
+                  kubectl -n {{ .Release.Namespace }} get secret {{ .Values.zitadelOidcBootstrap.machineSaSecretName }} \
+                    -o jsonpath='{.data.{{ .Values.zitadelOidcBootstrap.machineSaKeyFile | replace "." "\\." }}}' \
+                    | base64 -d > /sa/{{ .Values.zitadelOidcBootstrap.machineSaKeyFile }}
+                  ls -la /sa/
+                  exit 0
+                fi
+                echo "[wait-for-sa-secret] attempt ${i}/120 — secret not yet"
+                sleep 5
+              done
+              echo "FATAL: secret {{ .Values.zitadelOidcBootstrap.machineSaSecretName }} timeout 600s" >&2
+              exit 1
+          volumeMounts:
+            - name: sa-key-runtime
+              mountPath: /sa
+      containers:
+        - name: bootstrap
+          image: "{{ .Values.zitadelOidcBootstrap.image.repository }}:{{ .Values.zitadelOidcBootstrap.image.tag }}"
+          command: ["sh", "-c"]
+          args:
+            - |
+              apt-get update -qq && apt-get install -y -qq curl
+              curl -fsSLo /usr/local/bin/kubectl \
+                "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+              chmod +x /usr/local/bin/kubectl
+              exec python3 /script/bootstrap.py
+          env:
+            - name: ZITADEL_INTERNAL
+              value: {{ .Values.zitadelOidcBootstrap.zitadelInternal | quote }}
+            - name: REDIRECT_URI
+              value: {{ .Values.zitadelOidcBootstrap.redirectUri | quote }}
+            - name: APP_NAME
+              value: {{ .Values.zitadelOidcBootstrap.appName | quote }}
+            - name: PROJECT_NAME
+              value: {{ .Values.zitadelOidcBootstrap.projectName | quote }}
+            - name: CLIENT_SECRET_NAME
+              value: {{ .Values.zitadelOidcBootstrap.clientSecretName | quote }}
+            - name: NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: SA_KEY_PATH
+              value: "/sa/{{ .Values.zitadelOidcBootstrap.machineSaKeyFile }}"
+            - name: ADMIN_EMAIL
+              value: {{ default "admin@kacho.local" .Values.zitadelOidcBootstrap.adminEmail | quote }}
+            - name: ADMIN_PASSWORD
+              value: {{ default "Admin1234!" .Values.zitadelOidcBootstrap.adminPassword | quote }}
+            - name: MAILHOG_SMTP
+              value: {{ default "" .Values.zitadelOidcBootstrap.mailhogSmtp | quote }}
+            - name: MAILHOG_API
+              value: {{ default "" .Values.zitadelOidcBootstrap.mailhogApi | quote }}
+          volumeMounts:
+            - name: script
+              mountPath: /script
+              readOnly: true
+            - name: sa-key-runtime
+              mountPath: /sa
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: zitadel-oidc-bootstrap-script
+        - name: sa-key-runtime
+          emptyDir: {}
+{{- end }}
