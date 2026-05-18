@@ -29,7 +29,8 @@ compute:
     KACHO_COMPUTE_AUTHZ_BREAKGLASS: "false"
 
 api-gateway:
-  image: ttl.sh/kacho-ory-116-1779055873/kacho-api-gateway:24h
+  # KAC-125: rebuilt с восстановленным InternalIAMService.Check + UserService.Invite stubs.
+  image: ttl.sh/kac125b-1779139142/kacho-api-gateway:24h
   imagePullPolicy: Always
   authn:
     mode: dev
@@ -50,12 +51,14 @@ api-gateway:
     KACHO_API_GATEWAY_KRATOS_PUBLIC_URL: "http://kacho-umbrella-kratos-public.kacho.svc.cluster.local:80"
 
 ui:
-  image: ttl.sh/kacho-120-ui-1779063104/kacho-ui:24h
+  # KAC-125: AccessPage YC-style + Cascader + InviteModal.
+  image: ttl.sh/kac125c-1779139941/kacho-ui:24h
   imagePullPolicy: Always
 
 kacho-iam:
+  # KAC-125: User per-Account + Invite RPC + UpsertFromIdentity rewrite.
   image:
-    repository: ttl.sh/kacho-119d-1779061297/kacho-iam
+    repository: ttl.sh/kac125-1779138741/kacho-iam
     tag: "24h"
     pullPolicy: Always
   initContainer:

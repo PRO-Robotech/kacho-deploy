@@ -161,6 +161,20 @@ reload-svc-iam:
 psql-iam:
 	kubectl exec -it -n kacho statefulset/kacho-umbrella-pg-iam -- psql -U iam -d kacho_iam
 
+# KAC-125: greenfield wipe kacho_iam schema + drop goose state.
+# Используется ДО helm upgrade с breaking migration (e.g. 0009_user_per_account_invite_kac125).
+# Воспроизводимый replacement для manual `DROP SCHEMA … CASCADE`.
+# ВНИМАНИЕ: уничтожает все данные IAM (accounts/projects/users/...). Только для dev.
+wipe-iam-db:
+	@echo "⚠️  WIPE IAM DB on $$KUBECONFIG"
+	@kubectl exec -n kacho kacho-umbrella-pg-iam-0 -- \
+	    env PGPASSWORD=dev-iam-password psql -U iam -d kacho_iam \
+	    -c "DROP SCHEMA IF EXISTS kacho_iam CASCADE; CREATE SCHEMA kacho_iam;"
+	@kubectl exec -n kacho kacho-umbrella-pg-iam-0 -- \
+	    env PGPASSWORD=dev-iam-password psql -U iam -d kacho_iam \
+	    -c "DROP TABLE IF EXISTS public.goose_db_version;" || true
+	@echo "✓ IAM schema wiped; goose state dropped. Next: kubectl rollout restart deploy/kacho-iam"
+
 # Логи kacho-iam deployment.
 logs-iam:
 	kubectl logs -n kacho -f deploy/kacho-iam
