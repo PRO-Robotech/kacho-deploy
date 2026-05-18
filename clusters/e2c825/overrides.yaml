@@ -52,13 +52,13 @@ api-gateway:
 
 ui:
   # KAC-125: AccessPage YC-style + Cascader + InviteModal.
-  image: ttl.sh/kac125c-1779139941/kacho-ui:24h
+  image: ttl.sh/kac125d-1779140849/kacho-ui:24h
   imagePullPolicy: Always
 
 kacho-iam:
   # KAC-125: User per-Account + Invite RPC + UpsertFromIdentity rewrite.
   image:
-    repository: ttl.sh/kac125-1779138741/kacho-iam
+    repository: ttl.sh/kac125d-1779140845/kacho-iam
     tag: "24h"
     pullPolicy: Always
   initContainer:
