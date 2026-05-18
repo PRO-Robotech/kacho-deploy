@@ -1,71 +1,113 @@
 # Cluster e2c825-specific overrides (Beget hosting).
 # Use: helm install -f helm/umbrella/values.dev.yaml -f clusters/e2c825/overrides.yaml
+#
+# KAC-115: Zitadel + OpenFGA stack REPLACED by Ory Kratos + Hydra + Keto.
 
-resource-manager:
-  image: ttl.sh/kacho-kac111-202605170506/kacho-resource-manager:24h
-  imagePullPolicy: Always
+# KAC-124: resource-manager image override удалён — backend упразднён.
+
 # KAC-106 (E1): folder_id → project_id; peers switched to kacho-iam
 vpc:
-  image: ttl.sh/kacho-kac106-202605171800/kacho-vpc:24h
+  image: ttl.sh/kac125-1779140193/kacho-vpc:24h
   imagePullPolicy: Always
   iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
+  # KAC-120: per-RPC Check через kacho-iam.InternalIAMService.Check (port 9091).
+  authz:
+    iamEndpoint: "kacho-iam-internal.kacho.svc.cluster.local:9091"
+    breakglass: false
+    checkTimeout: 2s
+    cacheTtl: 5s
+    denyRateLimitPerSec: 100
+
 compute:
-  image: ttl.sh/kacho-kac106-202605171800/kacho-compute:24h
+  image: ttl.sh/kac125-1779140195/kacho-compute:24h
   imagePullPolicy: Always
   iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
+  # KAC-120: env для Check-interceptor.
+  env:
+    KACHO_COMPUTE_AUTHZ_IAM_GRPC_ADDR: "kacho-iam-internal.kacho.svc.cluster.local:9091"
+    KACHO_COMPUTE_AUTHZ_IAM_TLS: "false"
+    KACHO_COMPUTE_AUTHZ_BREAKGLASS: "false"
+
 api-gateway:
-  # KAC-107 followup REST-Principal fix (apigw#13 + mux WithMetadata + IncomingHeaderMatcher):
-  # HTTP middleware extracts JWT → Grpc-Metadata-X-Kacho-Principal-* (then mux
-  # WithMetadata callback forwards them as outgoing gRPC metadata for the
-  # gateway→backend hop) → backend ctx via UnaryPrincipalExtract.
-  image: ttl.sh/kacho-debug-173134-202605172040/kacho-api-gateway:24h
+  # KAC-125: rebuilt с восстановленным InternalIAMService.Check + UserService.Invite stubs.
+  image: ttl.sh/kac125b-1779139142/kacho-api-gateway:24h
   imagePullPolicy: Always
   authn:
     mode: dev
     devSecret: "kacho-dev-jwt-secret-2026"
+  # KAC-115/116: OIDC → Hydra (вместо Zitadel). Primary auth path —
+  # Kratos session cookie (см. KACHO_API_GATEWAY_KRATOS_PUBLIC_URL ниже).
+  oidc:
+    enabled: true
+    issuer: "http://kacho-umbrella-hydra-public:4444"
+    externalIssuer: "http://5.35.93.58/.ory/hydra/public"
+    redirectUri: "http://5.35.93.58/iam/v1/auth/callback"
+    clientIdSecretRef:
+      name: kacho-iam-oidc-client
+      key: client_id
+      optional: true
+  env:
+    # KAC-116: Kratos session-based auth (cookie ory_kratos_session).
+    KACHO_API_GATEWAY_KRATOS_PUBLIC_URL: "http://kacho-umbrella-kratos-public.kacho.svc.cluster.local:80"
+
 ui:
-  image: ttl.sh/kacho-kac109-202605171612/kacho-ui:24h
+  # KAC-125: AccessPage YC-style + Cascader + InviteModal.
+  image: ttl.sh/kac125d-1779140849/kacho-ui:24h
   imagePullPolicy: Always
 
-# KAC-105 (IAM E0): kacho-iam control-plane deployed в e2c825 2026-05-17
-# после merge всей IAM-цепочки (proto#16/corelib#3/iam#1/apigw#9+#10/vpc#98+#99/
-# compute#21/rm#6/iam#2). KAC-104 DoD #6 closure.
 kacho-iam:
-  # KAC-107 followup (corelib#7 + iam#5 + corelib debug-extract): scanOperation
-  # Principal-assign + operationToProto Principal-copy — closes DoD #4
-  # (Operation.principal real). Image rebuilt with KACHO_DEBUG_PRINCIPAL env hook
-  # in corelib/grpcsrv principal_extract.go for debugging incoming metadata.
+  # KAC-125: User per-Account + Invite RPC + UpsertFromIdentity rewrite.
   image:
-    repository: ttl.sh/kacho-iam-principal-fix2-202605172100/kacho-iam
+    repository: ttl.sh/kac125d-1779140845/kacho-iam
     tag: "24h"
     pullPolicy: Always
   initContainer:
-    # E0/E1 (текущая фаза): Zitadel/OpenFGA не deployed → отключаем wait-for-*
-    # init-container'ы (иначе pod зависает в Init на 300s timeout).
     waitForExtAuth:
       enabled: false
   env:
     KACHO_DEBUG_PRINCIPAL: "1"
+    # KAC-116: AuthZ backend → Keto (replaces OpenFGA).
+    KACHO_IAM_AUTHZ_BACKEND: "keto"
+    # Service expose'ит port 80 (Read API REST). 4466 — это headless container port.
+    KACHO_IAM_KETO_READ_URL: "http://kacho-umbrella-keto-read.kacho.svc.cluster.local:80"
+    KACHO_IAM_KETO_WRITE_URL: "http://kacho-umbrella-keto-write.kacho.svc.cluster.local:80"
+    # KAC-119: bootstrap admin matcher.
+    # Format: exact email (`admin@prorobotech.ru`) либо domain suffix
+    # начинается с `@` (`@prorobotech.ru` — любой user с этим domain → admin).
+    # Domain-based — для corporate setup (все сотрудники @prorobotech.ru — админы).
+    KACHO_IAM_BOOTSTRAP_ADMIN_EMAIL: "@prorobotech.ru"
 
-# KAC-108 (E3 DoD #5): OpenFGA + pg-openfga + bootstrap deployed.
-# KAC-107 (E2 DoD #1): chicken-and-egg pg-zitadel resolved через
-# `values.dev.yaml#zitadel.{initJob,setupJob}` override:
-#   - annotations: {} → снимает `helm.sh/hook: pre-install,pre-upgrade`
-#     (Job создаётся в основной фазе install ВМЕСТЕ с pg-zitadel Service,
-#     а не в pre-фазе, когда pg ещё нет).
-#   - initContainers: wait-for-pg busybox loop на kacho-umbrella-pg-zitadel:5432.
-# Теперь одной командой `helm upgrade --install` deploy'ит весь IAM-стек
-# (pg-zitadel + zitadel) — no two-stage manual ordering.
+# === Deprecated stack (KAC-115 migration): disabled ===
 zitadel:
-  enabled: true
+  enabled: false
 openfga:
-  enabled: true
+  enabled: false
 pg-zitadel:
-  enabled: true
+  enabled: false
 pg-openfga:
-  enabled: true
+  enabled: false
 openfgaBootstrap:
   enabled: false
+zitadelOidcBootstrap:
+  enabled: false
+mailhog:
+  enabled: false
+
+# === Ory stack (KAC-115) ===
+pg-kratos:
+  enabled: true
+pg-hydra:
+  enabled: true
+pg-keto:
+  enabled: true
+kratos:
+  enabled: true
+hydra:
+  enabled: true
+keto:
+  enabled: true
+kratosSelfServiceUI:
+  enabled: true
 
 # Disable kind-style ingress-nginx (требует node-label `ingress-ready=true`).
 # Внешний доступ — через LoadBalancer Services (clusters/e2c825/loadbalancers.yaml).
