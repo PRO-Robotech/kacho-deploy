@@ -1,0 +1,193 @@
+# KAC-127 Phase 10 — SPIRE Server (HA) default values.
+#
+# Configurable parameters — НЕ ХАРДКОДИТЬ:
+#   - trustDomain (=spire.server.trustDomain) — per-env (см. P10-D3 / P10-D25):
+#       dev: kacho.dev.cloud
+#       staging: kacho.staging.cloud
+#       prod: kacho.cloud
+#   - ca.plugin (=spire.server.ca.plugin) — `pkcs11|disk|memory`:
+#       prod: pkcs11 (HSM-backed, P10-D4)
+#       staging: pkcs11 (SoftHSM2 acceptable per P10-D4)
+#       dev: memory (ephemeral; no compliance constraints)
+#   - dataStore.connectionString — Postgres DSN to spire_server schema.
+#
+# Все остальные knobs имеют production-ready defaults.
+
+# Trust domain — per-env (P10-D3). Override через umbrella `spire.server.trustDomain`.
+trustDomain: kacho.cloud
+
+# Replicas — 3 для HA, anti-affinity per node (P10-D1). NEVER < 3 in prod.
+replicaCount: 3
+
+# Image — pinned in production. Override per env if needed.
+image:
+  repository: ghcr.io/spiffe/spire-server
+  tag: "1.9.6"
+  pullPolicy: IfNotPresent
+
+# Resource limits — production-tuned. Increase if signing rate exceeds ~1000 SVIDs/min.
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "2000m"
+    memory: "2Gi"
+
+# Trust bundle TTL config — CA cert rotation cycle.
+ca:
+  # Plugin: pkcs11|disk|memory. Prod: pkcs11. Dev: memory.
+  plugin: pkcs11
+  # CA cert TTL — 7d auto-rotating.
+  ttlHours: 168
+  # SVID validity — 1h (P10-D7).
+  defaultSvidTtlSeconds: 3600
+  # PKCS#11 config — applies only when plugin=pkcs11.
+  pkcs11:
+    # Library path — AWS CloudHSM: `/opt/cloudhsm/lib/libcloudhsm_pkcs11.so`;
+    # GCP Cloud HSM: `/opt/cloud-kms-pkcs11/libkmsp11.so`;
+    # SoftHSM2: `/usr/lib/softhsm/libsofthsm2.so`.
+    libraryPath: "/opt/cloudhsm/lib/libcloudhsm_pkcs11.so"
+    slot: 0
+    tokenLabel: "kacho-spire-root"
+    keyLabel: "kacho-spire-ca-2026"
+    # PIN — sourced from Secret. NEVER inline.
+    pinSecretName: "spire-server-hsm-pin"
+    pinSecretKey: "pin"
+
+# Postgres DataStore — separate DB `kacho_spire` per запрет #8 (DB-per-service).
+dataStore:
+  # plugin: sql (Postgres). Other supported: sqlite3 (dev only).
+  plugin: sql
+  databaseType: postgres
+  # Connection — DSN-style. Override per env in umbrella values.{dev,prod}.yaml.
+  # Default points at umbrella-deployed pg-spire instance (см. umbrella Chart.yaml
+  # dependency `pg-spire`). When using shared Postgres, change to point at
+  # spire_server schema with separate user.
+  connectionString: "host=kacho-umbrella-pg-spire port=5432 user=spire dbname=kacho_spire sslmode=require"
+  # Password from Secret — never inline.
+  passwordSecretName: "kacho-umbrella-pg-spire"
+  passwordSecretKey: "password"
+  # Init Job — bootstrap kacho_spire DB on fresh cluster. Disable on managed Postgres
+  # where DBA provisions DB ahead.
+  initDatabase: false
+  initJob:
+    host: "kacho-umbrella-pg-spire"
+    port: "5432"
+    adminUser: "postgres"
+    adminPasswordSecretName: "kacho-umbrella-pg-spire"
+    adminPasswordSecretKey: "postgres-password"
+    database: "kacho_spire"
+    user: "spire"
+
+# Federation bundle endpoint — cross-cluster trust (Phase 11+).
+federation:
+  # Federation bundles endpoint port.
+  bundleEndpoint:
+    address: "0.0.0.0"
+    port: 8443
+    # Profile: https_spiffe (mTLS to known federates) | https_web (Web PKI).
+    # Prod: https_spiffe; dev/staging: https_web (Let's Encrypt staging cert).
+    profile: "https_web"
+    # ACME — used when profile=https_web. Disabled if cert provided via Secret.
+    acme:
+      enabled: false
+      directoryUrl: "https://acme-v02.api.letsencrypt.org/directory"
+      tosAccepted: false
+      email: ""
+  # Trust bundles to fetch FROM other clusters. Empty in Phase 10
+  # (cross-cluster federation = Phase 11).
+  trustDomains: []
+  # Public Ingress for `https://spire.<domain>/federation/bundle` (P10-D14).
+  ingress:
+    enabled: false
+    className: "nginx"
+    host: "spire.kacho.cloud"
+    certIssuer: "letsencrypt-prod"
+    annotations: {}
+
+# JWT SVID issuance enabled (для legacy/external клиентов; in-cluster mesh
+# использует X509-SVID).
+jwt:
+  enabled: true
+  issuer: "https://spire.kacho.cloud"
+
+# Logging — JSON structured.
+log:
+  level: "info"
+  format: "json"
+
+# Health probes.
+healthChecks:
+  livenessPort: 8080
+  bindAddress: "0.0.0.0"
+
+# gRPC service port — SPIRE Agents connect here.
+grpc:
+  bindAddress: "0.0.0.0"
+  bindPort: 8081
+  socketPath: "/tmp/spire-server/private/api.sock"
+
+# Service exposure — ClusterIP only (никаких external endpoint).
+service:
+  type: ClusterIP
+  port: 8081
+  bundleEndpointPort: 8443
+
+# Leader election (P10-D1) — k8s Lease in spire-system namespace.
+leaderElection:
+  enabled: true
+  leaseName: "spire-server-leader"
+  leaseDurationSeconds: 15
+  renewDeadlineSeconds: 10
+  retryPeriodSeconds: 2
+
+# Anti-affinity (P10-D1) — required для HA.
+podAntiAffinity:
+  enabled: true
+  # topologyKey: kubernetes.io/hostname (per node) или topology.kubernetes.io/zone (per AZ).
+  topologyKey: "kubernetes.io/hostname"
+  type: "required"  # required | preferred
+
+# PDB — minAvailable=2 to tolerate 1-failure during disruption.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# ServiceAccount — special; spire-server has admin SPIFFE-ID self-bootstrap.
+serviceAccount:
+  create: true
+  name: "spire-server"
+
+# RBAC — k8s API access для k8s_psat attestor token review + Lease operations.
+rbac:
+  create: true
+
+# Persistence — Postgres-backed, so PVC только для server private state
+# (keys cache, work directory).
+persistence:
+  enabled: true
+  storageClassName: ""  # default storage class
+  size: "5Gi"
+  accessMode: ReadWriteOnce
+
+# ServiceMonitor (Prometheus operator) — opt-in.
+serviceMonitor:
+  enabled: true
+  interval: "30s"
+  scrapeTimeout: "10s"
+
+# NetworkPolicy — defense-in-depth. Ingress: SPIRE Agents from spire-system;
+# Egress: к Postgres + HSM (PKCS#11 endpoint network access).
+networkPolicy:
+  enabled: true
+  hsmEndpoints: []  # CIDR list для HSM cluster — populated per-env.
+
+# SPIFFE registration entries — declarative, applied via post-install Job
+# (P10-D8). In Phase 11 Argo CD reconciler replaces this with controller pattern.
+# Each entry per P10 §2.3 SPIFFE-ID assignment table.
+registrations:
+  enabled: true
+  # entries: list of { spiffeId, parentId, selectors[{type,value}], ttl, admin?, downstream? }
+  # Populated by umbrella via `spire.server.registrations.entries` for each env.
+  entries: []

@@ -1,0 +1,86 @@
+# KAC-127 Phase 10 — SPIRE Agent DaemonSet default values.
+#
+# Configurable parameters:
+#   - trustDomain — must match SPIRE Server (per-env).
+#   - serverAddress — DNS of SPIRE Server service (headless для stable conn).
+#   - attestors.cosign.trustedSigners — list of cosign public keys / Fulcio.
+
+trustDomain: kacho.cloud
+
+# SPIRE Server address — set to headless service for stable DNS.
+serverAddress: "kacho-umbrella-spire-server-headless.spire-system.svc.cluster.local"
+serverPort: 8081
+
+image:
+  repository: ghcr.io/spiffe/spire-agent
+  tag: "1.9.6"
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+# Workload API socket — hostPath mount (P10-D24).
+socket:
+  hostPath: "/run/spire/sockets"
+  socketName: "agent.sock"
+
+# Workload attestors (P10-D9).
+attestors:
+  k8s:
+    enabled: true
+    # kubelet read settings — needed for pod metadata inspection.
+    kubeletReadOnlyPort: 0       # 0 = disabled; use secure-port
+    kubeletSecurePort: 10250
+    kubeletCAPath: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    # PoUseAnonymousAuth — allows kubelet anonymous auth (some clusters); default false.
+    nodeNameEnv: "MY_NODE_NAME"
+    # PSAT (projected SA token) audience — must match SPIRE Server cluster name.
+    audience: "spire-server"
+  unix:
+    enabled: true
+  cosign:
+    enabled: true
+    # Trusted signers — production: kacho-platform team key fingerprint (P10-D10).
+    # Override per-env. Empty list = cosign attestor disabled (all images pass).
+    trustedSigners: []
+    # Fulcio root for keyless OIDC — optional, P10-D10.
+    fulcioRoot:
+      enabled: false
+      url: "https://fulcio.sigstore.dev"
+    # OIDC issuer for keyless verification.
+    oidcIssuer: ""
+
+# Log.
+log:
+  level: "info"
+  format: "json"
+
+# Health probes.
+healthChecks:
+  livenessPort: 8080
+
+# ServiceAccount.
+serviceAccount:
+  create: true
+  name: "spire-agent"
+
+# RBAC — k8s API for projected SA token.
+rbac:
+  create: true
+
+# Tolerations — Agent must run on every node (including masters).
+tolerations:
+  - operator: Exists
+
+# ServiceMonitor.
+serviceMonitor:
+  enabled: true
+  interval: "30s"
+
+# Priority — system-cluster-critical (Agent failure = mesh disruption).
+priorityClassName: "system-node-critical"

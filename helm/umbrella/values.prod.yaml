@@ -544,3 +544,143 @@ kacho-iam:
           port: 2225
     prometheusRules:
       enabled: true
+
+# ─── KAC-127 Phase 10 — SPIFFE/SPIRE + Cilium mesh + cosign ─────────────
+# PROD enabled: full SPIRE HA + Cilium eBPF mesh + cosign enforce.
+# Trust domain — prod-eu-central uses `kacho.cloud`.
+
+spiffe:
+  trustDomain: kacho.cloud
+  clusterName: kacho-prod-eu-central
+
+pg-spire:
+  enabled: true
+  global:
+    postgresql:
+      auth:
+        username: spire
+        database: kacho_spire
+  primary:
+    persistence:
+      size: 50Gi
+  # anti-affinity per node (HA).
+  primary:
+    podAntiAffinityPreset: hard
+
+spire-server:
+  enabled: true
+  trustDomain: kacho.cloud
+  replicaCount: 3
+  ca:
+    plugin: pkcs11
+    ttlHours: 168
+    defaultSvidTtlSeconds: 3600
+    pkcs11:
+      # AWS CloudHSM library в production.
+      libraryPath: "/opt/cloudhsm/lib/libcloudhsm_pkcs11.so"
+      slot: 0
+      tokenLabel: "kacho-spire-root"
+      keyLabel: "kacho-spire-ca-2026"
+      pinSecretName: "spire-server-hsm-pin"
+      pinSecretKey: "pin"
+  dataStore:
+    connectionString: "host=kacho-umbrella-pg-spire port=5432 user=spire dbname=kacho_spire sslmode=require"
+    initDatabase: true
+  federation:
+    bundleEndpoint:
+      profile: "https_spiffe"
+    ingress:
+      enabled: true
+      host: "spire.kacho.cloud"
+      certIssuer: "letsencrypt-prod"
+  podAntiAffinity:
+    enabled: true
+    type: required
+    topologyKey: "topology.kubernetes.io/zone"  # per-AZ anti-affinity
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  networkPolicy:
+    enabled: true
+    hsmEndpoints:
+      - cidr: "10.100.0.0/24"
+        port: 2223
+      - cidr: "10.100.0.0/24"
+        port: 2224
+      - cidr: "10.100.0.0/24"
+        port: 2225
+  serviceMonitor:
+    enabled: true
+
+spire-agent:
+  enabled: true
+  trustDomain: kacho.cloud
+  serverAddress: "kacho-umbrella-spire-server-headless.spire-system.svc.cluster.local"
+  attestors:
+    k8s:
+      enabled: true
+      audience: "spire-server"
+    unix:
+      enabled: true
+    cosign:
+      enabled: true
+      # Production: kacho-platform team key fingerprint.
+      # Override via ExternalSecrets in real prod.
+      trustedSigners:
+        - "kacho-platform-team-2026"
+  serviceMonitor:
+    enabled: true
+
+cilium:
+  enabled: true
+  spiffe:
+    trustDomain: kacho.cloud
+    spireServerAddress: "kacho-umbrella-spire-server.spire-system.svc.cluster.local:8081"
+  serviceMesh:
+    enabled: true
+    authenticationMode: "required"   # enforce — drop traffic without SPIFFE auth
+  encryption:
+    enabled: true
+    type: "wireguard"
+    nodeEncryption: true
+  kubeProxyReplacement: "strict"
+  hubble:
+    enabled: true
+    relay:
+      enabled: true
+    ui:
+      enabled: true
+      ingress:
+        enabled: true
+        host: "hubble.kacho.cloud"
+        certIssuer: "letsencrypt-prod"
+        annotations:
+          # OIDC через Hydra — admin-only.
+          nginx.ingress.kubernetes.io/auth-url: "https://hydra.kacho.cloud/oauth2/sessions/whoami"
+          nginx.ingress.kubernetes.io/auth-signin: "https://hydra.kacho.cloud/oauth2/auth"
+    exporter:
+      enabled: true
+      otlpEndpoint: "otel-collector.observability.svc.cluster.local:4317"
+  cosign:
+    enabled: true
+    secretName: "cilium-cosign-public-key"
+    secretKey: "cosign.pub"
+  mtlsEnforcePolicy:
+    enabled: true
+  grafanaDashboards:
+    enabled: true
+
+cosign-policy-controller:
+  enabled: true
+  enforcedNamespaces:
+    - kacho-system
+  warnNamespaces:
+    - kube-system
+  cosign:
+    secretName: "cosign-trusted-key"
+    secretKey: "cosign.pub"
+  fulcio:
+    enabled: false  # offline-key signing required in prod (P10-D10)
+
+spiffe-csi-driver:
+  enabled: true

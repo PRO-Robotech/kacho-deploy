@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "spire-agent.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "spire-agent.labels" . | nindent 4 }}
+data:
+  agent.conf: |
+    # KAC-127 Phase 10 — SPIRE Agent HCL config.
+    agent {
+      data_dir = "/run/spire"
+      log_level = "{{ .Values.log.level | upper }}"
+      log_format = "{{ .Values.log.format }}"
+      server_address = "{{ .Values.serverAddress }}"
+      server_port = "{{ .Values.serverPort }}"
+      socket_path = "{{ .Values.socket.hostPath }}/{{ .Values.socket.socketName }}"
+      trust_domain = "{{ include "spire-agent.trustDomain" . }}"
+      trust_bundle_path = "/run/spire/bundle/bundle.crt"
+
+      authorized_delegates = [
+        "spiffe://{{ include "spire-agent.trustDomain" . }}/ns/{{ .Release.Namespace }}/sa/spire-agent",
+      ]
+
+      health_checks {
+        listener_enabled = true
+        bind_address = "0.0.0.0"
+        bind_port = "{{ .Values.healthChecks.livenessPort }}"
+        live_path = "/live"
+        ready_path = "/ready"
+      }
+    }
+
+    plugins {
+      NodeAttestor "k8s_psat" {
+        plugin_data {
+          cluster = "kacho"
+          token_path = "/var/run/secrets/tokens/spire-agent"
+        }
+      }
+
+      KeyManager "memory" {
+        plugin_data {}
+      }
+
+      {{- if .Values.attestors.k8s.enabled }}
+      WorkloadAttestor "k8s" {
+        plugin_data {
+          kubelet_read_only_port = {{ .Values.attestors.k8s.kubeletReadOnlyPort }}
+          {{- if .Values.attestors.k8s.kubeletSecurePort }}
+          kubelet_secure_port = {{ .Values.attestors.k8s.kubeletSecurePort }}
+          {{- end }}
+          {{- if .Values.attestors.k8s.kubeletCAPath }}
+          kubelet_ca_path = "{{ .Values.attestors.k8s.kubeletCAPath }}"
+          {{- end }}
+          node_name_env = "{{ .Values.attestors.k8s.nodeNameEnv }}"
+        }
+      }
+      {{- end }}
+
+      {{- if .Values.attestors.unix.enabled }}
+      WorkloadAttestor "unix" {
+        plugin_data {}
+      }
+      {{- end }}
+    }
+
+    telemetry {
+      Prometheus {
+        host = "0.0.0.0"
+        port = 9988
+      }
+    }

@@ -1,7 +1,7 @@
 apiVersion: v2
 name: kacho-umbrella
 version: 1.2.0
-description: "Kachō Cloud Control Plane — dev umbrella (flat API + Operations). KAC-127 Phase 9: Audit pipeline — Kafka KRaft + ClickHouse 2x2 + Kafka Connect S3-sink + HSM PKCS#11 ECDSA P-384 Merkle signer + independent verifier + SIEM forwarders (Datadog/Splunk/Elastic/generic-webhook) + 8 Sigma detection rules + Grafana dashboards + Prometheus alerts + NetworkPolicies. Builds on Phase 3 (OpenFGA+OPA+Conditions), Phase 2 (Kratos+Hydra+JWKS), Phase 1 (DB foundation)."
+description: "Kachō Cloud Control Plane — dev umbrella (flat API + Operations). KAC-127 Phase 10: SPIFFE/SPIRE + Cilium eBPF mesh + mTLS enforce + CiliumNetworkPolicy + cosign attestor + Hubble UI. Builds on Phase 9 (audit pipeline), Phase 3 (OpenFGA+OPA+Conditions), Phase 2 (Kratos+Hydra+JWKS), Phase 1 (DB foundation)."
 dependencies:
   - name: ingress-nginx
     version: 4.x
@@ -117,3 +117,34 @@ dependencies:
     version: ">= 0.0.0"
     repository: file://./charts/kafka-connect
     condition: kafka-connect.enabled
+  # KAC-127 Phase 10 — SPIFFE/SPIRE + Cilium eBPF mesh + cosign attestor.
+  # All charts vendored under helm/umbrella/charts/; all condition'ы (opt-in).
+  # Dev умbrellа kind-стенд: all disabled by default (нужна полноценная Cilium
+  # CNI install + HSM, что выходит за рамки single-node kind). Включаются
+  # values.prod.yaml или helm upgrade --set spire-server.enabled=true.
+  - name: spire-server
+    version: ">= 0.0.0"
+    repository: file://./charts/spire-server
+    condition: spire-server.enabled
+  - name: spire-agent
+    version: ">= 0.0.0"
+    repository: file://./charts/spire-agent
+    condition: spire-agent.enabled
+  - name: cilium
+    version: ">= 0.0.0"
+    repository: file://./charts/cilium
+    condition: cilium.enabled
+  - name: cosign-policy-controller
+    version: ">= 0.0.0"
+    repository: file://./charts/cosign-policy-controller
+    condition: cosign-policy-controller.enabled
+  - name: spiffe-csi-driver
+    version: ">= 0.0.0"
+    repository: file://./charts/spiffe-csi-driver
+    condition: spiffe-csi-driver.enabled
+  # Postgres-instance под SPIRE Server DataStore (database-per-service, запрет #8).
+  - name: postgresql
+    alias: pg-spire
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: pg-spire.enabled

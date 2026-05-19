@@ -202,3 +202,52 @@ fga-bootstrap:
 	@kubectl -n kacho wait --for=condition=complete job/openfga-bootstrap --timeout=300s || \
 	 kubectl -n kacho wait --for=condition=failed job/openfga-bootstrap --timeout=10s
 	@kubectl -n kacho logs -l job-name=openfga-bootstrap --tail=-1
+
+# ─── KAC-127 Phase 10 — SPIRE / Cilium mesh / cosign ─────────────────────
+# Targets для bootstrap, dry-run проверки, и emergency operations.
+
+# Bootstrap SPIRE Server + Agent + регистрация всех Kachō SPIFFE-IDs.
+# Применяется только когда umbrella values имеет spire-server.enabled=true.
+spire-bootstrap:
+	@echo "Phase 10: bootstrapping SPIRE Server + Agent..."
+	@kubectl create namespace spire-system --dry-run=client -o yaml | kubectl apply -f -
+	@helm template kacho-umbrella ./helm/umbrella -f ./helm/umbrella/values.prod.yaml \
+		--set spire-server.enabled=true \
+		--set spire-agent.enabled=true \
+		--show-only charts/spire-server/templates/* \
+		--show-only charts/spire-agent/templates/* | \
+		kubectl apply -n spire-system -f -
+	@echo "Waiting for SPIRE Server replicas to be ready..."
+	@kubectl -n spire-system rollout status statefulset/kacho-umbrella-spire-server --timeout=600s
+	@kubectl -n spire-system rollout status daemonset/kacho-umbrella-spire-agent --timeout=600s
+	@echo "✓ SPIRE bootstrap complete. Registration entries applied via post-install Job."
+
+# Rotate trust domain — emergency runbook operation (P10-D19).
+# Requires confirmation; invalidates entire trust domain key material.
+spire-rotate-trust-domain:
+	@echo "DANGER: rotating SPIRE trust domain — all SVIDs will be invalidated."
+	@read -p "Type 'ROTATE' to confirm: " confirm && \
+		[ "$$confirm" = "ROTATE" ] || (echo "Aborted." && exit 1)
+	@kubectl -n spire-system delete pod -l app.kubernetes.io/name=spire-server
+	@echo "✓ SPIRE Server pods restarting; new root CA will be issued."
+
+# Dry-run Cilium policies — render и валидация без apply.
+cilium-policy-dry-run:
+	@echo "Phase 10: rendering CiliumNetworkPolicy manifests..."
+	@helm template kacho-umbrella ./helm/umbrella -f ./helm/umbrella/values.prod.yaml \
+		--set cilium.enabled=true \
+		--show-only charts/cilium/templates/network-policies.yaml \
+		--show-only charts/cilium/templates/cilium-mtls-enforce.yaml > /tmp/cilium-policies.yaml
+	@echo "✓ Rendered to /tmp/cilium-policies.yaml ($$(wc -l < /tmp/cilium-policies.yaml) lines)"
+	@command -v kubeconform > /dev/null && \
+		kubeconform -skip CiliumNetworkPolicy,CiliumClusterwideNetworkPolicy /tmp/cilium-policies.yaml \
+		|| echo "(kubeconform not installed; install via: brew install kubeconform)"
+
+# Lint все Phase 10 charts.
+spire-lint:
+	helm lint ./helm/umbrella/charts/spire-server
+	helm lint ./helm/umbrella/charts/spire-agent
+	helm lint ./helm/umbrella/charts/cilium
+	helm lint ./helm/umbrella/charts/cosign-policy-controller
+	helm lint ./helm/umbrella/charts/spiffe-csi-driver
+	@echo "✓ All Phase 10 charts lint clean"

@@ -1,0 +1,21 @@
+# KAC-127 Phase 10 — SPIFFE registration entry for kacho-loadbalancer.
+apiVersion: kacho.cloud/v1
+kind: SpiffeRegistration
+metadata:
+  name: kacho-loadbalancer
+  labels:
+    kacho.cloud/component: spiffe-registration
+    kacho.cloud/phase: "10"
+spec:
+  spiffeId: "spiffe://{{ trustDomain }}/ns/kacho-system/sa/kacho-loadbalancer"
+  parentId: "spiffe://{{ trustDomain }}/ns/spire-system/sa/spire-agent"
+  selectors:
+    - type: k8s
+      value: "ns:kacho-system"
+    - type: k8s
+      value: "sa:kacho-loadbalancer"
+    - type: cosign
+      value: "image-signature:{{ cosignFingerprint }}"
+  ttl: 3600
+  dnsNames:
+    - "kacho-loadbalancer.kacho-system.svc"

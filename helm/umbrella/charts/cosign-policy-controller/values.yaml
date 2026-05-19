@@ -1,0 +1,39 @@
+# KAC-127 Phase 10 — cosign policy-controller values.
+#
+# Configurable parameters:
+#   - cosign.publicKey — kacho-platform team PEM-encoded cosign public key
+#     (P10-D10). Override per-env via External Secrets.
+#   - enforcedNamespaces — list of namespaces где enforced cosign signature.
+#   - warnNamespaces — list of namespaces где soft-warn (audit-only).
+
+enabled: true
+
+cosign:
+  # PEM-encoded public key. Override через External Secrets in prod.
+  publicKey: ""
+  # Reference Secret containing public key.
+  secretName: "cosign-trusted-key"
+  secretKey: "cosign.pub"
+
+# Fulcio root для keyless OIDC.
+fulcio:
+  enabled: false
+  url: "https://fulcio.sigstore.dev"
+  # OIDC issuer for keyless signing.
+  identity:
+    issuer: "https://token.actions.githubusercontent.com"
+    subject: "https://github.com/PRO-Robotech/.*"
+
+# Namespaces где enforced cosign signature (deny unsigned).
+enforcedNamespaces:
+  - kacho-system
+
+# Namespaces где soft-warn (audit-only).
+warnNamespaces:
+  - kube-system
+
+# Image glob patterns (по умолчанию все images в kacho-system).
+imagePatterns:
+  - "ghcr.io/pro-robotech/**"
+  - "ttl.sh/**"
+  - "docker.io/**"

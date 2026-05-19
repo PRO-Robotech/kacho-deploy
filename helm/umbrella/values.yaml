@@ -379,6 +379,142 @@ audit:
   prometheusRules:
     enabled: true
 
+# ─── KAC-127 Phase 10 — SPIFFE/SPIRE + Cilium mesh + cosign ────────────────
+# Соответствует acceptance §4-§9 + Chart.yaml dependencies (spire-server,
+# spire-agent, cilium, cosign-policy-controller, spiffe-csi-driver,
+# pg-spire — все condition'ы).
+#
+# По умолчанию ВЫКЛЮЧЕНЫ (defense-in-depth: kind/dev стенд не имеет полноценной
+# Cilium-инфраструктуры и HSM; mesh mTLS не нужен в single-node kind). На
+# staging/prod — values.prod.yaml / per-env overrides выставляют true.
+#
+# КРИТИЧНО: trust domain — configurable parameter `spiffe.trustDomain`.
+# Default: kacho.cloud (production). Override per cluster:
+#   - dev:     spiffe.trustDomain=kacho.dev.cloud
+#   - staging: spiffe.trustDomain=kacho.staging.cloud
+#   - prod:    spiffe.trustDomain=kacho.cloud
+
+# Top-level spiffe block — propagated to sub-charts.
+spiffe:
+  # SPIFFE trust domain per env (P10-D3 / P10-D25).
+  trustDomain: kacho.cloud
+  # Cluster name (used by k8s_psat attestor audience).
+  clusterName: kacho
+
+pg-spire:
+  enabled: false
+  global:
+    postgresql:
+      auth:
+        username: spire
+        database: kacho_spire
+  primary:
+    persistence:
+      size: 10Gi
+
+spire-server:
+  enabled: false
+  # Trust domain — propagated from top-level.
+  trustDomain: kacho.cloud
+  replicaCount: 3
+  ca:
+    plugin: pkcs11
+  dataStore:
+    connectionString: "host=kacho-umbrella-pg-spire port=5432 user=spire dbname=kacho_spire sslmode=require"
+    initDatabase: true
+  federation:
+    ingress:
+      enabled: false
+      host: "spire.kacho.cloud"
+  # Registration entries — per-service SPIFFE-IDs from acceptance §2.3.
+  # Parent ID per env: spire-agent SPIFFE-ID under spire-system ns.
+  registrations:
+    enabled: true
+    entries:
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-iam"
+        parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
+        selectors:
+          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "sa:kacho-iam"}
+        ttl: 3600
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-vpc"
+        parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
+        selectors:
+          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "sa:kacho-vpc"}
+        ttl: 3600
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-compute"
+        parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
+        selectors:
+          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "sa:kacho-compute"}
+        ttl: 3600
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-loadbalancer"
+        parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
+        selectors:
+          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "sa:kacho-loadbalancer"}
+        ttl: 3600
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-api-gateway"
+        parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
+        selectors:
+          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "sa:kacho-api-gateway"}
+        ttl: 3600
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-ui-admin"
+        parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
+        selectors:
+          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "sa:kacho-ui-admin"}
+        ttl: 3600
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-vpc-implement"
+        parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
+        selectors:
+          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "sa:kacho-vpc-implement"}
+        ttl: 3600
+
+spire-agent:
+  enabled: false
+  trustDomain: kacho.cloud
+  serverAddress: "kacho-umbrella-spire-server-headless.spire-system.svc.cluster.local"
+  # Audience must match SPIRE Server cluster name.
+  attestors:
+    k8s:
+      audience: "spire-server"
+    cosign:
+      trustedSigners: []
+
+cilium:
+  enabled: false
+  spiffe:
+    trustDomain: kacho.cloud
+  serviceMesh:
+    enabled: true
+    authenticationMode: "required"
+  encryption:
+    enabled: true
+    type: "wireguard"
+  hubble:
+    enabled: true
+    ui:
+      enabled: true
+      ingress:
+        enabled: false
+        host: ""    # set to hubble.<kacho.domain> in per-env values
+  cosign:
+    enabled: true
+
+cosign-policy-controller:
+  enabled: false
+  enforcedNamespaces:
+    - kacho-system
+  warnNamespaces:
+    - kube-system
+
+spiffe-csi-driver:
+  enabled: false
+
 # ─── Глобальные labels ─────────────────────────────────────────────────
 # Навешиваются на все ресурсы umbrella chart'а.
 # Полезно для multi-tenant ArgoCD / Kustomize-overlays.

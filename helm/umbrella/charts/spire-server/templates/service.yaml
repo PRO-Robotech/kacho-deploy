@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "spire-server.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "spire-server.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "spire-server.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: grpc
+      port: {{ .Values.service.port }}
+      targetPort: grpc
+      protocol: TCP
+    {{- if .Values.federation.bundleEndpoint.port }}
+    - name: federation
+      port: {{ .Values.service.bundleEndpointPort }}
+      targetPort: federation
+      protocol: TCP
+    {{- end }}
+---
+# Headless service для stable pod DNS — SPIRE Agent ↔ Server замена leader (StatefulSet).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "spire-server.fullname" . }}-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "spire-server.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "spire-server.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: grpc
+      port: {{ .Values.service.port }}
+      targetPort: grpc
+      protocol: TCP

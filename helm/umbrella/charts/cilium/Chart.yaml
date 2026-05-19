@@ -1,0 +1,42 @@
+apiVersion: v2
+name: cilium
+version: 0.1.0
+appVersion: "1.16.5"
+description: |
+  KAC-127 Phase 10 (sub-phase 3.10) — Cilium eBPF CNI + Service Mesh + Hubble.
+
+  Конфигурация по acceptance §3 (point 5,7,9) + Decision Log P10-D5 / P10-D6 /
+  P10-D11 / P10-D12 / P10-D13 / P10-D16:
+    - Cilium v1.16+ as cluster CNI (replaces previous network plugin).
+    - kube-proxy replacement: full eBPF (`kubeProxyReplacement: strict`).
+    - WireGuard L3 encryption between nodes (P10-D6 — defense-in-depth).
+    - Service mesh enabled (`serviceMesh.enabled: true`); auto-mTLS via SPIFFE
+      (`authentication.mode: spiffe`); reads SVID from SPIRE Workload API socket.
+    - No sidecar (eBPF dataplane, kernel-level — P10-D5 rationale).
+    - Hubble: Relay + UI; flows exported в OpenTelemetry collector (Phase 11
+      stack). Alerts на `policy_drops > 50/min` (lateral-movement detector).
+    - CiliumNetworkPolicy default-deny ingress + egress per ServiceAccount;
+      explicit allow per peer SPIFFE-ID label + L7 path-based rules (P10-D11/
+      P10-D12/P10-D13).
+    - Cosign public key для image attestation (referenced by SPIRE Agent cosign
+      attestor; see spire-agent.attestors.cosign.trustedSigners).
+
+  Trust domain — **configurable parameter** через `cilium.spiffe.trustDomain`.
+  Default: kacho.cloud (production). Override per-cluster.
+
+  Этот chart — НЕ обёртка над upstream Cilium chart; это набор
+  CiliumNetworkPolicy + CiliumClusterwideNetworkPolicy + ConfigMap+Secret для
+  Cilium operator (предполагается, что cilium-agent + cilium-operator уже
+  установлены другим путём, например cilium CLI на kind-стенде, либо upstream
+  helm chart cilium/cilium в Phase 11 IaC). См. README этой папки.
+type: application
+keywords:
+  - cilium
+  - service-mesh
+  - cni
+  - ebpf
+  - hubble
+home: https://github.com/PRO-Robotech/kacho-deploy
+maintainers:
+  - name: Kacho Cloud
+    email: platform@kacho.cloud
