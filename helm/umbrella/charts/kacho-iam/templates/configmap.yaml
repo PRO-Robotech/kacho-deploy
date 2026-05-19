@@ -53,3 +53,28 @@ data:
       openfga:
         endpoint: {{ .Values.config.extapi.openfga.endpoint | quote }}
         store-id-from-env: KACHO_IAM_OPENFGA_STORE_ID
+
+    # ─── KAC-127 Phase 2 — AuthN core ──────────────────────────────────
+    # Acceptance §2.5 (session revocations) + §2.6 (DPoP replay) + §2.4 (JWKS).
+    # Конкретные значения переопределяются через ENV KACHO_IAM_* (см. deployment.yaml).
+    authn-core:
+      # Hydra ↔ kacho-iam shared secret для token_hook / refresh_hook. Подтягивается
+      # через KACHO_IAM_HOOK_TOKEN env (Secret kacho-iam-hook-token).
+      hook-token-from-env: KACHO_IAM_HOOK_TOKEN
+
+      # JWKS rotation cycle (acceptance §2.4). Worker rotate'ит ключ при age >= rotation-days.
+      jwks:
+        rotation-days: {{ .Values.kacho.iam.jwks.rotationDays | int }}
+        # AES-GCM key для encrypt-at-rest private_key_pem. ENV — KACHO_IAM_JWKS_ENC_KEY.
+        enc-key-from-env: KACHO_IAM_JWKS_ENC_KEY
+
+      # Session-revocation cache (acceptance §2.5). API-gateway держит in-memory cache;
+      # cache-TTL — баланс latency vs memory. ENV — KACHO_IAM_SESSION_REVOCATIONS_CACHE_TTL_SECONDS.
+      session-revocations:
+        cache-ttl-seconds: {{ .Values.kacho.iam.sessionRevocations.cacheTTLSeconds | int }}
+
+      # DPoP replay cache (acceptance §2.6). Per-pod LRU. ENV —
+      # KACHO_IAM_DPOP_REPLAY_CACHE_TTL_SECONDS / KACHO_IAM_DPOP_REPLAY_CACHE_SIZE.
+      dpop-replay:
+        cache-ttl-seconds: {{ .Values.kacho.iam.dpopReplay.cacheTTLSeconds | int }}
+        cache-size: {{ .Values.kacho.iam.dpopReplay.cacheSize | int }}

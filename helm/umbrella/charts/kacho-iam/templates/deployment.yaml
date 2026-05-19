@@ -127,6 +127,40 @@ spec:
                   name: {{ .Values.config.extapi.openfga.storeIdSecretName }}
                   key: {{ .Values.config.extapi.openfga.storeIdSecretKey }}
                   optional: true
+            # ─── KAC-127 Phase 2 — AuthN core env vars ──────────────────
+            # Hydra ↔ kacho-iam shared secret для token_hook / refresh_hook.
+            # Создаётся отдельным Secret kacho-iam-hook-token (см. cluster overrides);
+            # optional: true позволяет pod'у стартовать на E0/E1 (до Phase 2 включения).
+            - name: KACHO_IAM_HOOK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kacho.hooks.tokenHookSecretName }}
+                  key: {{ .Values.kacho.hooks.tokenHookSecretKey }}
+                  optional: true
+            # AES-GCM key для encrypt-at-rest JWKS private_key_pem (acceptance §2.4).
+            # В prod — KMS-CMK через external-secrets; в dev — раз-сгенерированный
+            # 32-byte base64url в Secret kacho-iam-jwks-enc-key.
+            - name: KACHO_IAM_JWKS_ENC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kacho.iam.jwks.encKeySecretName }}
+                  key: {{ .Values.kacho.iam.jwks.encKeySecretKey }}
+                  optional: true
+            # Cache knobs (acceptance §2.5 + §2.6) — дублируются как env для
+            # сервисов, читающих их напрямую (api-gateway, kacho-iam).
+            - name: KACHO_IAM_SESSION_REVOCATIONS_CACHE_TTL_SECONDS
+              value: {{ .Values.kacho.iam.sessionRevocations.cacheTTLSeconds | quote }}
+            - name: KACHO_IAM_DPOP_REPLAY_CACHE_TTL_SECONDS
+              value: {{ .Values.kacho.iam.dpopReplay.cacheTTLSeconds | quote }}
+            - name: KACHO_IAM_DPOP_REPLAY_CACHE_SIZE
+              value: {{ .Values.kacho.iam.dpopReplay.cacheSize | quote }}
+            - name: KACHO_IAM_JWKS_ROTATION_DAYS
+              value: {{ .Values.kacho.iam.jwks.rotationDays | quote }}
+            # Domain — для self-issued tokens / OIDC discovery / WebAuthn RP-id.
+            - name: KACHO_IAM_DOMAIN
+              value: {{ .Values.kacho.domain | quote }}
+            - name: KACHO_IAM_HYDRA_ISSUER
+              value: {{ printf "https://%s.%s" .Values.kacho.subdomains.hydra .Values.kacho.domain | quote }}
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}

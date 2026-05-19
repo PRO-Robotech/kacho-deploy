@@ -2,6 +2,71 @@
 # Все ключи здесь — fallback'и для umbrella values.dev.yaml (которая override'ит через
 # `kacho-iam: { ... }`). НЕ ставить здесь production-secret'ы.
 
+# Phase 2 (KAC-127) — `kacho.domain` пробрасывается из umbrella values.yaml
+# через subchart-import (см. dependencies в umbrella Chart.yaml). Sub-chart
+# читает `.Values.kacho.domain`, но fallback (если subchart запускается
+# standalone, без umbrella) — `api.kacho.cloud`.
+kacho:
+  domain: api.kacho.cloud
+  subdomains:
+    app: app
+    hydra: hydra
+    kratos: kratos
+    api: ""
+  iam:
+    jwks:
+      enabled: true
+      schedule: "0 2 * * *"
+      rotationDays: 90
+      encKeySecretName: kacho-iam-jwks-enc-key
+      encKeySecretKey: enc_key
+    sessionRevocations:
+      cacheTTLSeconds: 5
+    dpopReplay:
+      cacheTTLSeconds: 120
+      cacheSize: 100000
+  hooks:
+    tokenHookSecretName: kacho-iam-hook-token
+    tokenHookSecretKey: token
+
+# Phase 2 (KAC-127) — Kratos identity schema + config ConfigMaps. Управляются
+# флагами; в Phase 2 поднимаются вместе с kacho-iam (один namespace, один Helm
+# release). При желании задеплоить Kratos в отдельный namespace — отключить
+# здесь и завести в стороннем chart'е.
+kratos:
+  identitySchema:
+    enabled: true
+  config:
+    enabled: true
+    smtp:
+      connectionURI: "smtp://mailhog.kacho.svc.cluster.local:1025/?disable_starttls=true"
+      fromAddress: "noreply@kacho.cloud"
+      fromName: "Kacho Cloud"
+
+# Phase 2 (KAC-127) — JWKS rotator CronJob. Image = тот же kacho-iam binary,
+# entrypoint = `kacho-iam jwks rotate`. Pulls private/public keypair generator
+# + Hydra-admin PUT /admin/keys из IAM service.
+jwksRotator:
+  # Если false — CronJob не создаётся (например, для integration-тестов с key-pinning).
+  # Управляется через umbrella values: `.Values.kacho.iam.jwks.enabled`.
+  # Дублируем сюда для standalone-deploy sub-chart'а.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # Activity history — сколько успешных / неудачных Job'ов держать.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # Block concurrent runs — advisory_lock на DB-стороне (acceptance §6.8.5)
+  # дополнительно защищает, но Forbid здесь — single source-of-truth для k8s scheduler.
+  concurrencyPolicy: Forbid
+  # 1h deadline на каждый run; rotation сам по себе ≤ 5s, но Hydra-admin PUT
+  # может ретраиться при transient errors.
+  activeDeadlineSeconds: 3600
+
 name: kacho-iam
 replicas: 1
 image:

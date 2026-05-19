@@ -1,0 +1,125 @@
+# Kachō umbrella default values — Phase 2 (KAC-127).
+#
+# Этот файл задаёт **базовые defaults** для всего umbrella chart'а; per-cluster
+# overrides задаются через `values.dev.yaml` / `values.prod.yaml` / cluster-specific
+# overlays под `clusters/<cluster>/overrides.yaml`.
+#
+# КРИТИЧНО (KAC-127): домен Kachō Cloud — **configurable parameter** через
+# `kacho.domain`. Все Helm-template'ы Phase 2 (Kratos config, Hydra config,
+# api-gateway ingress, kacho-ui BFF) обязаны использовать `{{ .Values.kacho.domain }}`
+# вместо хардкода `api.kacho.cloud` / `hydra.kacho.cloud` / `app.kacho.cloud`.
+# Это позволяет один и тот же chart деплоить на разные домены (prod, staging,
+# customer-specific tenant-domains) без редактирования template'ов.
+#
+# Поддоменная схема (производные от `kacho.domain`):
+#   - https://<domain>                — публичный API (api-gateway TLS endpoint)
+#   - https://app.<domain>            — UI / BFF (kacho-ui)
+#   - https://hydra.<domain>          — Hydra public OIDC issuer
+#   - https://kratos.<domain>         — Kratos public selfservice
+#
+# WebAuthn RP-id равен `kacho.domain` (root domain — covers все поддомены через
+# Permissions Policy + Public Suffix List rules; см. WebAuthn Level 3 §5.1.3).
+#
+# ─── Sub-chart propagation ─────────────────────────────────────────────
+# Helm пропагирует только `global.*` values в sub-chart'ы автоматически. Чтобы
+# `--set kacho.domain=X` работал из CLI, мы дублируем структуру через
+# `kacho-iam.kacho.*` (см. ниже) для kacho-iam sub-chart'а. Альтернативно:
+#   helm upgrade … --set kacho.domain=X --set kacho-iam.kacho.domain=X
+#
+# CI/CD pipeline'ы используют helper `scripts/helm-deploy.sh` (см. Makefile),
+# который читает $KACHO_DOMAIN и выставляет оба места одной командой.
+
+kacho:
+  # Корневой домен Kachō Cloud. Override per-cluster:
+  #   helm upgrade … --set kacho.domain=test.example.com \
+  #                  --set kacho-iam.kacho.domain=test.example.com
+  # Production: `api.kacho.cloud` (default). Dev-стенд kind: оставляем
+  # `api.kacho.cloud` либо override на `kacho.local` через cluster overrides.
+  domain: api.kacho.cloud
+
+  # Phase 2 (KAC-127) — sub-domain prefixes; используются в Helm templates
+  # как `{{ printf "%s.%s" .Values.kacho.subdomains.app .Values.kacho.domain }}`.
+  # Override per-cluster, если хочется другую схему (например, all-in-one
+  # `auth.kacho.example.com` вместо `kratos.…` / `hydra.…`).
+  subdomains:
+    app: app             # https://app.<domain> — UI / BFF
+    hydra: hydra         # https://hydra.<domain> — Hydra OIDC issuer
+    kratos: kratos       # https://kratos.<domain> — Kratos selfservice public
+    api: ""              # https://<domain> — api-gateway (без prefix'а)
+
+  # Phase 2 (KAC-127) — IAM AuthN core knobs.
+  iam:
+    # JWKS rotation cron — daily при schedule. 90d rotation cycle (по acceptance §2.4).
+    # `enabled: false` отключает CronJob (например, в integration-test кластерах,
+    # где key-pinning должен оставаться стабильным).
+    jwks:
+      enabled: true
+      # Cron-schedule в k8s format. Default — 02:00 UTC daily (±2h jitter в worker).
+      schedule: "0 2 * * *"
+      # Rotation cycle. Worker rotate'ит ключ при age >= rotationDays.
+      rotationDays: 90
+      # AES-GCM key для encrypt-at-rest private_key_pem (dev). В prod заменяется
+      # на KMS-CMK через external-secrets controller.
+      # 32 bytes base64url — генерируется один раз и хранится в `kacho-iam-jwks-enc-key`
+      # Secret (см. external-secrets values.prod.yaml).
+      encKeySecretName: kacho-iam-jwks-enc-key
+      encKeySecretKey: enc_key
+
+    # Session-revocation cache (acceptance §2.5). API-gateway держит in-memory
+    # cache для O(1) lookup на каждый запрос. Cache-TTL 5s — баланс
+    # между latency и memory; cold-start bulk-load делает SELECT за `15min`
+    # окно (= access_token_TTL).
+    sessionRevocations:
+      cacheTTLSeconds: 5
+
+    # DPoP replay cache (acceptance §2.6, RFC 9449 §11.1). Per-pod LRU.
+    # TTL = 2× iat freshness window (60s × 2 = 120s). Size 100K — покрывает
+    # ~833 RPS sustained × 120s burst (assuming UUID-v7 unique jti).
+    dpopReplay:
+      cacheTTLSeconds: 120
+      cacheSize: 100000
+
+  # Phase 2 (KAC-127) — Hydra ↔ kacho-iam shared secret для token_hook /
+  # refresh_hook authentication. В dev — поднимается в Secret из dev-shared-secret;
+  # в prod — external-secrets из vault.
+  hooks:
+    tokenHookSecretName: kacho-iam-hook-token
+    tokenHookSecretKey: token
+
+# ─── Sub-chart propagation для `kacho.*` ──────────────────────────────
+# Helm не пропагирует top-level `kacho.*` values в sub-chart'ы автоматически.
+# Чтобы умbrellа values полностью контролировала sub-chart'ы, дублируем
+# конфиг в namespace'е sub-chart'а. Sub-chart kacho-iam держит fallback
+# (см. charts/kacho-iam/values.yaml) на случай standalone-deploy.
+#
+# При CLI-override: одновременно выставлять оба:
+#   --set kacho.domain=X --set kacho-iam.kacho.domain=X
+# либо использовать `scripts/helm-deploy.sh` helper.
+kacho-iam:
+  kacho:
+    domain: api.kacho.cloud
+    subdomains:
+      app: app
+      hydra: hydra
+      kratos: kratos
+      api: ""
+    iam:
+      jwks:
+        enabled: true
+        schedule: "0 2 * * *"
+        rotationDays: 90
+        encKeySecretName: kacho-iam-jwks-enc-key
+        encKeySecretKey: enc_key
+      sessionRevocations:
+        cacheTTLSeconds: 5
+      dpopReplay:
+        cacheTTLSeconds: 120
+        cacheSize: 100000
+    hooks:
+      tokenHookSecretName: kacho-iam-hook-token
+      tokenHookSecretKey: token
+
+# Глобальные labels, навешиваемые на все ресурсы umbrella chart'а.
+# Полезно для multi-tenant ArgoCD / Kustomize-overlays.
+global:
+  labels: {}

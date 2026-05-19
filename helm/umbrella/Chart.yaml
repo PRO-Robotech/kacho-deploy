@@ -1,7 +1,7 @@
 apiVersion: v2
 name: kacho-umbrella
-version: 1.0.9
-description: "Kachō Cloud Control Plane — dev umbrella (flat API + Operations). KAC-125: User per-Account + Invite-flow + helm-lint fix (sibling chart versions unpinned)."
+version: 1.0.10
+description: "Kachō Cloud Control Plane — dev umbrella (flat API + Operations). KAC-127 Phase 2: AuthN core — Kratos WebAuthn/Passkey + Hydra OAuth 2.1 (DPoP + mTLS-bound + refresh-rotation) + JWKS rotator + configurable kacho.domain."
 dependencies:
   - name: ingress-nginx
     version: 4.x
