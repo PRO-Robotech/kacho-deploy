@@ -1,0 +1,36 @@
+title: ServiceAccount Privilege Escalation
+id: kacho-audit-rule-05-privilege-escalation-sa
+description: |
+  Detects ServiceAccount creating AccessBinding with role.scope greater than
+  actor's own scope (privilege escalation attempt). Phase 9 §2.10 rule #5.
+  Severity Critical.
+status: stable
+author: Kacho Cloud Security
+date: 2026-05-19
+references:
+  - https://attack.mitre.org/techniques/T1098/  # Account Manipulation
+tags:
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.t1098
+logsource:
+  product: kacho_iam
+  category: iam_change
+detection:
+  selection:
+    event_type: 'iam.access_binding.created'
+    actor.type: 'service_account'
+  filter_scope:
+    target_role_scope_gt_actor_scope: true
+  condition: selection and filter_scope
+fields:
+  - actor_id
+  - target_id
+  - target_role_scope
+  - actor_max_role_scope
+falsepositives:
+  - Bootstrap SA initial-grant scenario (Phase 1 — only allowed via break-glass)
+level: critical
+response:
+  action: auto_revoke_binding
+  notification: pagerduty_p1

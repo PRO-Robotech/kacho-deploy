@@ -1,0 +1,188 @@
+{
+  "uid": "kacho-audit-pipeline",
+  "title": "Kacho Audit Pipeline (Phase 9)",
+  "description": "KAC-127 Phase 9 — comprehensive audit pipeline observability. P9-D30. Sources: kacho-iam metrics endpoint, Kafka exporter, ClickHouse Prometheus exporter, HSM PKCS#11 signer metrics, SIEM forwarder metrics, audit-verifier metrics.",
+  "tags": ["kacho", "audit", "phase-9", "kac-127", "compliance"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {"text": "Prometheus", "value": "Prometheus"}
+      },
+      {
+        "name": "tenant_account_id",
+        "type": "query",
+        "datasource": "$datasource",
+        "query": "label_values(kacho_audit_outbox_pending_count, tenant_account_id)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {"text": "All", "value": "$__all"}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Audit ingest rate (events/sec)",
+      "type": "timeseries",
+      "datasource": "$datasource",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(kacho_audit_outbox_inserted_total[1m])) by (source_service)",
+          "legendFormat": "{{source_service}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Kafka consumer lag (events)",
+      "type": "timeseries",
+      "datasource": "$datasource",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "kafka_consumergroup_lag{consumergroup=~\"kacho-audit-.+\"}",
+          "legendFormat": "{{consumergroup}} / {{topic}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "ClickHouse query latency (p50/p95/p99)",
+      "type": "timeseries",
+      "datasource": "$datasource",
+      "gridPos": {"x": 0, "y": 8, "w": 8, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(clickhouse_query_latency_seconds_bucket[5m]))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, rate(clickhouse_query_latency_seconds_bucket[5m]))", "legendFormat": "p95", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, rate(clickhouse_query_latency_seconds_bucket[5m]))", "legendFormat": "p99", "refId": "C"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Merkle batch latency (sec, p99)",
+      "type": "timeseries",
+      "datasource": "$datasource",
+      "gridPos": {"x": 8, "y": 8, "w": 8, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.99, rate(kacho_audit_merkle_batch_duration_seconds_bucket[5m]))", "legendFormat": "p99", "refId": "A"}
+      ]
+    },
+    {
+      "id": 5,
+      "title": "HSM signing latency (p99) — by provider",
+      "type": "timeseries",
+      "datasource": "$datasource",
+      "gridPos": {"x": 16, "y": 8, "w": 8, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.99, rate(kacho_audit_hsm_sign_duration_seconds_bucket[5m]))", "legendFormat": "{{provider}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 6,
+      "title": "SIEM forwarder backlog (events) by subscriber",
+      "type": "timeseries",
+      "datasource": "$datasource",
+      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "kacho_audit_siem_forwarder_backlog_events", "legendFormat": "{{subscriber_id}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 7,
+      "title": "SIEM forwarder delivery success rate (%)",
+      "type": "timeseries",
+      "datasource": "$datasource",
+      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "100 * rate(kacho_audit_siem_delivered_total[5m]) / (rate(kacho_audit_siem_delivered_total[5m]) + rate(kacho_audit_siem_failed_total[5m]))",
+          "legendFormat": "{{subscriber_id}} / {{provider}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Verifier last-run status",
+      "type": "stat",
+      "datasource": "$datasource",
+      "gridPos": {"x": 0, "y": 24, "w": 6, "h": 6},
+      "targets": [
+        {"expr": "kacho_audit_verifier_last_run_status", "refId": "A"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "value": "0", "text": "OK", "color": "green"},
+            {"type": "value", "value": "1", "text": "ANOMALY", "color": "red"}
+          ]
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Verifier anomalies (cumulative since deploy)",
+      "type": "stat",
+      "datasource": "$datasource",
+      "gridPos": {"x": 6, "y": 24, "w": 6, "h": 6},
+      "targets": [
+        {"expr": "kacho_audit_verifier_anomalies_found_total", "refId": "A"}
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Audit outbox pending count",
+      "type": "stat",
+      "datasource": "$datasource",
+      "gridPos": {"x": 12, "y": 24, "w": 6, "h": 6},
+      "targets": [
+        {"expr": "kacho_audit_outbox_pending_count", "refId": "A"}
+      ]
+    },
+    {
+      "id": 11,
+      "title": "S3 batch writes (last 24h)",
+      "type": "stat",
+      "datasource": "$datasource",
+      "gridPos": {"x": 18, "y": 24, "w": 6, "h": 6},
+      "targets": [
+        {"expr": "increase(kacho_audit_s3_batches_written_total[24h])", "refId": "A"}
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Audit events by event_type (last hour)",
+      "type": "barchart",
+      "datasource": "$datasource",
+      "gridPos": {"x": 0, "y": 30, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "topk(15, sum by (event_type)(increase(kacho_audit_outbox_inserted_total[1h])))", "refId": "A"}
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Detection-rule fire rate (last 6h)",
+      "type": "barchart",
+      "datasource": "$datasource",
+      "gridPos": {"x": 12, "y": 30, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (rule_id)(increase(kacho_audit_detection_rule_fires_total[6h]))", "refId": "A"}
+      ]
+    }
+  ]
+}

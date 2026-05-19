@@ -1,0 +1,131 @@
+{{- if .Values.audit.enabled }}
+{{/*
+KAC-127 Phase 9 — Merkle batch signer CronJob (P9-D7, P9-D9, P9-D11, P9-D12).
+
+Schedule: every 5 minutes (configurable via audit.merkleBatchSchedule).
+
+Algorithm:
+  1. Acquire pg_advisory_lock(KACHO_MERKLE_SIGNER_LOCK_ID=0xMERKLE) — HA safety.
+  2. SELECT events FROM audit_outbox WHERE delivered_at IS NOT NULL AND
+     signed_at IS NULL AND audit_signing_batch_id IS NULL FOR UPDATE SKIP LOCKED
+     LIMIT 10000 OR within 5-min window;
+     (Source of truth events for S3 archive — already delivered to Kafka)
+  3. Sort by event_id (lexicographic; ULID monotonic → time-ordered).
+  4. Compute Merkle tree (RFC 6962 binary, sha256) over event_id leaves.
+  5. Compute SHA-384(batch_hash || previous_batch_hash || merkle_root || ...)
+  6. PKCS#11 sign via HSM (ECDSA P-384).
+  7. Upload S3:
+     - <batch_id>.jsonl.gz                  (sorted events, gzipped)
+     - <batch_id>.manifest.signed           (manifest §2.7 + signature)
+  8. INSERT INTO audit_signing_batches (atomic with FK to previous batch).
+  9. UPDATE audit_outbox SET signed_at = now(), audit_signing_batch_id = $1
+     WHERE id = ANY($2::text[]).
+ 10. Release advisory_lock.
+
+Failure modes:
+  - HSM unreachable → S3 writer pauses; PagerDuty critical alert (см. prometheus-rules)
+  - S3 unreachable → retry next run with same event set; Kafka still receives
+  - DB row gone (concurrent signer) → SKIP via FOR UPDATE SKIP LOCKED
+
+Worker entrypoint: `kacho-iam audit merkle-sign` (single-shot run).
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "kacho-iam.fullname" . }}-merkle-batch-signer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kacho-iam.labels" . | nindent 4 }}
+    kacho.cloud/component: audit-merkle-signer
+spec:
+  schedule: {{ .Values.audit.merkleBatchSchedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 10
+  startingDeadlineSeconds: 240  # 4min — если миссия 1 раз, не догонять
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: {{ .Values.audit.merkleBatchActiveDeadlineSeconds | default 240 }}
+      template:
+        metadata:
+          labels:
+            {{- include "kacho-iam.labels" . | nindent 12 }}
+            kacho.cloud/component: audit-merkle-signer
+        spec:
+          restartPolicy: OnFailure
+          enableServiceLinks: false
+          serviceAccountName: {{ include "kacho-iam.fullname" . }}
+          containers:
+            - name: merkle-signer
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["/usr/local/bin/kacho-iam", "audit", "merkle-sign"]
+              env:
+                - name: KACHO_IAM_CONFIG_PATH
+                  value: /etc/kacho-iam/config.yaml
+                - name: KACHO_IAM_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.db.passwordSecretName }}
+                      key: {{ .Values.db.passwordSecretKey }}
+                - name: KACHO_AUDIT_HSM_CONFIG_PATH
+                  value: /etc/kacho-iam/hsm/hsm.json
+                - name: KACHO_HSM_PIN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.audit.hsm.pinSecret }}
+                      key: pin
+                      optional: true
+                - name: KACHO_AUDIT_S3_BUCKET
+                  value: {{ .Values.audit.s3.bucket | quote }}
+                - name: KACHO_AUDIT_S3_ENDPOINT
+                  value: {{ .Values.audit.s3.endpoint | quote }}
+                - name: KACHO_AUDIT_S3_REGION
+                  value: {{ .Values.audit.s3.region | quote }}
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.audit.s3.accessKeySecretName }}
+                      key: AWS_ACCESS_KEY_ID
+                      optional: true
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.audit.s3.accessKeySecretName }}
+                      key: AWS_SECRET_ACCESS_KEY
+                      optional: true
+                - name: KACHO_AUDIT_MERKLE_WINDOW_MINUTES
+                  value: "5"
+                - name: KACHO_AUDIT_MERKLE_MAX_EVENTS
+                  value: "10000"
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/kacho-iam
+                  readOnly: true
+                - name: hsm-config
+                  mountPath: /etc/kacho-iam/hsm
+                  readOnly: true
+                {{- if eq .Values.audit.hsm.provider "softhsm" }}
+                - name: softhsm-tokens
+                  mountPath: /var/lib/softhsm/tokens
+                {{- end }}
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 256Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+          volumes:
+            - name: config
+              configMap:
+                name: {{ include "kacho-iam.fullname" . }}-config
+            - name: hsm-config
+              configMap:
+                name: {{ include "kacho-iam.fullname" . }}-hsm-pkcs11
+            {{- if eq .Values.audit.hsm.provider "softhsm" }}
+            - name: softhsm-tokens
+              emptyDir: {}
+            {{- end }}
+{{- end }}

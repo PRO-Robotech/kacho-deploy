@@ -1,0 +1,29 @@
+apiVersion: v2
+name: clickhouse
+version: 0.1.0
+appVersion: "24.8.0"
+description: |
+  KAC-127 Phase 9 — ClickHouse OLAP cluster для kacho-iam audit events.
+
+  Конфигурация по acceptance §2.6, §4.1, P9-D5 / P9-D6 / P9-D22 / P9-D23:
+    - 2 shards × 2 replicas (production) — sharded by sipHash64(tenant_account_id).
+    - ReplicatedMergeTree + Distributed table.
+    - Kafka engine consumer table → MaterializedView → audit_events_local
+      (max_block_size=1000, kafka_flush_interval_ms=5000).
+    - PARTITION BY (tenant_account_id, toDate(timestamp)).
+    - TTL toDate(timestamp) + INTERVAL 90 DAY DELETE (P9-D6).
+    - Replication via ClickHouse Keeper (3 nodes, K8s StatefulSet).
+    - Backup: clickhouse-backup weekly → S3.
+
+  Operator strategy: `operator=altinity` (production) или vanilla StatefulSet
+  (dev). На prod рекомендуется Altinity Operator (ClickHouseInstallation CRD)
+  для proper replication и schema management.
+type: application
+keywords:
+  - clickhouse
+  - audit
+  - olap
+home: https://github.com/PRO-Robotech/kacho-deploy
+maintainers:
+  - name: Kacho Cloud
+    email: platform@kacho.cloud

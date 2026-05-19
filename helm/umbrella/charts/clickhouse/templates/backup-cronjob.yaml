@@ -1,0 +1,95 @@
+{{- if and .Values.enabled .Values.backup.enabled }}
+{{/*
+KAC-127 Phase 9 — ClickHouse backup CronJob.
+
+Weekly clickhouse-backup → S3. Используется как safety-net поверх ReplicatedMergeTree
+replication (replication защищает от disk failure, не от accidental DROP TABLE).
+
+S3 endpoint / bucket — configurable через umbrella values (audit.s3.*).
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "clickhouse.fullname" . }}-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clickhouse.labels" . | nindent 4 }}
+    kacho.cloud/component: clickhouse-backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 4
+  failedJobsHistoryLimit: 4
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 14400  # 4h max
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "clickhouse.labels" . | nindent 12 }}
+            kacho.cloud/component: clickhouse-backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: altinity/clickhouse-backup:2.5.0
+              env:
+                - name: CLICKHOUSE_HOST
+                  value: {{ include "clickhouse.fullname" . | quote }}
+                - name: CLICKHOUSE_PORT
+                  value: "9000"
+                - name: REMOTE_STORAGE
+                  value: s3
+                - name: S3_BUCKET
+                  value: {{ .Values.backup.s3.bucket | quote }}
+                - name: S3_ENDPOINT
+                  value: {{ .Values.backup.s3.endpoint | quote }}
+                - name: S3_REGION
+                  value: {{ .Values.backup.s3.region | quote }}
+                - name: S3_PATH
+                  value: {{ .Values.backup.s3.prefix | quote }}
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.s3.accessKeySecretName }}
+                      key: {{ .Values.backup.s3.accessKeySecretKey }}
+                      optional: true
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.s3.secretKeySecretName }}
+                      key: {{ .Values.backup.s3.secretKeySecretKey }}
+                      optional: true
+                - name: RETENTION_DAYS
+                  value: {{ .Values.backup.retentionDays | quote }}
+              command:
+                - sh
+                - -ec
+                - |
+                  TS=$(date -u +%Y%m%dT%H%M%SZ)
+                  NAME="clickhouse-backup-${TS}"
+                  echo "Creating backup ${NAME}..."
+                  clickhouse-backup create "${NAME}"
+                  clickhouse-backup upload "${NAME}"
+
+                  # Retention sweep
+                  echo "Removing backups older than ${RETENTION_DAYS}d..."
+                  clickhouse-backup list remote | awk -v d="${RETENTION_DAYS}" '
+                    BEGIN { cmd = "date -u -d \"-" d " days\" +%Y%m%dT%H%M%SZ"; cmd | getline cutoff; close(cmd) }
+                    /^clickhouse-backup-/ {
+                      ts = substr($1, length("clickhouse-backup-")+1)
+                      if (ts < cutoff) print $1
+                    }
+                  ' | while read old; do
+                    echo "Deleting old backup: ${old}"
+                    clickhouse-backup delete remote "${old}"
+                  done
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1Gi
+                limits:
+                  cpu: 2000m
+                  memory: 4Gi
+{{- end }}

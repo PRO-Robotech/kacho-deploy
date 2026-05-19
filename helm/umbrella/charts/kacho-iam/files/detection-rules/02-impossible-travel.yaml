@@ -1,0 +1,33 @@
+title: Impossible Travel
+id: kacho-audit-rule-02-impossible-travel
+description: |
+  Detects 2+ successful signins from different countries for same actor_id
+  within 2h window — physically impossible unless credential theft. Phase 9
+  §2.10 rule #2. Severity High.
+status: stable
+author: Kacho Cloud Security
+date: 2026-05-19
+references:
+  - https://attack.mitre.org/techniques/T1078/
+tags:
+  - attack.initial_access
+  - attack.t1078
+logsource:
+  product: kacho_iam
+  category: authentication
+detection:
+  selection:
+    event_type: 'iam.signin.succeeded'
+  timeframe: 2h
+  condition: selection | distinct_count(geo_country) by actor_id > 1
+fields:
+  - actor_id
+  - actor_ip
+  - geo_country
+falsepositives:
+  - User actually traveled (VPN exit-node, plane, ISP geoip outdated)
+  - Mobile user near border switching cell-towers
+level: high
+response:
+  action: force_step_up_mfa
+  notification: pagerduty_p3

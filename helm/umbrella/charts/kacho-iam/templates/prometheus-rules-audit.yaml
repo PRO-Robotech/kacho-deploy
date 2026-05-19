@@ -1,0 +1,145 @@
+{{- if and .Values.audit.enabled .Values.audit.prometheusRules.enabled }}
+{{/*
+KAC-127 Phase 9 — PrometheusRule resource for audit pipeline alerts.
+
+Alerts по acceptance §4.3 + P9-D14:
+  - Kafka consumer lag > 1000 events / 60s
+  - ClickHouse replication lag > 60s
+  - Merkle batch unsigned > 10min
+  - HSM signing failure rate > 1%
+  - SIEM forwarder backlog > 10000 events
+  - Verifier mismatch > 0 (P0 — wakes CISO)
+  - Audit drainer pod down
+*/}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "kacho-iam.fullname" . }}-audit-pipeline
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kacho-iam.labels" . | nindent 4 }}
+    kacho.cloud/component: prometheus-rules-audit
+spec:
+  groups:
+    - name: kacho-audit-pipeline
+      interval: 30s
+      rules:
+        - alert: KachoAuditKafkaConsumerLagHigh
+          expr: kafka_consumergroup_lag{consumergroup=~"kacho-audit-.+"} > 1000
+          for: 5m
+          labels:
+            severity: warning
+            component: audit-kafka
+            phase: "9"
+          annotations:
+            summary: "Kafka consumer lag for {{ "{{" }} $labels.consumergroup {{ "}}" }} >1000 for 5min"
+            description: |
+              Consumer group {{ "{{" }} $labels.consumergroup {{ "}}" }} has lag
+              {{ "{{" }} $value {{ "}}" }} events. ClickHouse / S3 / SIEM falling
+              behind Kafka — investigate consumer pod health.
+            runbook_url: https://docs.kacho.cloud/runbooks/audit-pipeline-incident#kafka-lag
+
+        - alert: KachoClickHouseReplicationLagHigh
+          expr: max(clickhouse_replicated_part_check_failed) > 0 or max(clickhouse_replicas_max_absolute_delay_seconds) > 60
+          for: 5m
+          labels:
+            severity: warning
+            component: audit-clickhouse
+            phase: "9"
+          annotations:
+            summary: "ClickHouse replication lag >60s or part check failure"
+            description: |
+              ClickHouse shard replication degraded. Forensic queries may return
+              stale data. Investigate Keeper coordination + replica health.
+            runbook_url: https://docs.kacho.cloud/runbooks/audit-pipeline-incident#clickhouse-replication
+
+        - alert: KachoAuditMerkleBatchUnsignedTooLong
+          expr: time() - kacho_audit_last_successful_merkle_batch_timestamp_seconds > 600
+          for: 5m
+          labels:
+            severity: critical
+            component: audit-merkle-signer
+            phase: "9"
+          annotations:
+            summary: "Audit Merkle batch not signed for >10min — possible HSM outage"
+            description: |
+              Last successful merkle-batch-signer run was {{ "{{" }} $value {{ "}}" }}
+              seconds ago. Schedule every-5-minutes — should not exceed 600s. Likely HSM
+              unavailable; S3 writer paused. Check audit-merkle-signer CronJob
+              logs + HSM connectivity.
+            runbook_url: https://docs.kacho.cloud/runbooks/audit-pipeline-incident#merkle-signer-stuck
+
+        - alert: KachoAuditHSMSigningFailureRate
+          expr: rate(kacho_audit_hsm_sign_failures_total[5m]) / rate(kacho_audit_hsm_sign_attempts_total[5m]) > 0.01
+          for: 5m
+          labels:
+            severity: critical
+            component: audit-hsm
+            phase: "9"
+          annotations:
+            summary: "HSM signing failure rate >1% for 5min"
+            description: |
+              HSM (provider: {{ .Values.audit.hsm.provider }}) returned errors
+              for >1% of sign calls. Investigate HSM cluster health, PKCS#11
+              client TLS, PIN validity.
+            runbook_url: https://docs.kacho.cloud/runbooks/audit-pipeline-incident#hsm-failures
+
+        - alert: KachoAuditSIEMForwarderBacklog
+          expr: kacho_audit_siem_forwarder_backlog_events > 10000
+          for: 10m
+          labels:
+            severity: warning
+            component: audit-siem
+            phase: "9"
+          annotations:
+            summary: "SIEM forwarder backlog >10000 events"
+            description: |
+              Subscriber {{ "{{" }} $labels.subscriber_id {{ "}}" }} backlog
+              {{ "{{" }} $value {{ "}}" }} events. Likely 5xx/timeout from SIEM
+              endpoint. Check subscriber.failure_count + auto-disable threshold.
+            runbook_url: https://docs.kacho.cloud/runbooks/audit-pipeline-incident#siem-backpressure
+
+        - alert: KachoAuditVerifierMismatch
+          expr: kacho_audit_verifier_anomalies_found > 0
+          for: 0m  # immediate — audit tamper = P0
+          labels:
+            severity: critical
+            priority: P0
+            component: audit-verifier
+            phase: "9"
+          annotations:
+            summary: "AUDIT INTEGRITY VIOLATION — verifier found mismatches"
+            description: |
+              Audit verifier daily run found {{ "{{" }} $value {{ "}}" }}
+              anomalies (broken chain / signature mismatch / Merkle root mismatch).
+              POTENTIAL APT OR INSIDER TAMPER. Page CISO immediately.
+            runbook_url: https://docs.kacho.cloud/runbooks/audit-pipeline-incident#integrity-violation
+
+        - alert: KachoAuditDrainerDown
+          expr: up{job="kacho-iam",component="audit-drainer"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: audit-drainer
+            phase: "9"
+          annotations:
+            summary: "Audit drainer pod down"
+            description: |
+              Audit drainer not reporting Prometheus scrapes. Outbox events
+              backing up in Postgres; downstream pipeline cold.
+            runbook_url: https://docs.kacho.cloud/runbooks/audit-pipeline-incident#drainer-down
+
+        - alert: KachoAuditOutboxBacklog
+          expr: kacho_audit_outbox_pending_count > 100000
+          for: 10m
+          labels:
+            severity: warning
+            component: audit-drainer
+            phase: "9"
+          annotations:
+            summary: "Audit outbox backlog >100k events for 10min"
+            description: |
+              audit_outbox table has {{ "{{" }} $value {{ "}}" }} pending rows.
+              Drainer cannot keep up. Investigate Kafka producer health.
+            runbook_url: https://docs.kacho.cloud/runbooks/audit-pipeline-incident#outbox-backlog
+{{- end }}

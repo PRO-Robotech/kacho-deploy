@@ -136,6 +136,55 @@ kacho-iam:
         memory: 256Mi
   openfgaBootstrap:
     modelIdSecretName: openfga-model-id
+  # KAC-127 Phase 9 — mirror top-level `audit.*` into kacho-iam sub-chart
+  # (Helm не пропагирует автоматически). При CLI-override:
+  #   --set audit.enabled=true --set kacho-iam.audit.enabled=true
+  # либо использовать scripts/helm-deploy.sh helper.
+  audit:
+    enabled: false
+    merkleBatchSchedule: "*/5 * * * *"
+    verifierSchedule: "0 2 * * *"
+    kafka:
+      bootstrapServers: "kacho-umbrella-kafka-bootstrap:9092"
+    s3:
+      bucket: ""
+      endpoint: ""
+      region: us-east-1
+      accessKeySecretName: kacho-audit-s3-creds
+      accessKeySecretKey: AWS_ACCESS_KEY_ID
+      secretKeySecretName: kacho-audit-s3-creds
+      secretKeySecretKey: AWS_SECRET_ACCESS_KEY
+    retention:
+      hot: 90d
+      warmStandard: 30d
+      warmIA: 1y
+      cold: 10y
+    hsm:
+      provider: softhsm
+      libraryPath: /usr/lib/softhsm/libsofthsm2.so
+      slot: 0
+      tokenLabel: kacho-audit-signing
+      keyLabel: kacho-audit-merkle-2026
+      signingAlgorithm: ECDSA-P384-SHA384
+      pinSecret: kacho-iam-hsm-pin
+    siem:
+      enabled: false
+      replicas: 2
+      autoDisableThreshold: 5
+      rateLimitEventsPerSec: 100
+      datadog:
+        enabled: true
+      splunk:
+        enabled: true
+      elastic:
+        enabled: true
+      genericWebhook:
+        enabled: true
+    networkPolicy:
+      enabled: false
+      hsmEndpoints: []
+    prometheusRules:
+      enabled: true
 
 # ─── KAC-127 Phase 3 — AuthZ core (acceptance sub-phase-3.3) ──────────────
 # OpenFGA + OPA sidecar runtime configuration. Toggle whole pipeline via
@@ -242,7 +291,96 @@ openfgaBootstrap:
     fgaPasswordSecretKey: password
     fgaDatabase: kacho_openfga
 
-# Глобальные labels, навешиваемые на все ресурсы umbrella chart'а.
+# ─── KAC-127 Phase 9 — Audit pipeline subchart toggles ────────────────────
+# Соответствует acceptance §4.1 + Chart.yaml dependencies (kafka, clickhouse,
+# kafka-connect — все condition'ы).
+#
+# По умолчанию ВЫКЛЮЧЕНЫ (defense-in-depth: kind/dev стенд не нуждается в
+# Kafka/CH/HSM/S3; drainer работает в pg_notify mode). На prod —
+# values.prod.yaml выставляет true.
+kafka:
+  enabled: false
+# clickhouse subchart — propagate backup.s3 values из umbrella.audit.s3.
+clickhouse:
+  enabled: false
+  backup:
+    enabled: true
+    s3:
+      bucket: ""
+      endpoint: ""
+      region: us-east-1
+# kafka-connect subchart — propagate audit.s3 values из umbrella.
+# Helm не пропагирует top-level audit.* в subchart автоматически (только global.*).
+kafka-connect:
+  enabled: false
+  s3:
+    bucket: ""
+    endpoint: ""
+    region: us-east-1
+
+# Top-level `audit.*` block — управляет audit pipeline (kacho-iam Helm
+# templates). Дублируется в kacho-iam.audit.* через subchart propagation
+# (Helm не пропагирует top-level автоматически — см. comment ниже).
+#
+# ВНИМАНИЕ про configurable: все ключи (s3.bucket, s3.endpoint, hsm.provider,
+# hsm.libraryPath, retention.*) — обязательные параметры для production
+# deploy'а. Не хардкодить значения в template'ах.
+audit:
+  enabled: false
+
+  merkleBatchSchedule: "*/5 * * * *"
+  verifierSchedule: "0 2 * * *"
+
+  kafka:
+    bootstrapServers: "kacho-umbrella-kafka-bootstrap:9092"
+
+  s3:
+    bucket: ""
+    endpoint: ""
+    region: us-east-1
+    accessKeySecretName: kacho-audit-s3-creds
+    accessKeySecretKey: AWS_ACCESS_KEY_ID
+    secretKeySecretName: kacho-audit-s3-creds
+    secretKeySecretKey: AWS_SECRET_ACCESS_KEY
+
+  retention:
+    hot: 90d
+    warmStandard: 30d
+    warmIA: 1y
+    cold: 10y
+
+  hsm:
+    provider: softhsm
+    libraryPath: /usr/lib/softhsm/libsofthsm2.so
+    slot: 0
+    tokenLabel: kacho-audit-signing
+    keyLabel: kacho-audit-merkle-2026
+    signingAlgorithm: ECDSA-P384-SHA384
+    pinSecret: kacho-iam-hsm-pin
+
+  siem:
+    enabled: false
+    replicas: 2
+    autoDisableThreshold: 5
+    rateLimitEventsPerSec: 100
+    datadog:
+      enabled: true
+    splunk:
+      enabled: true
+    elastic:
+      enabled: true
+    genericWebhook:
+      enabled: true
+
+  networkPolicy:
+    enabled: false
+    hsmEndpoints: []
+
+  prometheusRules:
+    enabled: true
+
+# ─── Глобальные labels ─────────────────────────────────────────────────
+# Навешиваются на все ресурсы umbrella chart'а.
 # Полезно для multi-tenant ArgoCD / Kustomize-overlays.
 global:
   labels: {}

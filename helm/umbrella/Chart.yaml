@@ -1,7 +1,7 @@
 apiVersion: v2
 name: kacho-umbrella
-version: 1.1.0
-description: "Kachō Cloud Control Plane — dev umbrella (flat API + Operations). KAC-127 Phase 3: AuthZ core — OpenFGA Authorization Model v2 (immutable+versioned) + Conditions (CEL) + OPA sidecar (signed bundle pull) + 6 production deny-rules. Builds on Phase 2 (Kratos+Hydra+JWKS) and Phase 1 (DB foundation)."
+version: 1.2.0
+description: "Kachō Cloud Control Plane — dev umbrella (flat API + Operations). KAC-127 Phase 9: Audit pipeline — Kafka KRaft + ClickHouse 2x2 + Kafka Connect S3-sink + HSM PKCS#11 ECDSA P-384 Merkle signer + independent verifier + SIEM forwarders (Datadog/Splunk/Elastic/generic-webhook) + 8 Sigma detection rules + Grafana dashboards + Prometheus alerts + NetworkPolicies. Builds on Phase 3 (OpenFGA+OPA+Conditions), Phase 2 (Kratos+Hydra+JWKS), Phase 1 (DB foundation)."
 dependencies:
   - name: ingress-nginx
     version: 4.x
@@ -101,3 +101,19 @@ dependencies:
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
     condition: pg-keto.enabled
+  # KAC-127 Phase 9 — Audit pipeline (sub-phase 3.9): Kafka KRaft + ClickHouse
+  # + Kafka Connect S3 sink. Все три chart'а — vendored под helm/umbrella/charts/.
+  # Все три выключены по умолчанию (condition: <chart>.enabled); включаются
+  # values.prod.yaml или helm upgrade --set kafka.enabled=true.
+  - name: kafka
+    version: ">= 0.0.0"
+    repository: file://./charts/kafka
+    condition: kafka.enabled
+  - name: clickhouse
+    version: ">= 0.0.0"
+    repository: file://./charts/clickhouse
+    condition: clickhouse.enabled
+  - name: kafka-connect
+    version: ">= 0.0.0"
+    repository: file://./charts/kafka-connect
+    condition: kafka-connect.enabled

@@ -174,3 +174,133 @@ opaSidecar:
 # Mirror knob — `openfga-bootstrap-job` writes here at install/upgrade.
 openfgaBootstrap:
   modelIdSecretName: openfga-model-id
+
+# ─── KAC-127 Phase 9 — Audit pipeline (sub-phase 3.9) ─────────────────────
+# Все ключи configurable; HSM provider / S3 endpoint / SIEM providers — env-
+# specific (dev / staging / prod). На kind/dev — audit.enabled=false
+# (drainer работает в pg_notify mode, без OLAP/S3/HSM/SIEM).
+#
+# Соответствует acceptance:
+#   - §2.5 (Kafka topics)
+#   - §2.6 (ClickHouse schema)
+#   - §2.7 (S3 layout + lifecycle)
+#   - §2.8 (HSM signing contract — PKCS#11 + ECDSA P-384)
+#   - §2.9 (SIEM webhook protocol)
+#   - §2.10 (Detection rules library — 8 rules)
+#   - §4.1 (data flow)
+#   - D-3 / D-5 / D-7 / D-9 / D-13 / D-15 / D-17
+audit:
+  # Master toggle для всего audit pipeline на стороне kacho-iam Helm chart.
+  # При false — chart НЕ создаёт audit-related CronJob'ы / Deployment'ы /
+  # ConfigMaps / NetworkPolicies (drainer работает только в pg_notify mode).
+  enabled: false
+
+  # ─── Merkle batch signer ────────────────────────────────────────────
+  # CronJob */5 * * * * (P9-D7). 5-min window — баланс между S3 object
+  # count и tamper-blast-radius.
+  merkleBatchSchedule: "*/5 * * * *"
+  merkleBatchActiveDeadlineSeconds: 240
+
+  # ─── Independent verifier ────────────────────────────────────────────
+  # Daily 02:00 UTC (P9-D13).
+  verifierSchedule: "0 2 * * *"
+  verifier:
+    # Sample ratio для S3 download verification (P9-D27).
+    # 0.01 = 1/100 batches — full-jsonl-recompute; rest — manifest-only verify.
+    s3SampleRatio: "0.01"
+
+  # ─── Kafka connection (umbrella reads from kafka subchart) ─────────
+  kafka:
+    bootstrapServers: "kacho-umbrella-kafka-bootstrap:9092"
+
+  # ─── S3 cold storage ──────────────────────────────────────────────
+  # Configurable bucket + endpoint. На prod — обязательно override.
+  s3:
+    # Bucket name. PROD: override via umbrella values. dev: MinIO compat.
+    bucket: ""
+    # Endpoint URL. Пусто = AWS S3 (region-based); override для MinIO /
+    # Wasabi / Cloudflare R2.
+    endpoint: ""
+    region: us-east-1
+    # IAM credentials. Через external-secrets-operator на prod.
+    accessKeySecretName: kacho-audit-s3-creds
+    accessKeySecretKey: AWS_ACCESS_KEY_ID
+    secretKeySecretName: kacho-audit-s3-creds
+    secretKeySecretKey: AWS_SECRET_ACCESS_KEY
+
+  # ─── Retention tiers ────────────────────────────────────────────────
+  # Соответствует acceptance §2.7 lifecycle table + P9-D8.
+  retention:
+    # ClickHouse hot tier (TTL DELETE per partition).
+    hot: 90d
+    # S3 Standard tier.
+    warmStandard: 30d
+    # S3 Standard-IA tier (after warmStandard).
+    warmIA: 1y
+    # S3 Glacier Deep Archive tier (after warmIA).
+    cold: 10y
+
+  # ─── HSM PKCS#11 (configurable provider) ────────────────────────────
+  # Соответствует acceptance §2.8 + P9-D9 + P9-D10.
+  hsm:
+    # provider: softhsm | awscloudhsm | gcpcloudhsm | azurekv | thalesluna
+    # PROD: НИКОГДА softhsm (dev only — explicitly marked).
+    provider: softhsm
+
+    # PKCS#11 library path per provider.
+    libraryPath: /usr/lib/softhsm/libsofthsm2.so
+
+    # PKCS#11 slot id.
+    slot: 0
+
+    # Token label (configured при создании token via softhsm2-util / vendor tool).
+    tokenLabel: kacho-audit-signing
+
+    # Key label (configured при keypair generation).
+    # Rotation: yearly label `kacho-audit-merkle-<year+1>` (P9-D28 dual-sign 7d).
+    keyLabel: kacho-audit-merkle-2026
+
+    # Signing algorithm: ECDSA P-384 (FIPS 140-2 Level 3 acceptable).
+    signingAlgorithm: ECDSA-P384-SHA384
+
+    # PIN Secret name. Externally-managed (sealed-secrets / external-secrets).
+    pinSecret: kacho-iam-hsm-pin
+
+  # ─── SIEM forwarders ─────────────────────────────────────────────────
+  # Соответствует acceptance §2.9 + P9-D15..D17, D-25.
+  siem:
+    enabled: false
+    replicas: 2
+
+    # Auto-disable threshold (P9-D17): consecutive 4xx (non-429) → disabled=true.
+    autoDisableThreshold: 5
+
+    # Per-subscriber rate-limit (events/sec) — Datadog HEC default.
+    rateLimitEventsPerSec: 100
+
+    # Per-provider toggles. Subscribers tenant-scoped (siem_subscribers row),
+    # provider-toggles infra-scoped (drainer compiles in provider client).
+    datadog:
+      enabled: true
+    splunk:
+      enabled: true
+    elastic:
+      enabled: true
+    genericWebhook:
+      enabled: true
+
+  # ─── NetworkPolicies (defense-in-depth) ──────────────────────────────
+  networkPolicy:
+    enabled: false
+    # HSM endpoint CIDRs (whitelisted egress from signer + verifier pods).
+    # PROD: AWS CloudHSM ENI CIDR; GCP/Azure — VPN/PrivateLink endpoints.
+    hsmEndpoints: []
+    # Пример:
+    #   - cidr: "10.100.0.0/24"
+    #     port: 2223
+    #   - cidr: "10.100.0.0/24"
+    #     port: 2224
+
+  # ─── Prometheus alerts ───────────────────────────────────────────────
+  prometheusRules:
+    enabled: true

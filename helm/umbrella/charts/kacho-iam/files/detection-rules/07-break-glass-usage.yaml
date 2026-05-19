@@ -1,0 +1,32 @@
+title: Break-Glass Account Usage
+id: kacho-audit-rule-07-break-glass-usage
+description: |
+  Detects any event where actor.acr=4 (break-glass elevated auth) or
+  event_type starts with 'iam.break_glass.'. Phase 9 §2.10 rule #7.
+  Severity Critical.
+status: stable
+author: Kacho Cloud Security
+date: 2026-05-19
+tags:
+  - attack.privilege_escalation
+logsource:
+  product: kacho_iam
+  category: privileged_access
+detection:
+  selection_acr:
+    actor.acr: '4'
+  selection_event_prefix:
+    event_type|startswith: 'iam.break_glass.'
+  condition: selection_acr or selection_event_prefix
+fields:
+  - actor_id
+  - event_type
+  - target_id
+  - actor_acr
+falsepositives:
+  - Scheduled break-glass test exercise (rare; should be marked в audit-event
+    metadata.scheduled_test=true)
+level: critical
+response:
+  action: pagerduty_p1
+  notification: slack_security_alerts+email_security
