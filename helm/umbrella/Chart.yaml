@@ -1,7 +1,7 @@
 apiVersion: v2
 name: kacho-umbrella
-version: 1.0.10
-description: "Kachō Cloud Control Plane — dev umbrella (flat API + Operations). KAC-127 Phase 2: AuthN core — Kratos WebAuthn/Passkey + Hydra OAuth 2.1 (DPoP + mTLS-bound + refresh-rotation) + JWKS rotator + configurable kacho.domain."
+version: 1.1.0
+description: "Kachō Cloud Control Plane — dev umbrella (flat API + Operations). KAC-127 Phase 3: AuthZ core — OpenFGA Authorization Model v2 (immutable+versioned) + Conditions (CEL) + OPA sidecar (signed bundle pull) + 6 production deny-rules. Builds on Phase 2 (Kratos+Hydra+JWKS) and Phase 1 (DB foundation)."
 dependencies:
   - name: ingress-nginx
     version: 4.x
@@ -56,7 +56,7 @@ dependencies:
   # (file:// относительно Chart.yaml). На E0 image скорее всего ещё не существует —
   # см. values.dev.yaml `kacho-iam.image.repository` / `tag` для конкретики.
   - name: kacho-iam
-    version: 1.0.0
+    version: ">= 1.0.0"
     repository: file://./charts/kacho-iam
   # External charts для IAM stack. Версии резолвнуты `helm dependency update`
   # на 2026-05-17 (KAC-105): zitadel-8.13.4, openfga-0.2.62.

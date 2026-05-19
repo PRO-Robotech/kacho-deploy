@@ -1,13 +1,40 @@
 {{- if .Values.openfgaBootstrap.enabled }}
 {{/*
-KAC-105: stub authorization model для OpenFGA (минимум для bootstrap'а на E0).
-E3 (epic KAC-108) заменит на полноценную DSL-модель из
-`kacho-iam/internal/apps/kacho/api/access_binding/fga_model.fga`.
+KAC-127 Phase 3 (acceptance §5.1 / design §4) — full OpenFGA Authorization Model v2.
+=====================================================================================
 
-Здесь только тривиальный схема с типом `user` — этого хватает, чтобы создать
-store + написать authorization-model + получить authorization_model_id.
-Bootstrap-job ниже использует JSON-форму (proto-format), потому что DSL → JSON
-требует отдельной toolchain (cli.openfga) — в curlimages/curl её нет.
+Замещает stub из E0 (KAC-105). DSL — verbatim из design §4 (frozen, нормативно):
+  - cluster (singleton `cluster_kacho_root`) с system_admin / emergency_admin / system_viewer.
+  - organization tier (optional B2B); owner / admin / editor / viewer / billing_admin / scim_admin.
+  - account / project tiers с cascading `or admin from <parent>` semantics.
+  - per-service resource-types: vpc_network / vpc_subnet / vpc_security_group /
+    vpc_route_table / vpc_address / vpc_gateway / vpc_private_endpoint /
+    vpc_network_interface / vpc_address_pool / compute_instance / compute_disk /
+    compute_image / compute_snapshot / lb_network_load_balancer / lb_target_group.
+  - 7 предустановленных Conditions (mfa_fresh / non_expired / source_ip_in_range /
+    break_glass_window / jit_window / business_hours / device_compliant) — design §4.
+
+Bootstrap-job (см. openfga-bootstrap-job.yaml) реализует idempotent-deploy
+(DSL → JSON via `fga model transform`, sha256-compare с current Secret annotation,
+skip-write если совпадает; иначе WriteAuthorizationModel + patch Secret
+`openfga-model-id.current` + annotate Deployments для rolling-restart).
+
+Naming convention (запреты #2): все types — kacho.cloud.<domain>-style.
+Conditions — CEL-syntax (OpenFGA 1.5+ stable feature, см. P3-D3).
+
+ВНИМАНИЕ при edit'е:
+  - DSL — frozen в design §4 + acceptance §4.5/§5.1. Любое изменение → новый
+    authorization_model_id (P3-D1: versioned + immutable). Bootstrap-job detect'ит
+    sha256-diff DSL'а и пишет новую модель.
+  - На rollback (helm rollback) FGA-engine retains old model_id (immutable, никогда
+    не удаляет) → rollback просто пиннит Secret обратно. См. P3.GWT-04.
+
+DataSource хранения id'а — Kubernetes Secret `openfga-model-id` (P3-D2):
+  metadata.name        = openfga-model-id
+  metadata.namespace   = {{ .Release.Namespace }}
+  data.current         = <base64 model_id ULID>
+  annotations:
+    kacho-deploy/last-applied-dsl-sha256: <hex>
 */}}
 apiVersion: v1
 kind: ConfigMap
@@ -16,76 +43,196 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/part-of: kacho
     kacho.cloud/component: openfga-bootstrap
+    kacho.cloud/phase: "3"
+    kacho.cloud/kac-ticket: KAC-127
+  annotations:
+    # Hash content of DSL — позволяет bootstrap-job-у быстро sha256-compare без
+    # пересчёта на каждый запуск (idempotency fast-path).
+    kacho.cloud/dsl-version: "v2"
 data:
-  model.json: |
-    {
-      "schema_version": "1.1",
-      "type_definitions": [
-        { "type": "user" }
-      ]
+  model.fga: |-
+    model
+      schema 1.1
+
+    type user
+
+    type service_account
+
+    type federated_subject
+
+    type group
+      relations
+        define member: [user, service_account, federated_subject, group#member]
+
+    type cluster
+      relations
+        define system_admin: [user, service_account]
+        define emergency_admin: [user with break_glass_window]
+        define system_viewer: [user, service_account]
+        define any_admin: system_admin or emergency_admin
+
+    type organization
+      relations
+        define cluster: [cluster]
+        define owner: [user]
+        define admin: [user, service_account, group#member] or any_admin from cluster or owner
+        define editor: [user, service_account, group#member] or admin
+        define viewer: [user, service_account, group#member] or editor
+        define billing_admin: [user] or admin
+        define scim_admin: [user, service_account] or admin
+
+    type account
+      relations
+        define cluster: [cluster]
+        define organization: [organization]
+        define owner: [user]
+        define admin: [user, service_account, group#member] or any_admin from cluster or admin from organization or owner
+        define editor: [user, service_account, group#member] or admin or editor from organization
+        define viewer: [user, service_account, group#member] or editor or viewer from organization
+        define billing_admin: [user] or admin or billing_admin from organization
+
+    type project
+      relations
+        define account: [account]
+        define admin: [user, service_account, group#member] or admin from account
+        define editor: [user, service_account, group#member] or admin or editor from account
+        define viewer: [user, service_account, group#member] or editor or viewer from account
+
+    type vpc_network
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_subnet
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_security_group
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_route_table
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_address
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_gateway
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_private_endpoint
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_network_interface
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_address_pool
+      relations
+        define cluster: [cluster]
+        define admin: [user, service_account] or any_admin from cluster
+        define viewer: [user, service_account] or admin or system_viewer from cluster
+
+    type compute_instance
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+        define ssh: [user with mfa_fresh, service_account] or admin
+        define console: [user with mfa_fresh] or admin
+
+    type compute_disk
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type compute_image
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type compute_snapshot
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type lb_network_load_balancer
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type lb_target_group
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    condition mfa_fresh(amr_claims: list<string>, acr_value: string, current_time: timestamp, mfa_at: timestamp) {
+      acr_value == "3" &&
+      "webauthn" in amr_claims &&
+      current_time - mfa_at < duration("15m")
     }
-  bootstrap.sh: |
-    #!/bin/sh
-    # KAC-105: bootstrap OpenFGA store + authorization-model для kacho-iam.
-    # Идемпотентно: повторный запуск не дублирует store / model.
-    #
-    # Шаги:
-    # 1. Дождаться OpenFGA :8080/healthz (max 5 мин).
-    # 2. GET /stores — если store с name=kacho-store существует, использовать его id.
-    # 3. Иначе POST /stores {"name":"kacho-store"} → запомнить id.
-    # 4. POST /stores/<id>/authorization-models (stub-model).
-    # 5. Создать/обновить Secret kacho-iam-openfga-store со store_id.
-    #
-    # Зависимости: curl, jq, kubectl. Образ — curlimages/curl + апгрейд jq/kubectl
-    # ставится через apk inline (curlimages/curl построен на alpine).
-    set -eu
 
-    OPENFGA_URL="${OPENFGA_URL:-http://kacho-umbrella-openfga:8080}"
-    STORE_NAME="${STORE_NAME:-kacho-store}"
-    SECRET_NAME="${SECRET_NAME:-kacho-iam-openfga-store}"
-    NAMESPACE="${NAMESPACE:-kacho}"
+    condition non_expired(current_time: timestamp, valid_until: timestamp) {
+      current_time < valid_until
+    }
 
-    echo "[bootstrap] устанавливаем jq+kubectl (alpine)…"
-    apk add --no-cache jq kubectl >/dev/null
+    condition source_ip_in_range(client_ip: ipaddress, allowed_cidrs: list<ipaddress>) {
+      client_ip.in_cidr(allowed_cidrs)
+    }
 
-    echo "[bootstrap] ждём OpenFGA $OPENFGA_URL/healthz (max 5 мин)…"
-    for i in $(seq 1 60); do
-      if curl -sf "$OPENFGA_URL/healthz" >/dev/null 2>&1; then
-        echo "[bootstrap] OpenFGA готов"
-        break
-      fi
-      sleep 5
-      if [ "$i" -eq 60 ]; then
-        echo "[bootstrap] TIMEOUT: OpenFGA не отвечает"
-        exit 1
-      fi
-    done
+    condition break_glass_window(current_time: timestamp, expires_at: timestamp) {
+      current_time < expires_at
+    }
 
-    echo "[bootstrap] ищем существующий store '$STORE_NAME'…"
-    STORE_ID=$(curl -sf "$OPENFGA_URL/stores" | jq -r --arg n "$STORE_NAME" '.stores[]? | select(.name==$n) | .id' || true)
+    condition jit_window(current_time: timestamp, activated_at: timestamp, ttl_seconds: int) {
+      current_time - activated_at < duration(string(ttl_seconds) + "s")
+    }
 
-    if [ -z "$STORE_ID" ]; then
-      echo "[bootstrap] store не найден — создаём"
-      STORE_ID=$(curl -sf -XPOST "$OPENFGA_URL/stores" \
-        -H 'content-type: application/json' \
-        -d "{\"name\":\"$STORE_NAME\"}" | jq -r '.id')
-      echo "[bootstrap] создан store id=$STORE_ID"
-    else
-      echo "[bootstrap] переиспользуем существующий store id=$STORE_ID"
-    fi
+    condition business_hours(current_time: timestamp, tz: string, start_h: int, end_h: int) {
+      current_time.getHours(tz) >= start_h && current_time.getHours(tz) < end_h
+    }
 
-    echo "[bootstrap] загружаем authorization-model (stub)…"
-    MODEL_ID=$(curl -sf -XPOST "$OPENFGA_URL/stores/$STORE_ID/authorization-models" \
-      -H 'content-type: application/json' \
-      -d @/etc/openfga-model/model.json | jq -r '.authorization_model_id')
-    echo "[bootstrap] authorization_model_id=$MODEL_ID"
-
-    echo "[bootstrap] записываем store_id в Secret $NAMESPACE/$SECRET_NAME…"
-    kubectl -n "$NAMESPACE" create secret generic "$SECRET_NAME" \
-      --from-literal=store_id="$STORE_ID" \
-      --from-literal=authorization_model_id="$MODEL_ID" \
-      --dry-run=client -o yaml | kubectl apply -f -
-
-    echo "[bootstrap] OK"
+    condition device_compliant(device_attestation: string, allowed_attestations: list<string>) {
+      device_attestation in allowed_attestations
+    }
 {{- end }}

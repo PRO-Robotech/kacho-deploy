@@ -252,6 +252,23 @@ kacho-iam:
     limits:
       cpu: 4000m
       memory: 2Gi
+  # KAC-127 Phase 3: OPA sidecar — REQUIRED on prod (acceptance §5.6 + §5.7).
+  # Pod gets OPA injected; sidecar pulls signed bundle from kacho-iam :9091.
+  opaSidecar:
+    enabled: true
+    image: openpolicyagent/opa:1.0.0-rootless
+    logLevel: warn
+    jwks:
+      configMapName: kacho-iam-jwks
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  openfgaBootstrap:
+    modelIdSecretName: openfga-model-id
 
 # ─── VPC sub-chart prod overrides ──────────────────────────────────────
 # В prod включаем admin networkpolicy (запрет любого pod→:9091 кроме admin-pods).
@@ -268,11 +285,133 @@ mailhog:
   enabled: false
 zitadel:
   enabled: false        # KAC-115: Zitadel заменён на Ory stack (Kratos + Hydra).
+
+# ─── KAC-127 Phase 3: AuthZ core (OpenFGA + OPA) — required on prod ────
+# Decision history:
+#   - KAC-119 originally proposed Keto as the FGA replacement on prod.
+#   - KAC-127 sub-phase-3.3 acceptance (frozen 2026-05-19) reverses that:
+#     OpenFGA + Conditions (CEL) is the production engine; OPA sidecar is the
+#     guardrail overlay. Keto retained only as Hydra-attached store (no FGA-style
+#     usage on prod).
+# Both engines run with HA replicas + NetworkPolicy + signed bundles. See
+# acceptance §5.1–§5.7 for the full deployment topology.
 openfga:
-  enabled: false        # KAC-119: OpenFGA заменён на Keto в prod.
+  enabled: true
+  datastore:
+    engine: postgres
+    # Real connection string injected via external-secrets-operator at deploy
+    # time (`secret-ref: pg-openfga-credentials`). The literal below is only a
+    # placeholder for the umbrella template to render; the operator overrides
+    # via `--set openfga.datastore.uri=$(vault kv get …)` in CI.
+    uri: postgres://openfga@kacho-umbrella-pg-openfga:5432/kacho_openfga?sslmode=require
+  # HA topology — 3 replicas. PodDisruptionBudget is emitted separately via
+  # umbrella template `openfga-pdb.yaml` (upstream chart schema rejects
+  # `podDisruptionBudget` as additional property — see networkpolicy-authz).
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  # Playground DISABLED on prod (the in-browser tuple editor exposes Check
+  # endpoint without RBAC — must never be reachable from public ingress).
+  playground:
+    enabled: false
+  ingress:
+    enabled: false
+  # Telemetry: scrape /metrics endpoint via ServiceMonitor (Phase 11 deploys
+  # Prometheus). Tracing — OTLP to kacho-otel-collector (Phase 11).
+  telemetry:
+    trace:
+      enabled: true
+      otlp:
+        endpoint: http://kacho-otel-collector.kacho-system.svc.cluster.local:4317
+    metrics:
+      enabled: true
+
+# KAC-127 Phase 3: PDB for OpenFGA engine (HA-mode reliability primitive).
+openfgaPdb:
+  enabled: true
+  minAvailable: 2
+
 zitadelOidcBootstrap:
   enabled: false
 kratosSelfServiceUI:
   enabled: false        # Phase 2 — UI from kacho-ui repo, не selfservice-stock.
+
+# ─── KAC-127 Phase 3: openfga-bootstrap-job — enabled on prod ──────────
 openfgaBootstrap:
-  enabled: false
+  enabled: true
+  image: curlimages/curl:8.5.0
+  cliImage: openfga/cli:0.6.5
+  storeName: kacho-store
+  authorizationModelConfigMap: openfga-model-stub
+  modelIdSecretName: openfga-model-id
+  clusterSingletonId: cluster_kacho_root
+  # Prod: explicit DB bootstrap Job runs against shared Postgres operator
+  # (CloudNativePG / RDS) that does NOT auto-create per-tenant databases.
+  # If the cluster uses bitnami pg-openfga (auto-init), keep this disabled.
+  initDatabase: true
+  dbAdmin:
+    image: postgres:16-alpine
+    host: kacho-umbrella-pg-openfga
+    port: "5432"
+    user: postgres
+    # External-secrets-operator populates this Secret at deploy time from
+    # vault path `secret/kacho/prod/pg-openfga/admin`.
+    passwordSecretName: pg-openfga-admin-credentials
+    passwordSecretKey: password
+    fgaUser: openfga
+    fgaPasswordSecretName: pg-openfga-credentials
+    fgaPasswordSecretKey: password
+    fgaDatabase: kacho_openfga
+
+# ─── KAC-127 Phase 3: OPA sidecar pipeline (production) ────────────────
+# Enabled on prod with NetworkPolicy ON. OPA sidecars require the JWKS public
+# key ConfigMap to be populated by the Phase 2 JWKS rotator before they can
+# verify bundle signatures (fail-closed: unsigned/tampered bundle == OPA refuses
+# to load, request denied).
+opaSidecar:
+  enabled: true
+  image: openpolicyagent/opa:1.0.0-rootless
+  logLevel: warn      # info on dev, warn on prod (decision-log noise reduction)
+  iamInternalHost: kacho-umbrella-iam-internal
+  iamInternalPort: 9091
+  bundleResource: bundle.tar.gz
+  bundlePollMinSec: 3000   # ~50min (prod: long jitter window)
+  bundlePollMaxSec: 3900   # ~65min
+  signingKeyId: kacho-iam-signing-key-current
+  bundle:
+    ttlSeconds: 3600
+    signingAlgorithm: ES256
+    signingKeyKid: kacho-iam-signing-key-current
+    buildShaEnvVar: KACHO_BUILD_SHA
+    cacheStaleAfterSeconds: 7200
+    keyRotationGraceSeconds: 7200
+  jwks:
+    configMapName: kacho-iam-jwks
+    bootstrapKeyPem: ""    # populated by JWKS rotator at runtime.
+  # Defense-in-depth NetworkPolicy — REQUIRED on prod (acceptance §5.7).
+  networkPolicy:
+    enabled: true
+    iamPodSelector:
+      matchLabels:
+        app.kubernetes.io/name: kacho-iam
+    openfgaPodSelector:
+      matchLabels:
+        app.kubernetes.io/name: openfga
+    apiGatewayPodSelector:
+      matchLabels:
+        app: api-gateway
+    backendPodSelector:
+      matchExpressions:
+        - key: app
+          operator: In
+          values: [vpc, compute, loadbalancer]
+
+# Sub-chart propagation note: opaSidecar + openfgaBootstrap.modelIdSecretName
+# are propagated to kacho-iam sub-chart via the kacho-iam.opaSidecar / .openfgaBootstrap
+# blocks above (inside the kacho-iam: top-level mapping). Duplicate top-level
+# `kacho-iam:` block would last-wins-overwrite — see KAC-127 PR review.

@@ -752,15 +752,71 @@ kacho-iam:
       cpu: 1000m
       memory: 512Mi
   env: {}
+  # KAC-127 Phase 3: OPA sidecar config propagated from umbrella to sub-chart.
+  opaSidecar:
+    enabled: true
+    image: openpolicyagent/opa:1.0.0-rootless
+    logLevel: info
+    jwks:
+      configMapName: kacho-iam-jwks
+    resources:
+      requests:
+        cpu: 20m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+  openfgaBootstrap:
+    modelIdSecretName: openfga-model-id
 
-# ─── KAC-105: OpenFGA bootstrap-job ─────────────────────────────────────
-# post-install hook, который (1) ждёт OpenFGA готовности, (2) создаёт store
-# `kacho-store` (idempotent), (3) загружает authorization-model (заглушка
-# на E0; E3 заменит на полноценную DSL-модель), (4) пишет store_id в
-# Secret kacho-iam-openfga-store (kacho-iam читает на старте).
+# ─── KAC-127 Phase 3: OpenFGA bootstrap-job (KAC-105 extended) ──────────
+# post-install hook with full DSL v2 + idempotent + model-id Secret patch +
+# rolling-restart annotation on consumer Deployments.
+# See umbrella/templates/openfga-bootstrap-job.yaml for full behaviour.
 openfgaBootstrap:
   enabled: true
   image: curlimages/curl:8.5.0
+  # KAC-127 Phase 3: openfga/cli image transforms DSL → JSON in initContainer.
+  cliImage: openfga/cli:0.6.5
   storeName: kacho-store
   authorizationModelConfigMap: openfga-model-stub
+  modelIdSecretName: openfga-model-id
+  clusterSingletonId: cluster_kacho_root
+  # Dev: rely on bitnami pg-openfga auto-init (database `openfga`).
+  initDatabase: false
+
+# ─── KAC-127 Phase 3: OPA sidecar pipeline (acceptance §5.6) ────────────
+# Enables per-pod OPA sidecar across api-gateway + kacho-iam + vpc + compute
+# + loadbalancer for runtime guardrails (deny-only Rego on top of FGA ALLOW).
+# On dev kind-stand: enabled (full integration smoke), NetworkPolicy disabled
+# (allows kubectl port-forward debugging).
+opaSidecar:
+  enabled: true
+  image: openpolicyagent/opa:1.0.0-rootless
+  logLevel: info
+  iamInternalHost: kacho-umbrella-iam-internal
+  iamInternalPort: 9091
+  bundleResource: bundle.tar.gz
+  # Shorter poll interval on dev for faster iteration on Rego changes.
+  bundlePollMinSec: 60   # ~1min
+  bundlePollMaxSec: 90
+  signingKeyId: kacho-iam-signing-key-current
+  bundle:
+    ttlSeconds: 60          # dev: also short
+    signingAlgorithm: ES256
+    signingKeyKid: kacho-iam-signing-key-current
+    buildShaEnvVar: KACHO_BUILD_SHA
+    cacheStaleAfterSeconds: 600
+    keyRotationGraceSeconds: 600
+  jwks:
+    configMapName: kacho-iam-jwks
+    bootstrapKeyPem: ""
+  networkPolicy:
+    # Disabled on dev (would break port-forward debugging of kacho-iam :9091).
+    enabled: false
+
+# Sub-chart propagation note: opaSidecar + openfgaBootstrap.modelIdSecretName
+# are propagated to kacho-iam sub-chart via the kacho-iam.opaSidecar / .openfgaBootstrap
+# blocks above (inside the kacho-iam: top-level mapping). Duplicate top-level
+# `kacho-iam:` block would last-wins-overwrite — see KAC-127 PR review.
 

@@ -117,6 +117,20 @@ config:
       endpoint: openfga:8081
       storeIdSecretName: kacho-iam-openfga-store
       storeIdSecretKey: store_id
+      # KAC-127 Phase 3 — Check timing budgets (acceptance §4.4):
+      checkTimeoutMs: 200          # FGA Check hard ceiling
+      listObjectsTimeoutMs: 1000   # ListObjects (Phase 4) hard ceiling
+      checkCacheTtlSeconds: 5      # subject-level Check cache TTL (LISTEN-invalidated)
+  # KAC-127 Phase 3 — authz core (Conditions context + OPA sidecar contract).
+  authz:
+    conditions:
+      contextCacheTtlSeconds: 60   # short-lived per-Principal Conditions context cache
+    opaSidecar:
+      url: http://localhost:8181
+      timeoutMs: 100
+      # read-fail-open=false → fail-closed even for read RPCs (production-safe).
+      # Set to true ONLY for read-only emergencies (logged WARN + Critical alert).
+      readFailOpen: false
 
 initContainer:
   migrator:
@@ -137,3 +151,26 @@ resources:
     memory: 512Mi
 
 env: {}
+
+# ─── KAC-127 Phase 3 — OPA sidecar + OpenFGA model id ────────────────────
+# Fallback defaults if umbrella does not override. Umbrella's `opaSidecar.*`
+# section (in values.yaml at top-level) propagates here via subchart import
+# (Helm rule: subchart can read parent values only via `--set` or aliasing;
+# we therefore mirror minimal knobs here for standalone-deploy).
+opaSidecar:
+  enabled: false   # Disabled by default in sub-chart standalone; umbrella enables.
+  image: openpolicyagent/opa:1.0.0-rootless
+  logLevel: info
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  jwks:
+    configMapName: kacho-iam-jwks
+
+# Mirror knob — `openfga-bootstrap-job` writes here at install/upgrade.
+openfgaBootstrap:
+  modelIdSecretName: openfga-model-id

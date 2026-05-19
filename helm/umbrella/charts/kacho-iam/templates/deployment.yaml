@@ -14,9 +14,17 @@ spec:
     metadata:
       labels:
         {{- include "kacho-iam.labels" . | nindent 8 }}
+        # KAC-127 Phase 3: pod label that the OPA-sidecar egress NetworkPolicy
+        # uses to allowlist outbound traffic. Without it, OPA sidecar cannot
+        # reach bundle endpoint (intentional fail-closed for unlabeled pods).
+        kacho.cloud/opa-sidecar: "true"
       annotations:
         # ConfigMap-content hash → pod rolling-restart при изменении config.yaml.
         kacho.cloud/config-checksum: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # KAC-127 Phase 3: bump on openfga model-id change (set by
+        # openfga-bootstrap-job patching this Deployment annotation post-install).
+        # Initial value `pending` — replaced by bootstrap-job after WriteAuthorizationModel.
+        kacho.cloud/openfga-model-id-rev: "pending"
     spec:
       # KACHO_IAM_* — собственный config-namespace сервиса. К-net auto-инжектит
       # KACHO_IAM_INTERNAL_PORT=tcp://<ip>:9091 (из Service `kacho-iam-internal`),
@@ -28,6 +36,16 @@ spec:
         - name: config
           configMap:
             name: {{ include "kacho-iam.fullname" . }}-config
+        {{- if .Values.opaSidecar.enabled }}
+        # KAC-127 Phase 3 (acceptance §5.6) — OPA sidecar config + JWKS public key.
+        # Shared ConfigMaps managed at umbrella level (not per sub-chart).
+        - name: opa-config
+          configMap:
+            name: opa-sidecar-config
+        - name: kacho-iam-jwks
+          configMap:
+            name: {{ .Values.opaSidecar.jwks.configMapName | default "kacho-iam-jwks" }}
+        {{- end }}
       initContainers:
         {{- if .Values.initContainer.migrator.enabled }}
         # skill evgeniy §9 K.1: миграции БД исполняет отдельный binary `kacho-migrator`
@@ -127,6 +145,23 @@ spec:
                   name: {{ .Values.config.extapi.openfga.storeIdSecretName }}
                   key: {{ .Values.config.extapi.openfga.storeIdSecretKey }}
                   optional: true
+            # ─── KAC-127 Phase 3 — authz core env vars ──────────────────
+            # acceptance §5.2 / P3-D2: pinned authorization_model_id (versioned + immutable).
+            # Источник — Secret openfga-model-id, key `current`, patch'ит openfga-bootstrap-job.
+            # `optional: true` для cold-start до первого bootstrap; кешируется in-memory
+            # после первого успешного fetch, refreshes на NOTIFY `kacho_iam_subjects`.
+            - name: KACHO_IAM_OPENFGA_MODEL_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.openfgaBootstrap.modelIdSecretName | default "openfga-model-id" }}
+                  key: current
+                  optional: true
+            # OPA bundle server — список knobs для build-side bundle generation
+            # (kacho-iam serves bundle.tar.gz). См. opa-bundle-server-configmap.yaml.
+            {{- if .Values.opaSidecar.enabled }}
+            - name: KACHO_BUILD_SHA
+              value: {{ .Values.image.tag | quote }}   # CI sets tag = git sha (or :dev for local).
+            {{- end }}
             # ─── KAC-127 Phase 2 — AuthN core env vars ──────────────────
             # Hydra ↔ kacho-iam shared secret для token_hook / refresh_hook.
             # Создаётся отдельным Secret kacho-iam-hook-token (см. cluster overrides);
@@ -165,6 +200,14 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+          {{- if .Values.opaSidecar.enabled }}
+          # KAC-127 Phase 3: bulk-import OPA bundle-server knobs (see
+          # umbrella/templates/opa-bundle-server-configmap.yaml).
+          envFrom:
+            - configMapRef:
+                name: opa-bundle-server-config
+                optional: false
+          {{- end }}
           readinessProbe:
             tcpSocket:
               port: grpc
@@ -177,3 +220,61 @@ spec:
             periodSeconds: 30
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.opaSidecar.enabled }}
+        # ─── KAC-127 Phase 3 — OPA sidecar (acceptance §5.6, P3-D6) ────────
+        # Per-pod OPA evaluates Rego guardrails after FGA Check allows. Localhost-
+        # only listener (:8181) — no Service, no external access. Bundle pulled
+        # from kacho-iam Internal RPC `OpaBundleService.GetBundle` (port 9091,
+        # P3-D20) every ~1h with signature verification (ES256 JWS, P3-D8).
+        - name: opa
+          image: {{ .Values.opaSidecar.image | default "openpolicyagent/opa:1.0.0-rootless" | quote }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - run
+            - --server
+            - --addr=127.0.0.1:8181
+            - --diagnostic-addr=0.0.0.0:8282
+            - --config-file=/config/config.yaml
+            - --log-level={{ .Values.opaSidecar.logLevel | default "info" }}
+            - --log-format=json
+            - --set=plugins.envoy_ext_authz_grpc.enabled=false
+          volumeMounts:
+            - name: opa-config
+              mountPath: /config
+              readOnly: true
+            - name: kacho-iam-jwks
+              mountPath: /jwks
+              readOnly: true
+          ports:
+            # Diagnostic port (health, metrics) is exposed on 0.0.0.0 for kubelet
+            # probes — Rego eval API stays on 127.0.0.1:8181 (intra-pod only).
+            - name: opa-diag
+              containerPort: 8282
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /health?bundles=true
+              port: opa-diag
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: opa-diag
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: {{ .Values.opaSidecar.resources.requests.cpu | default "20m" }}
+              memory: {{ .Values.opaSidecar.resources.requests.memory | default "64Mi" }}
+            limits:
+              cpu: {{ .Values.opaSidecar.resources.limits.cpu | default "200m" }}
+              memory: {{ .Values.opaSidecar.resources.limits.memory | default "256Mi" }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+        {{- end }}

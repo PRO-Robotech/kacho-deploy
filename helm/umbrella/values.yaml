@@ -118,6 +118,129 @@ kacho-iam:
     hooks:
       tokenHookSecretName: kacho-iam-hook-token
       tokenHookSecretKey: token
+  # KAC-127 Phase 3 — sub-chart needs to know whether to inject OPA sidecar +
+  # which JWKS ConfigMap to mount. Mirror from top-level opaSidecar.* via
+  # umbrella values override (helm propagates only `global.*` natively).
+  opaSidecar:
+    enabled: false
+    image: openpolicyagent/opa:1.0.0-rootless
+    logLevel: info
+    jwks:
+      configMapName: kacho-iam-jwks
+    resources:
+      requests:
+        cpu: 20m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+  openfgaBootstrap:
+    modelIdSecretName: openfga-model-id
+
+# ─── KAC-127 Phase 3 — AuthZ core (acceptance sub-phase-3.3) ──────────────
+# OpenFGA + OPA sidecar runtime configuration. Toggle whole pipeline via
+# `opaSidecar.enabled`. Disabled by default in this umbrella defaults file —
+# `values.dev.yaml` enables for dev stand; `values.prod.yaml` enforces on
+# prod (with NetworkPolicy on).
+#
+# Pipeline:
+#   1. openfga-bootstrap-job uploads Authorization Model v2 (DSL §4 frozen).
+#   2. Each kacho-* pod injects OPA sidecar (1 container per pod).
+#   3. Backend interceptor: FGA Check (with Conditions Context) → OPA local
+#      deny-only eval. Both must allow.
+#   4. Bundle pulled by OPA every ~1h from kacho-iam Internal RPC (signed JWS).
+opaSidecar:
+  enabled: false
+  image: openpolicyagent/opa:1.0.0-rootless
+  logLevel: info
+
+  # Bundle endpoint topology (P3-D20).
+  iamInternalHost: kacho-umbrella-iam-internal
+  iamInternalPort: 9091
+
+  # Bundle resource path. OPA fetches `<service.url>/<resource>` —
+  # so `bundle.tar.gz` results in `/opa/v1/bundle.tar.gz`. Sibling `.sig` is
+  # implicit (OPA appends `.sig` for detached signatures, see P3-D8).
+  bundleResource: bundle.tar.gz
+
+  # Polling interval (P3-D7: ~1h TTL). OPA randomly picks delay in [min, max]
+  # range on each poll — jitter prevents all sidecars hammering kacho-iam
+  # simultaneously after Deployment rollout.
+  bundlePollMinSec: 3000   # ~50min
+  bundlePollMaxSec: 3900   # ~65min
+
+  # kid of the current JWS signing key (matches kacho-iam JWKS rotator output).
+  signingKeyId: kacho-iam-signing-key-current
+
+  # Bundle server-side knobs (mirrored into opa-bundle-server-config ConfigMap).
+  bundle:
+    ttlSeconds: 3600
+    signingAlgorithm: ES256
+    signingKeyKid: kacho-iam-signing-key-current
+    buildShaEnvVar: KACHO_BUILD_SHA
+    cacheStaleAfterSeconds: 7200
+    keyRotationGraceSeconds: 7200
+
+  # Public key ConfigMap (managed by Phase 2 JWKS rotator at runtime).
+  jwks:
+    configMapName: kacho-iam-jwks
+    bootstrapKeyPem: ""
+
+  # NetworkPolicy for defense-in-depth (acceptance §5.7).
+  networkPolicy:
+    enabled: false
+    iamPodSelector:
+      matchLabels:
+        app.kubernetes.io/name: kacho-iam
+    openfgaPodSelector:
+      matchLabels:
+        app.kubernetes.io/name: openfga
+    apiGatewayPodSelector:
+      matchLabels:
+        app: api-gateway
+    backendPodSelector:
+      matchExpressions:
+        - key: app
+          operator: In
+          values: [vpc, compute, loadbalancer]
+
+  # Dev-only inline policy fallback (bypasses bundle signing). MUST stay
+  # disabled on prod. See `templates/opa-policies-fallback-configmap.yaml`.
+  policiesFallback:
+    enabled: false
+
+# PodDisruptionBudget for OpenFGA engine (emitted by umbrella template
+# `openfga-pdb.yaml`). Enabled when running HA topology (>= 3 replicas).
+openfgaPdb:
+  enabled: false
+  minAvailable: 2
+
+# ─── KAC-127 Phase 3 — openfga-bootstrap-job knobs (model-id Secret) ──────
+openfgaBootstrap:
+  enabled: false
+  image: curlimages/curl:8.5.0
+  cliImage: openfga/cli:0.6.5
+  storeName: kacho-store
+  authorizationModelConfigMap: openfga-model-stub
+  modelIdSecretName: openfga-model-id
+  clusterSingletonId: cluster_kacho_root
+  # Postgres bootstrap: opt-in `CREATE DATABASE kacho_openfga` Job. Disabled
+  # by default because bitnami `pg-openfga` chart auto-creates the DB from
+  # `auth.username` / `auth.database` keys. Set to true when running against
+  # a shared Postgres (RDS / CloudNativePG) where per-tenant DBs must be
+  # provisioned explicitly. See umbrella/templates/openfga-postgres-init-job.yaml.
+  initDatabase: false
+  dbAdmin:
+    image: postgres:16-alpine
+    host: kacho-umbrella-pg-openfga
+    port: "5432"
+    user: postgres
+    passwordSecretName: kacho-umbrella-pg-openfga
+    passwordSecretKey: postgres-password
+    fgaUser: openfga
+    fgaPasswordSecretName: kacho-umbrella-pg-openfga
+    fgaPasswordSecretKey: password
+    fgaDatabase: kacho_openfga
 
 # Глобальные labels, навешиваемые на все ресурсы umbrella chart'а.
 # Полезно для multi-tenant ArgoCD / Kustomize-overlays.
