@@ -681,6 +681,190 @@ cosign-policy-controller:
     secretKey: "cosign.pub"
   fulcio:
     enabled: false  # offline-key signing required in prod (P10-D10)
+  # KAC-127 Phase 11 — SBOM + SLSA L3 verification extensions.
+  sbom:
+    required: true
+    acceptedFormats:
+      - "spdx-json"
+      - "cyclonedx-json"
+  slsa:
+    required: true
+    predicateType: "https://slsa.dev/provenance/v1"
+    minimumLevel: 3
+    builderId: "https://github.com/actions/runner"
 
 spiffe-csi-driver:
   enabled: true
+
+# ─── KAC-127 Phase 11 — Production deploy + Observability ──────────────
+# All Phase 11 charts enabled in prod. Tenant-specific overrides
+# (cloudflare.zone / cloudflare.accountId / region IPs / etc.) come via
+# clusters/<cluster>/overrides.yaml — see docs/deploy-production.md §1.
+
+# Phase 11: Sealed-Secrets for GitOps-safe secret commits.
+sealedSecrets:
+  enabled: true
+  replicas: 2
+  keyRenewPeriod: "720h"                  # 30d key rotation
+
+# Phase 11: Cloudflare edge configuration (WAF + DDoS + rate-limit + Access).
+cloudflare-config:
+  enabled: true
+  kacho:
+    domain: "api.kacho.cloud"              # pass-through; CI/CD overrides per-tenant
+  cloudflare:
+    # zone + accountId — REQUIRES per-tenant override via clusters/<cluster>/overrides.yaml.
+    zone: "kacho.cloud"
+    accountId: ""                          # set via --set or overrides file
+    crossplane:
+      enabled: true
+    waf:
+      managed:
+        owaspCrs:
+          enabled: true
+          sensitivity: medium
+          action: block                    # promoted from simulate after 24h soak
+        cloudflareSpecials:
+          enabled: true
+          action: block
+    rateLimit:
+      enabled: true
+    botManagement:
+      enabled: true
+    ddos:
+      enabled: true
+    access:
+      enabled: true
+
+# Phase 11: cert-manager Let's Encrypt configuration.
+cert-manager-config:
+  enabled: true
+  kacho:
+    domain: "api.kacho.cloud"
+  certManager:
+    acmeEmail: "platform@kacho.cloud"
+    issuers:
+      prod:
+        enabled: true
+      staging:
+        enabled: false                     # prod env doesn't use staging issuer
+
+# Phase 11: Argo CD HA GitOps.
+argo-cd:
+  enabled: true
+  kacho:
+    domain: "api.kacho.cloud"
+  argoCd:
+    ha:
+      enabled: true
+      replicas: 3
+    oidc:
+      issuer: "https://hydra.kacho.cloud"
+      clientId: "argocd"
+    notifications:
+      enabled: true
+      slack:
+        enabled: true
+        defaultChannel: "kacho-deploy"
+      pagerduty:
+        enabled: true
+    rollouts:
+      enabled: true
+
+# Phase 11: Multi-region active-active.
+multi-region-router:
+  enabled: true
+  kacho:
+    domain: "api.kacho.cloud"
+  multiRegion:
+    regions:
+      - name: prod-eu-central
+        enabled: true
+        priority: 1
+        weight: 50
+        originIP: ""                       # set via CI/CD at install time
+        healthCheck: { path: "/healthz", port: 443, intervalSeconds: 30, retries: 2, timeoutSeconds: 10 }
+        cloudProvider: "aws"
+        region: "eu-central-1"
+      - name: prod-eu-west
+        enabled: true
+        priority: 2
+        weight: 50
+        originIP: ""
+        healthCheck: { path: "/healthz", port: 443, intervalSeconds: 30, retries: 2, timeoutSeconds: 10 }
+        cloudProvider: "aws"
+        region: "eu-west-1"
+    failover:
+      rtoMinutes: 15
+      rpoMinutes: 1
+      automatic: true
+    loadBalancer:
+      name: "kacho-api-lb"
+      zone: "kacho.cloud"
+      proxied: true
+
+# Phase 11: Observability stack (OTel + Tempo + Mimir + Loki + Grafana +
+# Sloth + AlertManager). Full multi-region routing via cross-region S3.
+observability:
+  enabled: true
+  kacho:
+    domain: "api.kacho.cloud"
+  observability:
+    namespace: "observability-system"
+    otelCollector:
+      daemonSet: { enabled: true }
+      deployment: { enabled: true, replicas: 3 }
+      sampling:
+        controlPlane: 1.0
+        dataPlane: 0.05
+        errorRate: 1.0
+    tempo:
+      replicas: 2
+    mimir:
+      replicas:
+        ingester: 3
+        querier: 3
+        storeGateway: 3
+        compactor: 1
+        ruler: 2
+    loki:
+      replicas:
+        ingester: 3
+        querier: 3
+        distributor: 3
+    grafana:
+      replicas: 2
+      oidc:
+        enabled: true
+        issuer: "https://hydra.kacho.cloud"
+        clientId: "grafana"
+        allowedDomains: "kacho.cloud"
+    alertmanager:
+      replicas: 3
+      pagerduty:
+        enabled: true
+        severityRouting:
+          P1: critical
+          P2: error
+          P3: warning
+          P4: info
+      slack:
+        enabled: true
+    sloth:
+      enabled: true
+
+# Phase 11: Postgres HA via CloudNativePG / Patroni.
+postgres-ha:
+  enabled: true
+  postgresHa:
+    defaults:
+      replicas: 3
+      syncStandbyCount: 1
+      storageSize: "50Gi"
+      backup:
+        enabled: true
+        schedule: "0 2 * * *"
+        retentionDays: 30
+      tls:
+        enabled: true
+        issuer: "letsencrypt-prod"

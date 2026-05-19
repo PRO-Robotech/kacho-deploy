@@ -1,0 +1,43 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: "slo-burn-rate-alerts"
+  namespace: {{ .Values.observability.namespace | quote }}
+  labels:
+    kacho.cloud/component: prometheus-rules
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    - name: kacho-slo-burn-rate
+      rules:
+        - alert: KachoSLOBudgetBurn1h
+          expr: |
+            slo:current_burn_rate:ratio_rate1h > 14.4
+          for: 5m
+          labels:
+            severity: P1
+            category: slo
+          annotations:
+            summary: "SLO {{`{{ $labels.slo_name }}`}} burn rate >14.4 over 1h — budget exhausts in 2.5d"
+            description: |
+              SLO {{`{{ $labels.slo_name }}`}} (service {{`{{ $labels.service }}`}}) is burning error
+              budget at >14.4× the sustainable rate over the last 1h. This will exhaust the 30-day
+              budget in ~2.5 days. Investigate immediately.
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/slo-burn-investigation.md"
+            dashboard_url: "https://grafana.{{ .Values.kacho.domain }}/d/iam-slo-burn-rate"
+
+        - alert: KachoSLOBudgetBurnSustained6h
+          expr: |
+            slo:current_burn_rate:ratio_rate6h > 6
+          for: 15m
+          labels:
+            severity: P2
+            category: slo
+          annotations:
+            summary: "SLO {{`{{ $labels.slo_name }}`}} burn rate >6 over 6h — investigate"
+            description: |
+              SLO {{`{{ $labels.slo_name }}`}} burn rate has exceeded 6× sustainable for the last 6h.
+              At this pace the 30-day budget is consumed in 5 days.
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/slo-burn-investigation.md"
+            dashboard_url: "https://grafana.{{ .Values.kacho.domain }}/d/iam-slo-burn-rate"

@@ -1,0 +1,42 @@
+{{- if and .Values.enabled .Values.slsa.required }}
+---
+# KAC-127 Phase 11 — SLSA L3 build provenance requirement.
+# Rejects any image in enforcedNamespaces that lacks an in-toto v1 provenance
+# attestation signed by the trusted cosign key AND issued by the trusted
+# GitHub Actions builder.
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  name: "kacho-slsa-provenance-required"
+  labels:
+    kacho.cloud/component: cosign-slsa-policy
+    app.kubernetes.io/managed-by: helm
+spec:
+  images:
+    {{- range .Values.imagePatterns }}
+    - glob: {{ . | quote }}
+    {{- end }}
+  authorities:
+    - name: "kacho-platform-slsa"
+      key:
+        secretRef:
+          name: {{ .Values.cosign.secretName | quote }}
+          namespace: "cosign-system"
+      attestations:
+        - name: "slsa-provenance-v1-required"
+          predicateType: {{ .Values.slsa.predicateType | quote }}
+          policy:
+            type: "cue"
+            data: |
+              predicateType: {{ .Values.slsa.predicateType | quote }}
+              predicate: {
+                buildDefinition: {
+                  buildType: =~ "^https://github.com/actions/runner/"
+                }
+                runDetails: {
+                  builder: {
+                    id: =~ "^{{ .Values.slsa.builderId }}"
+                  }
+                }
+              }
+{{- end }}

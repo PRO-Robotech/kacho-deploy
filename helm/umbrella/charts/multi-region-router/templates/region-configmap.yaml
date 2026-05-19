@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "kacho-multiregion-config"
+  namespace: "kacho-system"
+  labels:
+    kacho.cloud/component: multi-region-router
+data:
+  regions.json: |
+    {
+      "regions": [
+        {{- range $i, $r := .Values.multiRegion.regions }}
+        {{- if $i }},{{- end }}
+        {
+          "name": "{{ $r.name }}",
+          "enabled": {{ $r.enabled }},
+          "priority": {{ $r.priority }},
+          "weight": {{ $r.weight }},
+          "cloudProvider": "{{ $r.cloudProvider }}",
+          "region": "{{ $r.region }}"
+        }
+        {{- end }}
+      ],
+      "routing": {
+        "strategy": "{{ .Values.multiRegion.routing.strategy }}",
+        "steeringPolicy": "{{ .Values.multiRegion.routing.steeringPolicy }}"
+      },
+      "failover": {
+        "rtoMinutes": {{ .Values.multiRegion.failover.rtoMinutes }},
+        "rpoMinutes": {{ .Values.multiRegion.failover.rpoMinutes }},
+        "automatic": {{ .Values.multiRegion.failover.automatic }}
+      }
+    }

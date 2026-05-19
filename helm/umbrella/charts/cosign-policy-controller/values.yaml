@@ -37,3 +37,32 @@ imagePatterns:
   - "ghcr.io/pro-robotech/**"
   - "ttl.sh/**"
   - "docker.io/**"
+
+# KAC-127 Phase 11 — SBOM + SLSA verification extensions.
+# When sbom.required=true, the policy-controller also verifies that every
+# image has an attached SBOM (SPDX/CycloneDX via cosign attach sbom) AND a
+# SLSA L3 build-provenance attestation (in-toto Statement, predicate type
+# https://slsa.dev/provenance/v1). Verification keys are cosign.publicKey
+# (above) for offline-signed prod releases.
+sbom:
+  required: true
+  acceptedFormats:
+    - "spdx-json"
+    - "cyclonedx-json"
+
+slsa:
+  required: true
+  predicateType: "https://slsa.dev/provenance/v1"
+  minimumLevel: 3
+  builderId: "https://github.com/actions/runner"
+
+# Banned base-image registries (block any image not from trusted registries).
+trustedRegistries:
+  - "ghcr.io/pro-robotech"
+  - "ghcr.io/cloudnative-pg"
+  - "docker.io/grafana"
+  - "docker.io/otel"
+  - "docker.io/prom"
+  - "docker.io/bitnami"
+  - "quay.io/cilium"
+  - "ghcr.io/spiffe"

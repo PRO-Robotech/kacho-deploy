@@ -1,0 +1,17 @@
+apiVersion: v2
+name: cloudflare-config
+version: 0.1.0
+description: |
+  KAC-127 Phase 11 — Declarative Cloudflare edge configuration via Crossplane
+  cloudflare provider OR Terraform (rendered separately).
+  Manages:
+    * Zone settings (TLS 1.3 only, HSTS preload, HTTP/3)
+    * WAF rulesets (OWASP CRS 3.x + custom)
+    * Rate limiting (per-endpoint per-IP)
+    * Bot management
+    * Firewall rules (geo-blocking + custom blocks)
+    * Cloudflare Access (Zero Trust) policies for /admin/*
+    * Page rules (cache, compression)
+    * DNS records (A/CNAME pointing to multi-region origins)
+  Configurable: `cloudflare.zone`, `cloudflare.apiToken` (via Secret), `kacho.domain`.
+type: application

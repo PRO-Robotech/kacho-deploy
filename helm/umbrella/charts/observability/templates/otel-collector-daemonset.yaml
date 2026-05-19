@@ -1,0 +1,67 @@
+{{- if .Values.observability.otelCollector.daemonSet.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: "otel-collector-agent"
+  namespace: {{ .Values.observability.namespace | quote }}
+  labels:
+    kacho.cloud/component: otel-collector-agent
+    app.kubernetes.io/name: otel-collector-agent
+    app.kubernetes.io/part-of: kacho-iam-platform
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-collector-agent
+        app.kubernetes.io/part-of: kacho-iam-platform
+    spec:
+      serviceAccountName: "otel-collector"
+      tolerations:
+        - operator: "Exists"               # run on every node including control-plane
+      hostNetwork: false
+      containers:
+        - name: otel-collector-agent
+          image: {{ .Values.observability.otelCollector.image | quote }}
+          args:
+            - "--config=/etc/otel/config.yaml"
+          env:
+            - name: KACHO_REGION
+              valueFrom:
+                fieldRef:
+                  fieldPath: "metadata.labels['kacho.cloud/region']"
+            - name: KACHO_CLUSTER
+              valueFrom:
+                fieldRef:
+                  fieldPath: "metadata.labels['kacho.cloud/cluster']"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+            - name: varlogpods
+              mountPath: /var/log/pods
+              readOnly: true
+          resources:
+            requests:
+              cpu: {{ .Values.observability.otelCollector.daemonSet.resources.requests.cpu | quote }}
+              memory: {{ .Values.observability.otelCollector.daemonSet.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.observability.otelCollector.daemonSet.resources.limits.cpu | quote }}
+              memory: {{ .Values.observability.otelCollector.daemonSet.resources.limits.memory | quote }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: "otel-collector-config"
+        - name: varlogpods
+          hostPath:
+            path: /var/log/pods
+            type: "Directory"
+{{- end }}

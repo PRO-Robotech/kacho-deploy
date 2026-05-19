@@ -1,0 +1,15 @@
+apiVersion: v2
+name: observability
+version: 0.1.0
+description: |
+  KAC-127 Phase 11 — Observability stack (LGTM):
+    * OpenTelemetry Collector (DaemonSet for log scraping + Deployment for metric / trace processing)
+    * Tempo (traces, 7d retention, S3 backend)
+    * Mimir (Prometheus-compatible metrics, 30d retention)
+    * Loki (logs, 30d retention)
+    * Grafana (dashboards mounted via ConfigMap, OIDC via Hydra)
+    * AlertManager (PagerDuty + Slack integration)
+    * Sloth (declarative SLO controller → Prometheus rules)
+  Configurable: kacho.domain, s3.{tempo,mimir,loki}.bucket, oidc.{issuer,clientId},
+  sampling rates, retention periods, paging thresholds.
+type: application

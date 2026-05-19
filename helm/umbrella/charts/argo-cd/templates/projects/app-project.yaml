@@ -1,0 +1,69 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .Values.argoCd.project.name | quote }}
+  namespace: {{ .Values.argoCd.namespace | quote }}
+  labels:
+    kacho.cloud/component: argocd-project
+    app.kubernetes.io/managed-by: helm
+spec:
+  description: {{ .Values.argoCd.project.description | quote }}
+  sourceRepos:
+    {{- range .Values.argoCd.project.sourceRepos }}
+    - {{ . | quote }}
+    {{- end }}
+  destinations:
+    {{- range .Values.argoCd.project.destinations }}
+    - namespace: {{ .namespace | quote }}
+      server: {{ .server | quote }}
+    {{- end }}
+  clusterResourceWhitelist:
+    - group: ""
+      kind: "Namespace"
+    - group: "rbac.authorization.k8s.io"
+      kind: "ClusterRole"
+    - group: "rbac.authorization.k8s.io"
+      kind: "ClusterRoleBinding"
+    - group: "apiextensions.k8s.io"
+      kind: "CustomResourceDefinition"
+    - group: "cert-manager.io"
+      kind: "ClusterIssuer"
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  roles:
+    - name: "admin"
+      description: "Full sync + override access for kacho-deploy-admins"
+      policies:
+        - "p, proj:{{ .Values.argoCd.project.name }}:admin, applications, *, {{ .Values.argoCd.project.name }}/*, allow"
+        - "p, proj:{{ .Values.argoCd.project.name }}:admin, exec, create, {{ .Values.argoCd.project.name }}/*, allow"
+      groups:
+        - "kacho-deploy-admins"
+        - "kacho-platform-admins"
+    - name: "sre"
+      description: "Sync + rollback for SRE"
+      policies:
+        - "p, proj:{{ .Values.argoCd.project.name }}:sre, applications, get, {{ .Values.argoCd.project.name }}/*, allow"
+        - "p, proj:{{ .Values.argoCd.project.name }}:sre, applications, sync, {{ .Values.argoCd.project.name }}/*, allow"
+        - "p, proj:{{ .Values.argoCd.project.name }}:sre, applications, action/*, {{ .Values.argoCd.project.name }}/*, allow"
+      groups:
+        - "kacho-sre"
+    - name: "readonly"
+      description: "View-only for everyone else"
+      policies:
+        - "p, proj:{{ .Values.argoCd.project.name }}:readonly, applications, get, {{ .Values.argoCd.project.name }}/*, allow"
+      groups:
+        - "*"
+  signatureKeys: []                        # set if commits are GPG-signed
+  syncWindows:
+    - kind: "deny"
+      schedule: "0 0 * * SAT,SUN"
+      duration: "48h"
+      applications:
+        - "*"
+      namespaces:
+        - "kacho-system"
+      clusters:
+        - "prod-eu-central"
+        - "prod-eu-west"
+      manualSync: true                     # SREs can still manual-trigger

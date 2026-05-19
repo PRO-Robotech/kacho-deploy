@@ -1,7 +1,7 @@
 apiVersion: v2
 name: kacho-umbrella
-version: 1.2.0
-description: "Kachō Cloud Control Plane — dev umbrella (flat API + Operations). KAC-127 Phase 10: SPIFFE/SPIRE + Cilium eBPF mesh + mTLS enforce + CiliumNetworkPolicy + cosign attestor + Hubble UI. Builds on Phase 9 (audit pipeline), Phase 3 (OpenFGA+OPA+Conditions), Phase 2 (Kratos+Hydra+JWKS), Phase 1 (DB foundation)."
+version: 2.0.0
+description: "Kachō Cloud Control Plane — production umbrella (flat API + Operations). KAC-127 Phase 11: Multi-region active-active + Cloudflare WAF/DDoS/Access + cert-manager Let's Encrypt + Argo CD GitOps with canary ArgoRollouts + SBOM/SLSA L3/cosign supply-chain + OpenTelemetry/Tempo/Mimir/Loki/Grafana observability + Sloth SLO controller + AlertManager → PagerDuty + Patroni Postgres HA. Builds on Phase 10 (SPIRE+Cilium mesh), Phase 9 (audit pipeline), Phase 3 (OpenFGA+OPA+Conditions), Phase 2 (Kratos+Hydra+JWKS), Phase 1 (DB foundation)."
 dependencies:
   - name: ingress-nginx
     version: 4.x
@@ -148,3 +148,29 @@ dependencies:
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
     condition: pg-spire.enabled
+  # KAC-127 Phase 11 — Production deploy + Observability subcharts. All vendored.
+  # Conditionally enabled via values.prod.yaml; disabled by default in dev/staging.
+  - name: cloudflare-config
+    version: ">= 0.0.0"
+    repository: file://./charts/cloudflare-config
+    condition: cloudflare-config.enabled
+  - name: cert-manager-config
+    version: ">= 0.0.0"
+    repository: file://./charts/cert-manager-config
+    condition: cert-manager-config.enabled
+  - name: argo-cd
+    version: ">= 0.0.0"
+    repository: file://./charts/argo-cd
+    condition: argo-cd.enabled
+  - name: multi-region-router
+    version: ">= 0.0.0"
+    repository: file://./charts/multi-region-router
+    condition: multi-region-router.enabled
+  - name: observability
+    version: ">= 0.0.0"
+    repository: file://./charts/observability
+    condition: observability.enabled
+  - name: postgres-ha
+    version: ">= 0.0.0"
+    repository: file://./charts/postgres-ha
+    condition: postgres-ha.enabled

@@ -1,0 +1,34 @@
+{{- range .Values.postgresHa.clusters }}
+{{- $cluster := . }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: {{ printf "%s-pooler" $cluster.name | quote }}
+  namespace: {{ $.Values.postgresHa.namespace | quote }}
+  labels:
+    kacho.cloud/component: pgbouncer
+    kacho.cloud/service: {{ $cluster.name | quote }}
+spec:
+  cluster:
+    name: {{ $cluster.name | quote }}
+  instances: 3
+  type: rw
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      max_client_conn: "1000"
+      default_pool_size: "50"
+      reserve_pool_size: "10"
+      max_db_connections: "200"
+      pool_mode: "transaction"
+  template:
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  cnpg.io/poolerName: {{ printf "%s-pooler" $cluster.name | quote }}
+              topologyKey: "kubernetes.io/hostname"
+{{- end }}

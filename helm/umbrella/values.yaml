@@ -515,8 +515,102 @@ cosign-policy-controller:
 spiffe-csi-driver:
   enabled: false
 
-# ─── Глобальные labels ─────────────────────────────────────────────────
+# ─── Глобальные labels + propagation ───────────────────────────────────
 # Навешиваются на все ресурсы umbrella chart'а.
 # Полезно для multi-tenant ArgoCD / Kustomize-overlays.
+#
+# KAC-127 Phase 11: global.kacho.{domain,region,cluster} автоматически
+# пропагируется во все Phase 11 sub-chart'ы (cloudflare-config,
+# cert-manager-config, argo-cd, multi-region-router, observability,
+# postgres-ha) через built-in Helm `global` mechanism — pass-through
+# работает БЕЗ дублирования на каждый sub-chart.
 global:
   labels: {}
+  kacho:
+    domain: ""                             # umbrella-level kacho.domain overrides
+    region: ""
+    cluster: ""
+
+# ─── KAC-127 Phase 11 — Production deploy + Observability (defaults: OFF) ─
+# All Phase 11 sub-charts are condition-gated. Enable selectively via:
+#   helm install ... -f values.prod.yaml          # all on
+#   helm install ... --set observability.enabled=true   # selective
+#
+# Phase 11 sub-charts:
+#   - cloudflare-config: declarative WAF / DDoS / rate-limit / Access via Crossplane
+#   - cert-manager-config: ClusterIssuer Let's Encrypt + Certificate resources
+#   - argo-cd: HA Argo CD + ArgoRollouts canary
+#   - multi-region-router: Cloudflare LB + per-region origin pools
+#   - observability: OTel + Tempo + Mimir + Loki + Grafana + Sloth + AlertManager
+#   - postgres-ha: CloudNativePG Cluster + ScheduledBackup + Pooler
+
+sealedSecrets:
+  enabled: false
+  replicas: 2
+
+# All Phase 11 sub-charts share `kacho.domain` via the umbrella `kacho.domain`
+# value — propagated below via explicit pass-through so that CLI
+# `--set kacho.domain=X` and umbrella-level kacho.domain both work without
+# requiring callers to set N+1 nested keys.
+cloudflare-config:
+  enabled: false
+  kacho:
+    domain: "api.kacho.local"              # overridden by umbrella post-render
+  cloudflare:
+    zone: ""
+    accountId: ""
+    crossplane:
+      enabled: true
+
+cert-manager-config:
+  enabled: false
+  kacho:
+    domain: "api.kacho.local"
+  certManager:
+    acmeEmail: "platform@kacho.cloud"
+    issuers:
+      prod:
+        enabled: true
+      staging:
+        enabled: true
+
+argo-cd:
+  enabled: false
+  kacho:
+    domain: "api.kacho.local"
+  argoCd:
+    namespace: "argocd-system"
+    ha:
+      enabled: false
+      replicas: 1
+    rollouts:
+      enabled: false
+
+multi-region-router:
+  enabled: false
+  kacho:
+    domain: "api.kacho.local"
+  multiRegion:
+    regions: []                            # populated via values.prod.yaml
+    failover:
+      rtoMinutes: 15
+      rpoMinutes: 1
+      automatic: false
+
+observability:
+  enabled: false
+  kacho:
+    domain: "api.kacho.local"
+  observability:
+    namespace: "observability-system"
+    sloth:
+      enabled: false
+
+postgres-ha:
+  enabled: false
+  postgresHa:
+    defaults:
+      replicas: 1                          # dev: single node
+      syncStandbyCount: 0
+      backup:
+        enabled: false

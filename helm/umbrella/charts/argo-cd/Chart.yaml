@@ -1,0 +1,12 @@
+apiVersion: v2
+name: argo-cd
+version: 0.1.0
+description: |
+  KAC-127 Phase 11 — Argo CD v2.11+ HA configuration: 3 replicas argocd-server +
+  redis-ha + repo-server, OIDC via Hydra, AppProject scoping namespaces,
+  per-service Application manifests with SyncWaves, ArgoRollouts canary
+  strategy (5/25/50/100 over 30 min) with SLO burn-rate AnalysisTemplates.
+  Configurable: kacho.domain, hydra.issuer, git.repoURL, environments[].
+  Assumes Argo CD controller already installed (upstream chart at
+  https://argoproj.github.io/argo-helm — declared as external dep if HA).
+type: application

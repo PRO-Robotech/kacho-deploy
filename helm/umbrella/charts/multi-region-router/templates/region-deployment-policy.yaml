@@ -1,0 +1,34 @@
+{{- /*
+  Anti-affinity & pod-topology-spread defaults applied via mutating webhook config
+  (ValidatingAdmissionPolicy preferred) so that any Deployment with the
+  `app.kubernetes.io/part-of: kacho-iam-platform` label gets per-zone spread
+  automatically. Pure manifest below; controller-side enforcement happens in
+  the umbrella admission webhook chart (separate scope).
+*/}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: "kacho-region-anti-affinity-required"
+  labels:
+    kacho.cloud/component: multi-region-router-policy
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets"]
+  matchConditions:
+    - name: "kacho-iam-platform"
+      expression: 'has(object.metadata.labels) && object.metadata.labels["app.kubernetes.io/part-of"] == "kacho-iam-platform"'
+  validations:
+    - expression: |
+        has(object.spec.template.spec.affinity) &&
+        has(object.spec.template.spec.affinity.podAntiAffinity)
+      message: "kacho-iam-platform workloads MUST set podAntiAffinity (Phase 11 multi-region requirement)"
+    - expression: |
+        has(object.spec.template.spec) &&
+        has(object.spec.template.spec.topologySpreadConstraints) &&
+        size(object.spec.template.spec.topologySpreadConstraints) > 0
+      message: "kacho-iam-platform workloads MUST set topologySpreadConstraints (Phase 11 multi-region requirement)"

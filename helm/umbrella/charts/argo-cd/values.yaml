@@ -1,0 +1,178 @@
+argoCd:
+  namespace: "argocd-system"
+
+  # HA topology — production must have 3 replicas of every Argo CD component.
+  ha:
+    enabled: true
+    replicas: 3
+
+  # OIDC auth via Hydra (in-cluster IAM).
+  oidc:
+    issuer: "https://hydra.{{ .Values.kacho.domain }}"
+    clientId: "argocd"
+    requestedScopes:
+      - openid
+      - profile
+      - email
+      - groups
+    # RBAC: argocd groups ↔ kacho-iam group ids.
+    rbac:
+      defaultPolicy: "role:readonly"
+      policyMatchMode: "glob"
+      groups:
+        - name: "kacho-deploy-admins"
+          role: "role:admin"
+        - name: "kacho-sre"
+          role: "role:sre"
+        - name: "kacho-platform-admins"
+          role: "role:admin"
+
+  # Git source — kacho-deploy repo branch tracked per environment.
+  git:
+    repoURL: "https://github.com/PRO-Robotech/kacho-deploy.git"
+    sshSecretName: ""                      # set when private repo — Secret with `sshPrivateKey` key
+    revision: "main"
+
+  # ArgoCD AppProject definition — controls which Apps can sync.
+  project:
+    name: "kacho-iam-platform"
+    description: "Kachō IAM control plane (all services + observability + security)"
+    sourceRepos:
+      - "https://github.com/PRO-Robotech/kacho-deploy.git"
+      - "https://github.com/PRO-Robotech/kacho-iam.git"
+      - "https://github.com/PRO-Robotech/kacho-vpc.git"
+      - "https://github.com/PRO-Robotech/kacho-compute.git"
+      - "https://github.com/PRO-Robotech/kacho-loadbalancer.git"
+      - "https://github.com/PRO-Robotech/kacho-api-gateway.git"
+      - "https://github.com/PRO-Robotech/kacho-ui.git"
+    destinations:
+      - namespace: "kacho-system"
+        server: "*"
+      - namespace: "spire-system"
+        server: "*"
+      - namespace: "observability-system"
+        server: "*"
+      - namespace: "argocd-system"
+        server: "*"
+      - namespace: "cert-manager"
+        server: "*"
+      - namespace: "cloudflare-system"
+        server: "*"
+
+  # Per-environment applications (Argo CD Application CRDs).
+  environments:
+    - name: dev
+      cluster: "https://kubernetes.default.svc"
+      syncPolicy: "manual"                 # dev — humans approve syncs
+      revision: "main"
+      valuesFile: "helm/umbrella/values.dev.yaml"
+    - name: staging
+      cluster: "https://kubernetes.default.svc"
+      syncPolicy: "automated"
+      revision: "main"
+      valuesFile: "helm/umbrella/values.staging.yaml"
+    - name: prod-eu-central
+      cluster: "https://prod-eu-central.kubernetes"
+      syncPolicy: "automated"
+      revision: "main"
+      valuesFile: "helm/umbrella/values.prod.yaml"
+      overridesFile: "clusters/prod-eu-central/overrides.yaml"
+    - name: prod-eu-west
+      cluster: "https://prod-eu-west.kubernetes"
+      syncPolicy: "automated"
+      revision: "main"
+      valuesFile: "helm/umbrella/values.prod.yaml"
+      overridesFile: "clusters/prod-eu-west/overrides.yaml"
+
+  # Per-application stacks (each environment will sync these in waves).
+  applications:
+    - name: cert-manager-config
+      path: "helm/umbrella/charts/cert-manager-config"
+      syncWave: "-12"
+      namespace: "cert-manager"
+    - name: cloudflare-config
+      path: "helm/umbrella/charts/cloudflare-config"
+      syncWave: "-10"
+      namespace: "cloudflare-system"
+    - name: data-plane-stack
+      path: "helm/umbrella/charts/postgres-ha"
+      syncWave: "-10"
+      namespace: "kacho-system"
+    - name: security-stack
+      path: "helm/umbrella/charts/spire-server"
+      syncWave: "-5"
+      namespace: "spire-system"
+    - name: observability-stack
+      path: "helm/umbrella/charts/observability"
+      syncWave: "-3"
+      namespace: "observability-system"
+    - name: kacho-iam
+      path: "helm/umbrella/charts/kacho-iam"
+      syncWave: "0"
+      namespace: "kacho-system"
+    - name: kacho-vpc
+      path: "../../../kacho-vpc/deploy"
+      syncWave: "0"
+      namespace: "kacho-system"
+    - name: kacho-compute
+      path: "../../../kacho-compute/deploy"
+      syncWave: "0"
+      namespace: "kacho-system"
+    - name: kacho-api-gateway
+      path: "../../../kacho-api-gateway/deploy"
+      syncWave: "5"
+      namespace: "kacho-system"
+    - name: kacho-ui
+      path: "../../../kacho-ui/deploy"
+      syncWave: "5"
+      namespace: "kacho-system"
+
+  # ArgoRollouts canary strategy — applied to mission-critical services.
+  rollouts:
+    enabled: true
+    services:
+      - name: kacho-iam
+      - name: kacho-vpc
+      - name: kacho-compute
+      - name: kacho-loadbalancer
+      - name: kacho-api-gateway
+    canary:
+      steps:
+        - setWeight: 5
+          pauseDuration: "15m"
+        - setWeight: 25
+          pauseDuration: "5m"
+        - setWeight: 50
+          pauseDuration: "5m"
+        - setWeight: 75
+          pauseDuration: "3m"
+        - setWeight: 100
+      analysis:
+        templates:
+          - name: "slo-burn-rate-5m"
+            successCondition: "result[0] < 14.4"
+            failureLimit: 1
+          - name: "error-rate-canary-vs-stable"
+            successCondition: "result[0] < 2.0"
+            failureLimit: 1
+          - name: "latency-canary-vs-stable"
+            successCondition: "result[0] < 1.5"
+            failureLimit: 1
+
+  # Notifications config.
+  notifications:
+    enabled: true
+    slack:
+      enabled: true
+      channelSecret: "argocd-slack-token"
+      defaultChannel: "kacho-deploy"
+    pagerduty:
+      enabled: true
+      secretName: "argocd-pagerduty-key"
+      serviceKey: "service_key"
+
+kacho:
+  domain: "api.kacho.local"
+global:
+  kacho:
+    domain: ""

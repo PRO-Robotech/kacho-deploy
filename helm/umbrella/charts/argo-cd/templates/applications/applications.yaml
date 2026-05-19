@@ -1,0 +1,57 @@
+{{- range $env := .Values.argoCd.environments }}
+{{- range $app := $.Values.argoCd.applications }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ printf "%s-%s" $env.name $app.name | quote }}
+  namespace: {{ $.Values.argoCd.namespace | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ $app.syncWave | quote }}
+  labels:
+    kacho.cloud/component: argocd-application
+    kacho.cloud/environment: {{ $env.name | quote }}
+    kacho.cloud/stack: {{ $app.name | quote }}
+    app.kubernetes.io/managed-by: helm
+spec:
+  project: {{ $.Values.argoCd.project.name | quote }}
+  source:
+    repoURL: {{ $.Values.argoCd.git.repoURL | quote }}
+    path: {{ $app.path | quote }}
+    targetRevision: {{ $env.revision | quote }}
+    helm:
+      valueFiles:
+        - {{ $env.valuesFile | quote }}
+        {{- if $env.overridesFile }}
+        - {{ $env.overridesFile | quote }}
+        {{- end }}
+      parameters:
+        - name: "kacho.domain"
+          value: {{ $.Values.kacho.domain | quote }}
+        - name: "kacho.environment"
+          value: {{ $env.name | quote }}
+  destination:
+    server: {{ $env.cluster | quote }}
+    namespace: {{ $app.namespace | quote }}
+  syncPolicy:
+    {{- if eq $env.syncPolicy "automated" }}
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    {{- end }}
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - RespectIgnoreDifferences=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: "30s"
+        factor: 2
+        maxDuration: "5m"
+  revisionHistoryLimit: 10
+{{- end }}
+{{- end }}

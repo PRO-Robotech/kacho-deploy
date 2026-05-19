@@ -1,0 +1,105 @@
+{{- range .Values.postgresHa.clusters }}
+{{- $cluster := . }}
+{{- $d := $.Values.postgresHa.defaults }}
+---
+# CloudNativePG Cluster — preferred Patroni-equivalent on K8s.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $cluster.name | quote }}
+  namespace: {{ $.Values.postgresHa.namespace | quote }}
+  labels:
+    kacho.cloud/component: postgres-ha
+    kacho.cloud/service: {{ $cluster.name | quote }}
+    app.kubernetes.io/part-of: kacho-iam-platform
+spec:
+  instances: {{ $d.replicas }}
+  imageName: {{ $.Values.postgresHa.patroniImage | quote }}
+  minSyncReplicas: {{ $d.syncStandbyCount }}
+  maxSyncReplicas: {{ $d.syncStandbyCount }}
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "1GB"
+      effective_cache_size: "3GB"
+      maintenance_work_mem: "256MB"
+      checkpoint_completion_target: "0.9"
+      wal_buffers: "16MB"
+      default_statistics_target: "100"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      work_mem: "5242kB"
+      huge_pages: "off"
+      min_wal_size: "1GB"
+      max_wal_size: "4GB"
+      wal_keep_size: "1GB"
+      archive_timeout: "{{ $d.wal.archiveTimeoutSec }}s"
+      ssl: "on"
+      ssl_min_protocol_version: "TLSv1.3"
+  bootstrap:
+    initdb:
+      database: {{ $cluster.database | quote }}
+      owner: {{ $cluster.username | quote }}
+      secret:
+        name: {{ printf "%s-superuser-credentials" $cluster.name | quote }}
+      encoding: "UTF8"
+      localeCType: "C"
+      localeCollate: "C"
+  storage:
+    size: {{ $d.storageSize | quote }}
+    {{- if $d.storageClass }}
+    storageClass: {{ $d.storageClass | quote }}
+    {{- end }}
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: "topology.kubernetes.io/zone"
+    podAntiAffinityType: required
+  resources:
+    requests:
+      cpu: {{ $d.resources.requests.cpu | quote }}
+      memory: {{ $d.resources.requests.memory | quote }}
+    limits:
+      cpu: {{ $d.resources.limits.cpu | quote }}
+      memory: {{ $d.resources.limits.memory | quote }}
+  {{- if $d.backup.enabled }}
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://{{ $d.backup.s3.bucket }}/{{ $cluster.name }}/"
+      endpointURL: {{ $d.backup.s3.endpoint | default "https://s3.amazonaws.com" | quote }}
+      s3Credentials:
+        accessKeyId:
+          name: {{ $d.backup.s3.accessKeySecret | quote }}
+          key: "ACCESS_KEY_ID"
+        secretAccessKey:
+          name: {{ $d.backup.s3.accessKeySecret | quote }}
+          key: "SECRET_ACCESS_KEY"
+        region:
+          name: {{ $d.backup.s3.accessKeySecret | quote }}
+          key: "REGION"
+      wal:
+        compression: "gzip"
+        maxParallel: 4
+      data:
+        compression: "gzip"
+        immediateCheckpoint: true
+    retentionPolicy: "{{ $d.backup.retentionDays }}d"
+  {{- end }}
+  monitoring:
+    enablePodMonitor: true
+    customQueriesConfigMap:
+      - name: "postgres-monitoring-queries"
+        key: "queries.yaml"
+{{- if $d.backup.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ printf "%s-daily" $cluster.name | quote }}
+  namespace: {{ $.Values.postgresHa.namespace | quote }}
+spec:
+  schedule: {{ $d.backup.schedule | quote }}
+  backupOwnerReference: "self"
+  cluster:
+    name: {{ $cluster.name | quote }}
+{{- end }}
+{{- end }}

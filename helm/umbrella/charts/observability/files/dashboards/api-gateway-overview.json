@@ -1,0 +1,14 @@
+{
+  "title": "Kachō API Gateway — Overview",
+  "uid": "api-gateway-overview",
+  "tags": ["kacho", "api-gateway"],
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {"id": 1, "type": "graph", "title": "Requests per second by status", "datasource": "Mimir", "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}, "targets": [{"expr": "sum by (code) (rate(grpc_server_handled_total{service=\"kacho-api-gateway\"}[1m]))"}]},
+    {"id": 2, "type": "stat", "title": "5xx error rate", "datasource": "Mimir", "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4}, "targets": [{"expr": "sum(rate(grpc_server_handled_total{service=\"kacho-api-gateway\",code=~\"Internal|Unavailable|Unknown\"}[5m])) / sum(rate(grpc_server_handled_total{service=\"kacho-api-gateway\"}[5m]))"}], "fieldConfig": {"defaults": {"unit": "percentunit", "thresholds": {"steps": [{"color": "green", "value": 0}, {"color": "yellow", "value": 0.0005}, {"color": "red", "value": 0.001}]}}}},
+    {"id": 3, "type": "graph", "title": "Per-RPC p95 latency", "datasource": "Mimir", "gridPos": {"x": 0, "y": 8, "w": 24, "h": 8}, "targets": [{"expr": "histogram_quantile(0.95, sum by (grpc_method, le) (rate(grpc_server_handling_seconds_bucket{service=\"kacho-api-gateway\"}[5m])))"}]}
+  ],
+  "time": {"from": "now-3h", "to": "now"},
+  "refresh": "30s"
+}
