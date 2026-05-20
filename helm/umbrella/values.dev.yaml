@@ -708,7 +708,12 @@ kacho-iam:
     limits:
       cpu: 1000m
       memory: 512Mi
-  env: {}
+  env:
+    # KAC-127 #25: enable AuthorizeService.ListObjects (FGA-filtered List).
+    # Scope-filtered List RPCs (vpc NetworkService/List, iam User/SA List) call
+    # ListObjects to resolve the caller's allowed-id set; without this the RPC
+    # returns Unimplemented and the handler-side scope-filter fails 503.
+    KACHO_AUTHZ_LISTOBJECTS: "on"
   # KAC-127 Phase 3: OPA sidecar config propagated from umbrella to sub-chart.
   # KAC-127 (deploy#39 fix): включён — kacho-iam отдаёт OPA-bundle по HTTP на
   # :9092; см. комментарий у top-level `opaSidecar` ниже.
