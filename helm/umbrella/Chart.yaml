@@ -15,17 +15,13 @@ dependencies:
     alias: pg-compute
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
-  # KAC-105: IAM stack — отдельные Postgres-инстансы под kacho-iam / Zitadel / OpenFGA
+  # KAC-105: IAM stack — отдельные Postgres-инстансы под kacho-iam / OpenFGA
   # (запрет #8: database-per-service; +«независимые БД» из sub-phase-2.0-iam-overview §4).
+  # KAC-127: pg-zitadel удалён — auth-tier (identity/OIDC) на Ory Kratos + Hydra.
   - name: postgresql
     alias: pg-iam
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
-  - name: postgresql
-    alias: pg-zitadel
-    version: 13.x
-    repository: https://charts.bitnami.com/bitnami
-    condition: pg-zitadel.enabled
   - name: postgresql
     alias: pg-openfga
     version: 13.x
@@ -58,22 +54,13 @@ dependencies:
   - name: kacho-iam
     version: ">= 1.0.0"
     repository: file://./charts/kacho-iam
-  # External charts для IAM stack. Версии резолвнуты `helm dependency update`
-  # на 2026-05-17 (KAC-105): zitadel-8.13.4, openfga-0.2.62.
-  # Conditions добавлены 2026-05-17 — позволяют выключать chart'ы через values
-  # (`zitadel.enabled: false` / `openfga.enabled: false`). Нужны для E0/E1 deploy,
-  # пока Zitadel/OpenFGA-инфраструктура не развернута; включить на E2/E3.
-  - name: zitadel
-    version: 8.x
-    repository: https://charts.zitadel.com
-    condition: zitadel.enabled
+  # OpenFGA — REBAC engine для kacho-iam (Phase 3). Condition-gated.
   - name: openfga
     version: 0.2.x
     repository: https://openfga.github.io/helm-charts
     condition: openfga.enabled
-  # KAC-115: Ory stack — Kratos (identity+self-service flows), Hydra (OAuth2/OIDC),
-  # Keto (REBAC ≈ OpenFGA). Включаются через `<chart>.enabled` в overrides;
-  # заменяют Zitadel+OpenFGA одной командой helm upgrade.
+  # KAC-115/127: Ory stack — Kratos (identity+self-service flows), Hydra (OAuth2/OIDC),
+  # Keto (REBAC). Kratos+Hydra заменили Zitadel (удалён из umbrella в KAC-127).
   - name: kratos
     version: 0.x
     repository: https://k8s.ory.sh/helm/charts

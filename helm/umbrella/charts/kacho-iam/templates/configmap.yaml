@@ -9,8 +9,8 @@ DB-пароль НЕ кладётся сюда (secret); подтягивает�
 `repository.postgres.password-from-env: KACHO_IAM_DB_PASSWORD` и Secret-ENV
 в deployment.yaml.
 
-KAC-105: на E0 extapi.zitadel / extapi.openfga endpoints — заглушки (сервис
-скорее всего ещё не использует их в коде до E2/E3).
+KAC-105: на E0 extapi.openfga endpoints — заглушки (сервис скорее всего ещё
+не использует их в коде до E3). KAC-127: zitadel удалён — Ory Kratos + Hydra.
 */}}
 apiVersion: v1
 kind: ConfigMap
@@ -47,9 +47,6 @@ data:
 
     extapi:
       def-dial-duration: 10s
-      zitadel:
-        endpoint: {{ .Values.config.extapi.zitadel.endpoint | quote }}
-        issuer: {{ .Values.config.extapi.zitadel.issuer | quote }}
       openfga:
         endpoint: {{ .Values.config.extapi.openfga.endpoint | quote }}
         store-id-from-env: KACHO_IAM_OPENFGA_STORE_ID

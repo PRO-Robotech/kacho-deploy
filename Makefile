@@ -1,47 +1,13 @@
 .PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint seed-ipam \
-        ci-images ci-up ci-down ci-logs ci-seed \
         loadtest-address-allocate loadtest-address-allocate-clean \
-        reload-svc-iam psql-iam logs-iam zitadel-admin fga-bootstrap
+        reload-svc-iam psql-iam logs-iam fga-bootstrap
 
 CLUSTER_NAME := kacho
 
-# --- CI docker-compose stack (newman E2E) ---------------------------------
-# Lightweight non-kind stack for the kacho-vpc/ + kacho-compute/ newman regression
-# suites. Separate from the kind+helm dev-stand above; api-gateway is on host port
-# 28080 (NOT 18080 — that belongs to the dev-stand). See ci/docker-compose.yml.
-CI_COMPOSE   := ci/docker-compose.yml
-CI_PROJECT   := kacho-ci
-PROJECT_ROOT := $(abspath ..)        # cloud-demo/kacho-workspace/project — Docker build context
-
-# Build the :dev images this stack needs, only if they're not present.
-# (Build context is the workspace `project/` dir — same as each repo's `make docker`.)
-ci-images:
-	@for svc in vpc compute api-gateway; do \
-		if ! docker image inspect kacho-$$svc:dev >/dev/null 2>&1; then \
-			echo "=== building kacho-$$svc:dev ==="; \
-			docker build -f $(PROJECT_ROOT)/kacho-$$svc/Dockerfile -t kacho-$$svc:dev $(PROJECT_ROOT); \
-		else \
-			echo "kacho-$$svc:dev already present (skip build; 'docker rmi kacho-$$svc:dev' to force rebuild)"; \
-		fi; \
-	done
-
-# Bring up the stack and seed fixtures. Writes ci/.seeded-ids.env (sourced by CI).
-ci-up: ci-images
-	docker compose -p $(CI_PROJECT) -f $(CI_COMPOSE) up -d
-	BASE_URL=http://localhost:28080 OUT=ci/.seeded-ids.env ./ci/seed.sh
-	@echo
-	@echo "CI stack up. api-gateway: http://localhost:28080  (seeded ids in ci/.seeded-ids.env)"
-
-# Re-run the seed step against an already-running stack (idempotent).
-ci-seed:
-	BASE_URL=http://localhost:28080 OUT=ci/.seeded-ids.env ./ci/seed.sh
-
-ci-down:
-	docker compose -p $(CI_PROJECT) -f $(CI_COMPOSE) down -v
-	@rm -f ci/.seeded-ids.env
-
-ci-logs:
-	docker compose -p $(CI_PROJECT) -f $(CI_COMPOSE) logs --tail=200
+# KAC-127: CI docker-compose stack (ci-images / ci-up / ci-seed / ci-down /
+# ci-logs) удалён — он был построен на упразднённом kacho-resource-manager
+# (ci/docker-compose.yml + ci/seed.sh удалены). newman E2E гоняется против
+# kind+helm dev-stand (`make dev-up`).
 
 preflight:
 	@command -v docker >/dev/null || { echo "ERROR: docker not installed"; exit 1; }
@@ -49,7 +15,6 @@ preflight:
 	@command -v kubectl >/dev/null || { echo "ERROR: kubectl not installed"; exit 1; }
 	@command -v helm >/dev/null || { echo "ERROR: helm not installed"; exit 1; }
 	@docker info >/dev/null 2>&1 || { echo "ERROR: docker daemon is not running"; exit 1; }
-	@if ss -tln | grep -q ':28080 '; then echo "ERROR: port 28080 is already in use, free it or change kind/kind-config.yaml"; exit 1; fi
 	@grep -q "api.kacho.local" /etc/hosts || echo "WARN: '127.0.0.1 api.kacho.local' missing in /etc/hosts — ingress will not resolve from host"
 	@echo "preflight OK"
 
@@ -60,18 +25,9 @@ dev-up: preflight
 	kubectl create namespace kacho --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
 	./scripts/gen-tls-cert.sh; \
 	cd helm/umbrella && helm dep update >/dev/null && cd ../..; \
-	echo "=== KAC-107 two-stage helm install (chicken-and-egg pg-zitadel + pre-install hooks) ==="; \
-	echo "--- stage 1/2: pg-zitadel only (zitadel disabled to keep pre-install hook out of the way) ---"; \
+	echo "=== helm install (KAC-127: single-stage — Zitadel pre-install hooks удалены) ==="; \
 	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho --create-namespace \
 	  -f ./helm/umbrella/values.dev.yaml \
-	  --set zitadel.enabled=false \
-	  --wait --timeout 10m; \
-	echo "--- stage 1/2 wait: kacho-umbrella-pg-zitadel StatefulSet ready ---"; \
-	kubectl -n kacho rollout status statefulset/kacho-umbrella-pg-zitadel --timeout=5m; \
-	echo "--- stage 2/2: full install (zitadel enabled; pre-install hooks now find pg-zitadel) ---"; \
-	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho \
-	  -f ./helm/umbrella/values.dev.yaml \
-	  --set zitadel.enabled=true \
 	  --wait --timeout 10m; \
 	echo "Waiting for ingress-nginx admission webhook..."; \
 	kubectl -n kacho wait --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=60s; \
@@ -151,7 +107,7 @@ loadtest-address-allocate-clean:
 	@kubectl -n kacho delete job k6-address-allocate --ignore-not-found
 	@kubectl -n kacho delete cm k6-address-allocate --ignore-not-found
 
-# ─── KAC-105: IAM stack (Zitadel + OpenFGA + kacho-iam) ──────────────
+# ─── KAC-105: IAM stack (kacho-iam + OpenFGA; KAC-127: Zitadel → Ory) ──────────────
 
 # alias для reload-svc SVC=iam — пересобрать и перезагрузить kacho-iam.
 reload-svc-iam:
@@ -179,17 +135,7 @@ wipe-iam-db:
 logs-iam:
 	kubectl logs -n kacho -f deploy/kacho-iam
 
-# Вывести pod + admin-credentials Zitadel (для UI в http://zitadel.kacho.local).
-# Bootstrap-creds Zitadel: по умолчанию admin@zitadel.kacho.local / RandomPasswordFromLog
-# (читаем из pod-логов; либо после первого UI-логина — стандартный flow setup).
-zitadel-admin:
-	@echo "Zitadel pods:"
-	@kubectl -n kacho get pods -l app.kubernetes.io/name=zitadel
-	@echo
-	@echo "Initial admin credentials (если не настроены через secrets) — ищем в pod-логе:"
-	@kubectl -n kacho logs -l app.kubernetes.io/name=zitadel --tail=200 | grep -iE 'admin|password|bootstrap' || true
-	@echo
-	@echo "UI: http://zitadel.kacho.local (добавь '127.0.0.1 zitadel.kacho.local' в /etc/hosts)"
+# KAC-127: zitadel-admin target удалён — Zitadel заменён на Ory Kratos + Hydra.
 
 # Вручную запустить openfga-bootstrap-job (для дебага / повторного применения model).
 # Helm hook удаляет старый Job при post-install/upgrade, поэтому здесь используем
