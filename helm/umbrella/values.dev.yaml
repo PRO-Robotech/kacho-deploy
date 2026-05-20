@@ -652,7 +652,10 @@ kacho-iam:
   # KAC-127 Phase 3: OPA sidecar config propagated from umbrella to sub-chart.
   opaSidecar:
     enabled: true
-    image: openpolicyagent/opa:1.0.0-rootless
+    # KAC-127: `1.0.0-rootless` тег не существует в openpolicyagent/opa
+    # (OPA не публикует `-rootless` для 1.x). Rootless-эквивалент — `-static`
+    # (static-build, non-root по умолчанию).
+    image: openpolicyagent/opa:1.0.0-static
     logLevel: info
     jwks:
       configMapName: kacho-iam-jwks
@@ -689,7 +692,8 @@ openfgaBootstrap:
 # (allows kubectl port-forward debugging).
 opaSidecar:
   enabled: true
-  image: openpolicyagent/opa:1.0.0-rootless
+  # KAC-127: `-rootless` тег не существует — rootless-эквивалент `-static`.
+  image: openpolicyagent/opa:1.0.0-static
   logLevel: info
   iamInternalHost: kacho-umbrella-iam-internal
   iamInternalPort: 9091
