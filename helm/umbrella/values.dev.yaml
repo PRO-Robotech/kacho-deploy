@@ -24,6 +24,19 @@ api-gateway:
   advertisedEndpoint: localhost:18443
   image: kacho-api-gateway:dev
   imagePullPolicy: IfNotPresent
+  # KAC-127 (#40): dev-mode auth-interceptor HS256 secret. Without it every
+  # Bearer JWT is ignored and all principals collapse to system:bootstrap —
+  # anonymous / bootstrap / per-user tokens become indistinguishable, which
+  # makes the authz-deny matrix untestable.
+  #
+  # Dev-ONLY secret. Production (values.prod.yaml) uses authn.mode=production
+  # with Hydra JWKS RS256 and never this value — committing it here is safe
+  # (this is the kind dev stand, not prod). MUST stay in sync with the secret
+  # the authz-fixtures JWT minter signs with
+  # (tests/authz-fixtures/setup.sh DEV_SECRET default).
+  authn:
+    mode: dev
+    devSecret: kacho-dev-jwt-secret-2026
 
 compute:
   image: kacho-compute:dev
