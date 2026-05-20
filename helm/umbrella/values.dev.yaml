@@ -150,7 +150,8 @@ pg-iam:
       repository: bitnamilegacy/os-shell
 
 pg-openfga:
-  enabled: false
+  # KAC-127: backing Postgres для OpenFGA tuple-store — включён вместе с openfga.
+  enabled: true
   auth:
     username: openfga
     password: dev-openfga-password
@@ -185,7 +186,8 @@ mailhog:
 # Включаются вместо Zitadel+OpenFGA через overrides.yaml.
 
 pg-kratos:
-  enabled: false
+  # KAC-127: backing Postgres для Kratos — включён вместе с kratos.
+  enabled: true
   global: { security: { allowInsecureImages: true } }
   image:
     registry: docker.io
@@ -202,7 +204,8 @@ pg-kratos:
       limits:   { cpu: 1, memory: 1Gi }
 
 pg-hydra:
-  enabled: false
+  # KAC-127: backing Postgres для Hydra — включён вместе с hydra.
+  enabled: true
   global: { security: { allowInsecureImages: true } }
   image:
     registry: docker.io
@@ -236,7 +239,8 @@ pg-keto:
       limits:   { cpu: 1, memory: 1Gi }
 
 kratos:
-  enabled: false
+  # KAC-127: Phase 2 IAM-стек требует Kratos (identity) включённым для smoke.
+  enabled: true
   kratos:
     development: true
     automigration:
@@ -338,7 +342,8 @@ kratos:
 # (5.35.93.58 — kacho-deploy historic dev-cluster). Prod-overlay переопределит
 # все `urls.*` через `{{ .Values.kacho.domain }}` — см. values.prod.yaml.
 hydra:
-  enabled: false
+  # KAC-127: Phase 2 IAM-стек требует Hydra (OAuth2/OIDC) включённым для smoke.
+  enabled: true
   hydra:
     automigration:
       enabled: true
@@ -523,10 +528,19 @@ kratosSelfServiceUI:
 # OpenFGA — REBAC engine для kacho-iam (Phase 3). Condition-gated через
 # `openfga.enabled` / `openfgaBootstrap.enabled` (default false на E0/E1).
 openfga:
-  enabled: false
+  enabled: true
   datastore:
     engine: postgres
     uri: postgres://openfga:dev-openfga-password@kacho-umbrella-pg-openfga:5432/openfga?sslmode=disable
+    # KAC-127: migrationType=initContainer вместо job. Дефолт sub-chart'а — `job` +
+    # waitForMigrations=true: OpenFGA Deployment получает init-container
+    # `wait-for-migration` (groundnuty/k8s-wait-for `job-wr`), который ждёт
+    # завершения отдельного migration-Job. Под `helm install --wait` это deadlock:
+    # `--wait` блокируется на не-Ready OpenFGA pod (init-container крутится),
+    # release уходит в failed по timeout. С `initContainer` миграция исполняется
+    # как собственный init-container OpenFGA Deployment — отдельного Job нет,
+    # нет гонки, `--wait` дожидается обычным порядком.
+    migrationType: initContainer
   service:
     type: ClusterIP
     grpc:
