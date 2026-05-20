@@ -1,0 +1,179 @@
+name: newman-e2e
+
+# KAC-127 — Newman E2E suite against a real kind + helm umbrella stack.
+#
+# This is the heavy black-box gate: it builds every kacho-* :dev image, loads
+# them into a kind cluster, helm-installs the umbrella (Postgres + Ory + OpenFGA
+# + api-gateway + iam + vpc + compute), seeds fixtures and runs the Newman
+# suites of kacho-iam / kacho-vpc / kacho-compute through the api-gateway REST
+# endpoint.
+#
+# It is intentionally a SEPARATE workflow from the per-service fast `ci.yaml`
+# (unit + lint + scan) because a full kind bring-up takes 15-30 min — it must
+# not slow the fast feedback loop.
+#
+# Trigger: PR + push to KAC-127/main (epic integration branch) plus manual
+# dispatch and a nightly schedule. The job is marked continue-on-error while
+# the rm->iam fixture rewrite stabilises, so a transient stack failure does not
+# block unrelated PRs — flip `continue-on-error` to false once the suite is
+# consistently green.
+
+on:
+  push:
+    branches: [main, KAC-127]
+  pull_request:
+    branches: [main, KAC-127]
+  workflow_dispatch: {}
+  schedule:
+    - cron: '0 4 * * *'   # nightly
+
+permissions:
+  contents: read
+
+jobs:
+  newman-e2e:
+    name: newman E2E (kind + helm umbrella)
+    runs-on: ubuntu-latest
+    continue-on-error: true   # KAC-127: un-block PRs while rm->iam fixtures stabilise
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: kacho-deploy }
+
+      # Siblings are needed both as Go build context (Dockerfile COPY ../kacho-*)
+      # and as helm sub-chart sources (umbrella Chart.yaml file:// deps). All are
+      # pinned to KAC-127 while the epic is in flight (see workspace CLAUDE.md
+      # «Кросс-репо зависимости»); revert to main after the epic merges.
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-corelib, ref: KAC-127, path: kacho-corelib }
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-proto, ref: KAC-127, path: kacho-proto }
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-vpc, ref: KAC-127, path: kacho-vpc }
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-compute, ref: KAC-127, path: kacho-compute }
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-iam, ref: KAC-127, path: kacho-iam }
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-api-gateway, ref: KAC-127, path: kacho-api-gateway }
+      # kacho-ui is a private repo; best-effort checkout (parity with ci.yaml).
+      - uses: actions/checkout@v4
+        continue-on-error: true
+        with: { repository: PRO-Robotech/kacho-ui, ref: KAC-127, path: kacho-ui }
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: npm install -g newman
+
+      # Build every kacho-* :dev image. Go services build with context = the
+      # workspace root (Dockerfile COPY kacho-corelib / kacho-proto / kacho-<svc>).
+      - name: build service images
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          for svc in vpc iam compute api-gateway; do
+            echo "=== build kacho-$svc:dev ==="
+            docker build -f "kacho-$svc/Dockerfile" -t "kacho-$svc:dev" .
+          done
+          if [ -f kacho-ui/Dockerfile ]; then
+            echo "=== build kacho-ui:dev ==="
+            docker build -t kacho-ui:dev kacho-ui
+          fi
+
+      - uses: helm/kind-action@v1
+        with:
+          config: kacho-deploy/kind/kind-config.yaml
+          cluster_name: kacho
+
+      - name: load images into kind
+        run: |
+          set -euo pipefail
+          for img in kacho-vpc:dev kacho-iam:dev kacho-compute:dev kacho-api-gateway:dev; do
+            kind load docker-image "$img" --name kacho
+          done
+          docker image inspect kacho-ui:dev >/dev/null 2>&1 \
+            && kind load docker-image kacho-ui:dev --name kacho || true
+
+      - uses: azure/setup-helm@v4
+
+      - name: /etc/hosts override for api.kacho.local
+        run: sudo bash -c 'echo "127.0.0.1 api.kacho.local kacho.local" >> /etc/hosts'
+
+      - name: helm install umbrella
+        working-directory: kacho-deploy
+        run: |
+          set -euo pipefail
+          ./scripts/gen-tls-cert.sh || true
+          cd helm/umbrella
+          helm dep update
+          helm upgrade --install kacho-umbrella . -n kacho --create-namespace \
+            -f values.dev.yaml --wait --timeout 20m
+
+      - name: wait for api-gateway
+        run: |
+          set -euo pipefail
+          kubectl -n kacho rollout status deploy -l app.kubernetes.io/part-of=kacho --timeout=5m || true
+          for i in $(seq 1 30); do
+            if curl -fsS http://api.kacho.local:28080/healthz >/dev/null 2>&1; then
+              echo "api-gateway reachable"; break
+            fi
+            echo "waiting for api-gateway ($i/30)..."; sleep 10
+          done
+
+      # Generate the Newman collections (declarative cases/*.py -> gen.py) and run
+      # them through the api-gateway. Each service suite is independent.
+      - name: run kacho-iam newman suite
+        working-directory: kacho-iam
+        run: |
+          python3 tests/newman/scripts/gen.py
+          tests/newman/scripts/run.sh --env-var baseUrl=http://api.kacho.local:28080
+
+      - name: run kacho-vpc newman suite
+        working-directory: kacho-vpc
+        run: |
+          python3 tests/newman/scripts/gen.py
+          tests/newman/scripts/run.sh --env-var baseUrl=http://api.kacho.local:28080
+
+      - name: run kacho-compute newman suite
+        working-directory: kacho-compute
+        run: |
+          python3 tests/newman/scripts/gen.py
+          tests/newman/scripts/run.sh --env-var baseUrl=http://api.kacho.local:28080
+
+      - name: dump stack logs on failure
+        if: failure()
+        run: |
+          kubectl -n kacho get pods -o wide || true
+          for d in api-gateway iam vpc compute; do
+            echo "=== logs: $d ==="
+            kubectl -n kacho logs "deploy/$d" --tail=200 || true
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: newman-reports
+          path: |
+            kacho-iam/tests/newman/out/*.json
+            kacho-vpc/tests/newman/out/*.json
+            kacho-compute/tests/newman/out/*.json
+          if-no-files-found: ignore
+
+      # Fail the job if any suite recorded a failed assertion (summary.txt
+      # column 3 = FAILED count). continue-on-error above keeps it non-blocking.
+      - name: assert all suites green
+        if: always()
+        run: |
+          rc=0
+          for s in kacho-iam kacho-vpc kacho-compute; do
+            f="$s/tests/newman/out/summary.txt"
+            [ -f "$f" ] || { echo "$s: no summary.txt"; rc=1; continue; }
+            if awk 'NR>1 && $3+0>0{exit 1}' "$f"; then
+              echo "$s: newman OK"
+            else
+              echo "$s: newman FAILED"; rc=1
+            fi
+          done
+          exit $rc
