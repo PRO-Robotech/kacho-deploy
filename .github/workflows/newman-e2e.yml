@@ -253,8 +253,14 @@ jobs:
           python3 tests/newman/scripts/gen.py
           tests/newman/scripts/run.sh --env-var baseUrl=http://localhost:18080
 
-      - name: dump stack logs on failure
-        if: failure()
+      - name: dump stack logs
+        # `always()` (not `failure()`): newman exits 0 even with failed
+        # assertions — the suite-green verdict is the LATER `assert authz
+        # suites green` step. At this point in the job no step has failed yet,
+        # so `failure()` would skip the dump exactly when the authz matrix is
+        # red. Always dump so the per-resource FGA `no path` diagnostics
+        # (vpc write-side tuple traces, openfga Secrets) are captured.
+        if: always()
         run: |
           kubectl -n kacho get pods -o wide || true
           kubectl -n kacho get events --sort-by=.lastTimestamp | tail -40 || true
