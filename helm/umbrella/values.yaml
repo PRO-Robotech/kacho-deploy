@@ -511,6 +511,10 @@ cosign-policy-controller:
     - kacho-system
   warnNamespaces:
     - kube-system
+  # KAC-127 Phase 12 — STRICT mode (signature + SLSA L3 + SBOM required).
+  # Enable only in production AFTER Phase 11 audit-only soak period.
+  strict:
+    enabled: false
 
 spiffe-csi-driver:
   enabled: false
@@ -614,3 +618,30 @@ postgres-ha:
       syncStandbyCount: 0
       backup:
         enabled: false
+
+# ─── KAC-127 Phase 12 — Conformance + Chaos + Pentest prep ────────────────
+# Litmus chaos engineering subchart (opt-in — chaos game-days are operator-driven).
+litmus-chaos:
+  enabled: false
+  # Top-level kacho.* fields propagate via templated values; sub-chart reads
+  # global.kacho.domain to render OIDC issuer URL for chaos-center auth.
+  global:
+    kacho:
+      domain: api.kacho.cloud
+
+# security.txt (RFC 9116) — served at /.well-known/security.txt via api-gateway
+# ingress; runtime-configurable per cluster.
+security:
+  txt:
+    enabled: true
+  # Primary security contact email — REQUIRED override per environment.
+  # Default placeholder fails closed (RFC requires real contact).
+  contactEmail: security@kacho.cloud
+  altContacts:
+    - "https://kacho.cloud/security/disclosure"
+  pgpKeyUrl: "https://kacho.cloud/.well-known/pgp-key.txt"
+  acknowledgmentsUrl: "https://kacho.cloud/security/acknowledgments"
+  policyUrl: "https://kacho.cloud/security/disclosure"
+  hiringUrl: "https://kacho.cloud/careers"
+  alternateCanonical:
+    - "https://kacho.cloud/.well-known/security.txt"

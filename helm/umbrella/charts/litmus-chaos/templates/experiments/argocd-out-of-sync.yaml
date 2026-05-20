@@ -1,0 +1,56 @@
+{{- if .Values.enabled }}
+# KAC-127 Phase 12 — ChaosExperiment: argocd-out-of-sync.
+# Manually drifts a managed Deployment from its git source. Verifies that
+# Argo CD detects drift within sync-interval (default 3min) and either
+# auto-syncs (selfHealing: true) or alerts.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: argocd-out-of-sync
+  namespace: litmus-chaos
+  labels:
+    {{- include "litmus-chaos.labels" . | nindent 4 }}
+    kacho.cloud/chaos-severity: {{ (index .Values.severity "argocd-out-of-sync") | quote }}
+spec:
+  definition:
+    scope: Cluster
+    permissions:
+      - apiGroups: ["apps"]
+        resources: ["deployments"]
+        verbs: ["get", "list", "patch", "update"]
+      - apiGroups: ["argoproj.io"]
+        resources: ["applications"]
+        verbs: ["get", "list", "patch"]
+      - apiGroups: ["litmuschaos.io"]
+        resources: ["chaosengines", "chaosexperiments", "chaosresults"]
+        verbs: ["get", "list", "patch", "update"]
+    image: "{{ .Values.imageRegistry }}/litmus-go-runner-kubectl:3.10.0"
+    imagePullPolicy: Always
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        # Scale a managed Deployment to a different replica count to drift.
+        kubectl -n kacho-system patch deployment kacho-iam --type=merge \
+          -p '{"spec":{"replicas":99}}'
+        echo "Drift injected: kacho-iam scaled to 99 replicas."
+        # Wait 4 minutes (sync interval + grace).
+        sleep 240
+        # Verify Argo CD detected.
+        ARGO_STATUS=$(kubectl -n argo-cd get application kacho-iam -o jsonpath='{.status.sync.status}')
+        if [[ "$ARGO_STATUS" != "OutOfSync" ]]; then
+          echo "ERROR: expected OutOfSync, got $ARGO_STATUS"
+          exit 1
+        fi
+        echo "PASS: drift detected"
+    command:
+      - /bin/bash
+    env:
+      - name: TOTAL_CHAOS_DURATION
+        value: "300"
+      - name: APP_NAMESPACE
+        value: "kacho-system"
+    labels:
+      name: argocd-out-of-sync
+      app.kubernetes.io/part-of: litmus
+{{- end }}

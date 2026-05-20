@@ -56,6 +56,14 @@ slsa:
   minimumLevel: 3
   builderId: "https://github.com/actions/runner"
 
+# KAC-127 Phase 12 — Strict mode enforcement.
+# When strict.enabled=true, the additional clusterimagepolicy-strict.yaml
+# policy is rendered, REQUIRING signature + SLSA L3 attestation + SBOM
+# attestation for every image in enforcedNamespaces. Enable for production
+# only (after Phase 11 audit-only soak period).
+strict:
+  enabled: false
+
 # Banned base-image registries (block any image not from trusted registries).
 trustedRegistries:
   - "ghcr.io/pro-robotech"

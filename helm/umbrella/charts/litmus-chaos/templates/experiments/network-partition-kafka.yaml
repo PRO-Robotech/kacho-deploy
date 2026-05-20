@@ -1,0 +1,50 @@
+{{- if .Values.enabled }}
+# KAC-127 Phase 12 — ChaosExperiment: network-partition-kafka.
+# Isolates Kafka brokers from each other and from producers/consumers.
+# Verifies audit pipeline DLQ accumulation and recovery on reconnect.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: network-partition-kafka
+  namespace: litmus-chaos
+  labels:
+    {{- include "litmus-chaos.labels" . | nindent 4 }}
+    kacho.cloud/chaos-severity: {{ (index .Values.severity "kafka-broker-down") | quote }}
+spec:
+  definition:
+    scope: Namespaced
+    permissions:
+      - apiGroups: [""]
+        resources: ["pods", "events", "configmaps", "services"]
+        verbs: ["get", "list", "create", "patch", "delete"]
+      - apiGroups: ["apps"]
+        resources: ["statefulsets", "deployments"]
+        verbs: ["get", "list"]
+      - apiGroups: ["networking.k8s.io"]
+        resources: ["networkpolicies"]
+        verbs: ["get", "list", "create", "delete", "patch"]
+      - apiGroups: ["litmuschaos.io"]
+        resources: ["chaosengines", "chaosexperiments", "chaosresults"]
+        verbs: ["get", "list", "patch", "update"]
+    image: "{{ .Values.imageRegistry }}/go-runner:3.10.0"
+    imagePullPolicy: Always
+    args:
+      - -c
+      - ./experiments -name pod-network-partition
+    command:
+      - /bin/bash
+    env:
+      - name: TOTAL_CHAOS_DURATION
+        value: "180"
+      - name: APP_NAMESPACE
+        value: "kacho-system"
+      - name: APP_LABEL
+        value: "app.kubernetes.io/name=kafka"
+      - name: DESTINATION_PORTS
+        value: "9092,9093"
+      - name: POLICY_TYPES
+        value: "ingress,egress"
+    labels:
+      name: pod-network-partition
+      app.kubernetes.io/part-of: litmus
+{{- end }}

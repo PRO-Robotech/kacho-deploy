@@ -174,3 +174,9 @@ dependencies:
     version: ">= 0.0.0"
     repository: file://./charts/postgres-ha
     condition: postgres-ha.enabled
+  # KAC-127 Phase 12 — Litmus chaos engineering. Opt-in (chaos game-days
+  # are operator-driven; never enabled by default in prod values.yaml).
+  - name: litmus-chaos
+    version: ">= 0.0.0"
+    repository: file://./charts/litmus-chaos
+    condition: litmus-chaos.enabled
