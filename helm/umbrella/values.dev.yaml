@@ -3,8 +3,22 @@
 # In dev we use localhost:18443 because that is the port-forward to ingress-nginx
 # (kubectl -n kacho port-forward svc/kacho-umbrella-ingress-nginx-controller 18443:443).
 # In production the value would be api.kacho.local:443.
+# KAC-127 — dev-стенд (kind) использует локально-загруженные образы `:dev`
+# (`kind load docker-image kacho-*:dev`), а не DockerHub. pullPolicy IfNotPresent —
+# образ уже в node-кэше kind. Чтобы тянуть из DockerHub в dev — убрать эти
+# override'ы (вернётся registry/tag из values.yaml).
 api-gateway:
   advertisedEndpoint: localhost:18443
+  image: kacho-api-gateway:dev
+  imagePullPolicy: IfNotPresent
+
+compute:
+  image: kacho-compute:dev
+  imagePullPolicy: IfNotPresent
+
+ui:
+  image: kacho-ui:dev
+  imagePullPolicy: IfNotPresent
 
 ingress-nginx:
   controller:
@@ -94,16 +108,19 @@ pg-compute:
 # В dev-стенде disabled (port-forward kachoctl-ipam должен работать).
 # В prod values эту секцию переопределить enabled=true + adminPodsSelector.
 vpc:
+  # KAC-127 — local kind-loaded image (см. комментарий у api-gateway выше).
+  image: kacho-vpc:dev
+  imagePullPolicy: IfNotPresent
   networkPolicy:
     enabled: false
     adminPodsSelector: {}
 
 # ─── KAC-105: IAM stack (sub-phase 2.0) ─────────────────────────────────
-# Три отдельные Postgres-инстанса (запрет #8: database-per-service):
+# Отдельные Postgres-инстансы (запрет #8: database-per-service):
 #   pg-iam      → kacho-iam (схема kacho_iam)
-#   pg-zitadel  → Zitadel internal state
-#   pg-openfga  → OpenFGA tuple-store
-# Все три в dev — emptyDir (без persistence), небольшие resource-лимиты.
+#   pg-openfga  → OpenFGA tuple-store (Phase 3)
+# В dev — emptyDir (без persistence), небольшие resource-лимиты.
+# KAC-127: pg-zitadel удалён — auth-tier (identity/OIDC) на Ory (Kratos/Hydra).
 
 pg-iam:
   auth:
@@ -132,28 +149,8 @@ pg-iam:
     image:
       repository: bitnamilegacy/os-shell
 
-pg-zitadel:
-  auth:
-    username: zitadel
-    password: dev-zitadel-password
-    database: zitadel
-  primary:
-    persistence:
-      enabled: false
-    resources:
-      requests:
-        cpu: 200m
-        memory: 256Mi
-      limits:
-        cpu: 1000m
-        memory: 1Gi
-  image:
-    repository: bitnamilegacy/postgresql
-  volumePermissions:
-    image:
-      repository: bitnamilegacy/os-shell
-
 pg-openfga:
+  enabled: false
   auth:
     username: openfga
     password: dev-openfga-password
@@ -174,75 +171,9 @@ pg-openfga:
     image:
       repository: bitnamilegacy/os-shell
 
-# Zitadel — OIDC issuer для kacho-iam.
-# Dev-конфиг: TLS отключён, ExternalDomain=zitadel.kacho.local (нужна запись в /etc/hosts).
-# masterkey должен быть ровно 32 символа; в dev — статичный (создаётся отдельным Secret-манифестом
-# kacho-iam-zitadel-masterkey в charts/kacho-iam/templates/ либо вручную).
-zitadel:
-  zitadel:
-    masterkeySecretName: zitadel-masterkey
-    configmapConfig:
-      ExternalDomain: zitadel.kacho.local
-      ExternalSecure: false
-      ExternalPort: 80
-      TLS:
-        Enabled: false
-      Database:
-        Postgres:
-          Host: kacho-umbrella-pg-zitadel
-          Port: 5432
-          Database: zitadel
-          MaxOpenConns: 20
-          MaxIdleConns: 10
-          MaxConnLifetime: 30m
-          MaxConnIdleTime: 5m
-          User:
-            Username: zitadel
-            Password: dev-zitadel-password
-            SSL:
-              Mode: disable
-          Admin:
-            Username: zitadel
-            Password: dev-zitadel-password
-            SSL:
-              Mode: disable
-      # Machine user (service account) — Zitadel setup-Job создаст SA + private key,
-      # положит в /machinekey/sa.json; sidecar machinekey-writer затем создаст
-      # k8s Secret `zitadel-admin-sa` (имя == Username). Используется post-install
-      # Job zitadel-oidc-bootstrap для создания OIDC app `kacho-console` через
-      # jwt-bearer grant.
-      FirstInstance:
-        Org:
-          Machine:
-            Machine:
-              Username: zitadel-admin-sa
-              Name: "Zitadel Admin SA"
-            MachineKey:
-              Type: 1  # JSON enum (PEM RSA + metadata)
-              ExpirationDate: "2030-01-01T00:00:00Z"
-  # machinekey-writer sidecar — bitnami/kubectl. Default registry depreced
-  # (Bitnami переехал на bitnamilegacy/). На e2c825 без этого override
-  # sidecar падает с ErrImagePull → setup-Job DeadlineExceeded.
-  setupJob:
-    machinekeyWriter:
-      image:
-        # `bitnami/kubectl` resolves tag из k8s version (1.35) — но такого tag нет
-        # ни в bitnami, ни в bitnamilegacy. Используем alpine/k8s — multi-arch
-        # альтернатива с фиксированным tag-номером.
-        repository: alpine/k8s
-        tag: "1.30.0"
-  ingress:
-    enabled: true
-    className: nginx
-    hosts:
-      - host: zitadel.kacho.local
-        paths:
-          - path: /
-            pathType: Prefix
+# KAC-127: Zitadel chart + конфиг удалены — auth-tier (identity/OIDC) на Ory
+# Kratos + Hydra. OIDC issuer для kacho-iam теперь Hydra.
 
-# OIDC application bootstrap — post-install Job через Zitadel Management API.
-# Создаёт OIDC app `kacho-console` + пишет client_id в Secret `kacho-iam-oidc-client`.
-# api-gateway читает client_id из этого Secret через valueFrom.secretKeyRef.
 # MailHog — SMTP catch-all (UI на :8025). Включается per-cluster в overrides.
 mailhog:
   enabled: false
@@ -586,88 +517,13 @@ kratosSelfServiceUI:
   hydraAdminUrl: "http://kacho-umbrella-hydra-admin:4445"
   cookieSecret: "please-change-this-32-bytes-A1Bx"
 
-zitadelOidcBootstrap:
-  enabled: false
-  appName: "kacho-console"
-  projectName: "kacho-console"
-  redirectUri: "http://localhost/iam/v1/auth/callback"  # override в cluster overrides
-  clientSecretName: "kacho-iam-oidc-client"
-  zitadelInternal: "http://kacho-umbrella-zitadel.kacho.svc.cluster.local:8080"
-  machineSaSecretName: "zitadel-admin-sa"
-  machineSaKeyFile: "zitadel-admin-sa.json"
-  # Admin human user — создаётся через Admin API с isEmailVerified=true и
-  # passwordChangeRequired=false (без SMTP не получим verification codes).
-  adminEmail: "admin@kacho.local"
-  adminPassword: "Admin1234!"
-  image:
-    repository: python
-    tag: "3.12-slim"
+# KAC-127: zitadelOidcBootstrap удалён — identity/OIDC tier перешёл на Ory
+# Kratos + Hydra (см. секции pg-kratos / pg-hydra выше).
 
-  # KAC-107 — chicken-and-egg fix: Zitadel chart по умолчанию рендерит
-  # `zitadel-init` / `zitadel-setup` как Helm `pre-install,pre-upgrade` hooks
-  # (см. zitadel/templates/{init,setup}job.yaml + defaults в `setupJob.annotations`).
-  # Pre-install hook'и выполняются ДО основной фазы install, а зависимый
-  # `pg-zitadel` StatefulSet (Bitnami postgresql sub-chart, не hook) создаётся
-  # уже в основной фазе → init/setup Job пытаются открыть TCP-connect к
-  # `kacho-umbrella-pg-zitadel:5432`, DNS не резолвится, backoffLimit=5
-  # исчерпывается → `BackoffLimitExceeded` → helm upgrade fail.
-  #
-  # Fix (двухсоставной — Makefile + values):
-  #   1. **Two-stage install в Makefile** (см. `dev-up` target): stage 1
-  #      устанавливает только pg-zitadel (`--set zitadel.enabled=false`),
-  #      ждёт `kubectl wait sts/...-pg-zitadel`, stage 2 включает zitadel
-  #      (`--set zitadel.enabled=true`) — pre-install hook'и теперь стартуют
-  #      ПОСЛЕ того как pg-Service+Endpoints существуют.
-  #      Через values.yaml (`annotations: ~`/`{}`) hook-метки убрать **нельзя**
-  #      — Helm v3 deep-merge отбрасывает null/empty overlay, оставляя
-  #      chart-default (helm/helm#9136). `--set ...=null` через CLI работал бы,
-  #      но прятать критичную семантику в командной строке — хуже, чем
-  #      явный two-stage в Makefile.
-  #   2. **`wait-for-pg` init-container** ниже — safety-net на случай flap'а
-  #      pg-Service между stage 1 и stage 2 или ручного helm-upgrade без
-  #      Makefile. Init-container крутит `nc -z` loop до 600s.
-  initJob:
-    enabled: true
-    backoffLimit: 5
-    activeDeadlineSeconds: 600
-    initContainers:
-      - name: wait-for-pg
-        image: busybox:1.36
-        command:
-          - sh
-          - -c
-          - |
-            set -e
-            echo "[wait-for-pg] waiting for kacho-umbrella-pg-zitadel:5432..."
-            until nc -z kacho-umbrella-pg-zitadel 5432; do
-              echo "[wait-for-pg] not ready, sleep 2s"
-              sleep 2
-            done
-            echo "[wait-for-pg] pg-zitadel reachable, proceeding"
-  setupJob:
-    backoffLimit: 5
-    activeDeadlineSeconds: 600
-    additionalArgs:
-      - "--init-projections=true"
-    initContainers:
-      - name: wait-for-pg
-        image: busybox:1.36
-        command:
-          - sh
-          - -c
-          - |
-            set -e
-            echo "[wait-for-pg] waiting for kacho-umbrella-pg-zitadel:5432..."
-            until nc -z kacho-umbrella-pg-zitadel 5432; do
-              echo "[wait-for-pg] not ready, sleep 2s"
-              sleep 2
-            done
-            echo "[wait-for-pg] pg-zitadel reachable, proceeding"
-
-# OpenFGA — REBAC engine для kacho-iam.
-# В dev — playground enabled (доступен на openfga.kacho.local через ingress).
-# store-id создаётся bootstrap-job'ом (templates/openfga-bootstrap-job.yaml).
+# OpenFGA — REBAC engine для kacho-iam (Phase 3). Condition-gated через
+# `openfga.enabled` / `openfgaBootstrap.enabled` (default false на E0/E1).
 openfga:
+  enabled: false
   datastore:
     engine: postgres
     uri: postgres://openfga:dev-openfga-password@kacho-umbrella-pg-openfga:5432/openfga?sslmode=disable
@@ -691,7 +547,7 @@ openfga:
               port: http
 
 # kacho-iam — control-plane сервис IAM (Account / Project / User / ServiceAccount /
-# Group / Role / AccessBinding). E0 — skeleton + CRUD; интеграция с Zitadel/OpenFGA — E2/E3.
+# Group / Role / AccessBinding). E0 — skeleton + CRUD; интеграция с Ory — E2/E3.
 kacho-iam:
   name: kacho-iam
   replicas: 1
@@ -732,9 +588,7 @@ kacho-iam:
     authn:
       mode: dev
     extapi:
-      zitadel:
-        endpoint: http://zitadel:8080
-        issuer: http://zitadel.kacho.local
+      # KAC-127: zitadel config удалён — identity/OIDC tier на Ory Kratos + Hydra.
       openfga:
         endpoint: openfga:8081
         # store-id заполняется bootstrap-job'ом в Secret kacho-iam-openfga-store

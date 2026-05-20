@@ -185,7 +185,7 @@ keto:
 # ─── Postgres sub-charts: prod-режим (persistence enabled) ─────────────
 # В prod нужны PV / production-grade-resource-limits. Здесь — overlay для
 # pg-iam / pg-hydra / pg-kratos / pg-keto; остальные (pg-vpc / pg-compute /
-# pg-zitadel / pg-openfga) — отдельный values.prod.yaml блок (вне scope KAC-127).
+# pg-openfga) — отдельный values.prod.yaml блок (вне scope KAC-127).
 pg-iam:
   primary:
     persistence:
@@ -232,9 +232,12 @@ pg-keto:
 # ─── kacho-iam production block ────────────────────────────────────────
 kacho-iam:
   replicas: 3
+  # KAC-127 — production образ из DockerHub (multi-arch, собран docker-build.yml).
+  # CD-pipeline инжектит конкретный тег `<branch>-<sha8>` через ${KACHO_IMAGE_TAG}
+  # (envsubst перед `helm upgrade`) либо через `--set kacho-iam.image.tag=…`.
   image:
-    repository: kacho-iam
-    tag: "${KACHO_IAM_TAG}"     # CD-pipeline injectit конкретный SHA.
+    repository: docker.io/prorobotech/kacho-iam
+    tag: "${KACHO_IMAGE_TAG}"   # CD-pipeline injectit конкретный SHA-тег.
     pullPolicy: IfNotPresent
   config:
     logger:
@@ -272,7 +275,13 @@ kacho-iam:
 
 # ─── VPC sub-chart prod overrides ──────────────────────────────────────
 # В prod включаем admin networkpolicy (запрет любого pod→:9091 кроме admin-pods).
+# KAC-127 — production образы из DockerHub (multi-arch, собраны docker-build.yml).
+# CD-pipeline инжектит конкретный тег через ${KACHO_IMAGE_TAG} (envsubst) либо
+# `--set <svc>.image=docker.io/<user>/<svc>:<tag>`. pullPolicy Always — prod
+# тянет свежий образ при каждом rollout.
 vpc:
+  image: "docker.io/prorobotech/kacho-vpc:${KACHO_IMAGE_TAG}"
+  imagePullPolicy: Always
   networkPolicy:
     enabled: true
     # Override per-cluster — labels admin-pods, которым разрешён доступ к :9091.
@@ -280,11 +289,22 @@ vpc:
       matchLabels:
         kacho.cloud/role: admin
 
+compute:
+  image: "docker.io/prorobotech/kacho-compute:${KACHO_IMAGE_TAG}"
+  imagePullPolicy: Always
+
+api-gateway:
+  image: "docker.io/prorobotech/kacho-api-gateway:${KACHO_IMAGE_TAG}"
+  imagePullPolicy: Always
+
+ui:
+  image: "docker.io/prorobotech/kacho-ui:${KACHO_IMAGE_TAG}"
+  imagePullPolicy: Always
+
 # ─── Dev-only компоненты — disabled в prod ─────────────────────────────
 mailhog:
   enabled: false
-zitadel:
-  enabled: false        # KAC-115: Zitadel заменён на Ory stack (Kratos + Hydra).
+# KAC-127: zitadel chart удалён из umbrella — auth-tier на Ory Kratos + Hydra.
 
 # ─── KAC-127 Phase 3: AuthZ core (OpenFGA + OPA) — required on prod ────
 # Decision history:
@@ -336,8 +356,7 @@ openfgaPdb:
   enabled: true
   minAvailable: 2
 
-zitadelOidcBootstrap:
-  enabled: false
+# KAC-127: zitadelOidcBootstrap удалён — OIDC через Ory Hydra.
 kratosSelfServiceUI:
   enabled: false        # Phase 2 — UI from kacho-ui repo, не selfservice-stock.
 

@@ -96,6 +96,13 @@ kacho:
 #   --set kacho.domain=X --set kacho-iam.kacho.domain=X
 # либо использовать `scripts/helm-deploy.sh` helper.
 kacho-iam:
+  # KAC-127 — kacho-iam sub-chart использует структуру image.{repository,tag,
+  # pullPolicy} (в отличие от vpc/compute/ui/api-gateway — плоская строка).
+  # DockerHub-образ; dev-стенд override'ит в values.dev.yaml на local kacho-iam:dev.
+  image:
+    repository: docker.io/prorobotech/kacho-iam
+    tag: latest
+    pullPolicy: IfNotPresent
   kacho:
     domain: api.kacho.cloud
     subdomains:
@@ -257,6 +264,12 @@ opaSidecar:
   # disabled on prod. See `templates/opa-policies-fallback-configmap.yaml`.
   policiesFallback:
     enabled: false
+
+# OpenFGA REBAC engine (sub-chart, condition-gated). Disabled in base values;
+# values.dev.yaml / values.prod.yaml override per-stand. KAC-127: блок добавлен
+# в base values, чтобы `helm lint` (без -f) не падал на nil .Values.openfga.
+openfga:
+  enabled: false
 
 # PodDisruptionBudget for OpenFGA engine (emitted by umbrella template
 # `openfga-pdb.yaml`). Enabled when running HA topology (>= 3 replicas).
@@ -534,6 +547,48 @@ global:
     domain: ""                             # umbrella-level kacho.domain overrides
     region: ""
     cluster: ""
+  # KAC-127 — container image registry + tag (configurable).
+  #
+  # Образы kacho-* собираются workflow'ом `docker-build.yml` (multi-arch
+  # amd64+arm64) и публикуются в DockerHub под namespace = DOCKERHUB_USERNAME.
+  # Тег образа = `<branch>-<sha8>` (напр. `main-1a2b3c4d`) или semver-тег.
+  #
+  # `imageRegistry` — DockerHub namespace (`docker.io/<DOCKERHUB_USERNAME>`).
+  # `imageTag`      — конкретный тег собранного образа.
+  #
+  # Эти значения — единственный источник истины для image-references; per-service
+  # `image:` ниже выписаны явно (Helm values не умеют self-template) и ДОЛЖНЫ
+  # совпадать с `<imageRegistry>/<svc>:<imageTag>`. CD-pipeline / helm-deploy.sh
+  # выставляет per-service `image` напрямую (либо через `--set`).
+  #
+  # dev-стенд (kind) переопределяет на локально-загруженные образы — см.
+  # values.dev.yaml (`useLocalImages: true`, pullPolicy Never/IfNotPresent).
+  imageRegistry: docker.io/prorobotech       # override: --set global.imageRegistry=docker.io/<user>
+  imageTag: latest                           # override: --set global.imageTag=<branch>-<sha8>
+
+# ─── KAC-127 — per-service image references (DockerHub) ──────────────────
+# Packaged sub-chart'ы (vpc/compute/ui/api-gateway) принимают плоскую строку
+# `image:` + `imagePullPolicy:`. kacho-iam sub-chart — структуру
+# `image.{repository,tag,pullPolicy}`. Значения по умолчанию указывают на
+# DockerHub; dev-стенд переопределяет в values.dev.yaml на local `:dev` образы.
+#
+# При смене registry/tag — менять В ОДНОМ месте на сервис (или через
+# scripts/helm-deploy.sh, который читает $KACHO_IMAGE_REGISTRY / $KACHO_IMAGE_TAG).
+vpc:
+  image: docker.io/prorobotech/kacho-vpc:latest
+  imagePullPolicy: IfNotPresent
+
+compute:
+  image: docker.io/prorobotech/kacho-compute:latest
+  imagePullPolicy: IfNotPresent
+
+api-gateway:
+  image: docker.io/prorobotech/kacho-api-gateway:latest
+  imagePullPolicy: IfNotPresent
+
+ui:
+  image: docker.io/prorobotech/kacho-ui:latest
+  imagePullPolicy: IfNotPresent
 
 # ─── KAC-127 Phase 11 — Production deploy + Observability (defaults: OFF) ─
 # All Phase 11 sub-charts are condition-gated. Enable selectively via:
