@@ -537,7 +537,12 @@ keto:
 # Образ oryd/kratos-selfservice-ui-node. UI nginx проксирует /login,/registration,
 # /recovery,/verification,/settings,/error → этот pod на :3000.
 kratosSelfServiceUI:
-  enabled: false
+  # KAC-127: включён вместе с kratos. kacho-ui nginx безусловно проксирует
+  # /login,/registration,... → upstream `kratos-selfservice-ui.kacho.svc` —
+  # при enabled=false Service не существует → nginx падает на старте
+  # (`host not found in upstream`). С включённым Kratos-стеком этот UI-pod
+  # обязателен для рабочего IAM-стенда.
+  enabled: true
   image:
     repository: oryd/kratos-selfservice-ui-node
     tag: "v1.3.1"
