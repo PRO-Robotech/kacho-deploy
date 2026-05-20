@@ -264,6 +264,15 @@ jobs:
             echo "=== describe: $d ==="
             kubectl -n kacho describe deploy "$d" | tail -40 || true
           done
+          # The fixture (AccessBinding/Account/... Operations) runs at the very
+          # start of the test step; by the time this dump runs the newman suite
+          # has pushed those lines past --tail=200. Grep the FULL kacho-iam log
+          # for async-operation failures so a masked `internal worker error`
+          # (op-worker hides non-gRPC errors) is still diagnosable.
+          echo "=== kacho-iam: operation / authz failures (full log grep) ==="
+          kubectl -n kacho logs "deploy/kacho-iam" --tail=-1 2>/dev/null \
+            | grep -iE 'operation failed|level":"ERROR|panic|tuple-write failed|authz' \
+            | tail -80 || true
           echo "=== openfga-bootstrap job logs ==="
           kubectl -n kacho logs job/openfga-bootstrap --tail=200 || true
           echo "=== port-forward logs ==="
