@@ -7,6 +7,19 @@
 # (`kind load docker-image kacho-*:dev`), а не DockerHub. pullPolicy IfNotPresent —
 # образ уже в node-кэше kind. Чтобы тянуть из DockerHub в dev — убрать эти
 # override'ы (вернётся registry/tag из values.yaml).
+
+# KAC-127 — обнуляем global.imageRegistry для dev. В values.yaml он =
+# `docker.io/prorobotech` (DockerHub-namespace для kacho-* образов). Но
+# third-party sub-chart'ы (Ory kratos/hydra/keto, OpenFGA, bitnami postgresql)
+# тоже уважают `global.imageRegistry` и подставляют его перед СВОИМ image →
+# получается несуществующий `docker.io/prorobotech/oryd/hydra`. На dev-стенде
+# kacho-* образы и так заданы явной строкой `image: kacho-*:dev` (flat-string,
+# global.imageRegistry не используется этими sub-chart'ами), поэтому обнуление
+# global безопасно для kacho-сервисов и чинит pull third-party образов
+# (Ory → docker.io/oryd/*, OpenFGA → docker.io/openfga/*).
+global:
+  imageRegistry: ""
+
 api-gateway:
   advertisedEndpoint: localhost:18443
   image: kacho-api-gateway:dev
@@ -245,6 +258,13 @@ kratos:
     development: true
     automigration:
       enabled: true
+      # KAC-127: type=initContainer вместо дефолтного `job`. Ory-чарт по дефолту
+      # вешает на migration-Job pre-install hook (job.annotations в values чарта) →
+      # Job стартует ДО pg-kratos (обычный release-ресурс) → DNS-резолв
+      # `kacho-umbrella-pg-kratos` фейлится навсегда → hook не завершается →
+      # `helm --wait` блокируется → release failed. initContainer-режим исполняет
+      # миграцию как init-container Kratos-пода — отдельного hook-Job нет.
+      type: initContainer
     config:
       dsn: "postgres://kratos:dev-kratos-password@kacho-umbrella-pg-kratos:5432/kratos?sslmode=disable"
       serve:
@@ -347,7 +367,11 @@ hydra:
   hydra:
     automigration:
       enabled: true
-      type: job
+      # KAC-127: type=initContainer вместо `job` — устраняет pre-install hook
+      # deadlock (migration-Job дефолтно hook'нут pre-install, стартует до
+      # pg-hydra → DNS-резолв фейлится → `helm --wait` блокируется). См.
+      # аналогичный комментарий у kratos.automigration выше.
+      type: initContainer
     dev: true
     config:
       dsn: "postgres://hydra:dev-hydra-password@kacho-umbrella-pg-hydra:5432/hydra?sslmode=disable"
