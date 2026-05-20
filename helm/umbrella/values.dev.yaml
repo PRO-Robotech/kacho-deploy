@@ -391,10 +391,11 @@ hydra:
         logout: "http://5.35.93.58/logout"
         error: "http://5.35.93.58/error"
         post_logout_redirect: "http://5.35.93.58/"
-        # KAC-127: запрещаем динамическую регистрацию IdP-клиентов
-        # (Hydra-admin /clients endpoint остаётся доступным только cluster-internal).
-        identity_provider:
-          publicly_writable: false
+        # KAC-127 (deploy#37): `urls.identity_provider.publicly_writable` удалён —
+        # ключ не существует в Hydra v26.2.0 config-schema (`urls.identity_provider`
+        # принимает только `url` / `publicUrl` / `headers`). Динамическая
+        # OAuth2-client-регистрация и так выключена by-default; Hydra-admin
+        # `/clients` endpoint остаётся cluster-internal через Service-разделение.
       secrets:
         system: ["please-change-this-32-bytes-A1Bx"]
       # ─── OAuth 2.1 / DPoP / mTLS-bound / JWT strategy (acceptance §5.2) ──
@@ -417,22 +418,25 @@ hydra:
         pkce:
           enforced: true
           enforced_for_public_clients: true
+        # KAC-127 (deploy#37): `grant` в Hydra v26.2.0 принимает только `jwt`
+        # и `refresh_token`. Старый `grant.authorization_code.{require_pkce,ttl}`
+        # удалён — PKCE-enforcement задаётся через `oauth2.pkce.*` выше,
+        # auth_code-TTL — через `ttl.auth_code` (1m, см. блок ttl выше).
         grant:
           jwt:
             iat_optional: false
             jti_optional: false
             max_ttl: 720h
-          authorization_code:
-            require_pkce: true
-            ttl: 1m
-        # Refresh-token rotation: новый refresh issued при каждом обмене;
-        # reuse-detection (used_at IS NOT NULL → family-revoke). Grace window 1s
-        # для concurrent legit refresh (две вкладки одновременно).
-        refresh_token_rotation: true
-        refresh_token_rotation_grace_period: 1s
-        # OAuth 2.1 — refresh-tokens обязаны проходить token-binding validation
-        # (cnf.jkt / cnf.x5t#S256 mismatch → reject). false = строгая валидация.
-        refresh_token_grant_skip_token_binding_validation: false
+          # Refresh-token rotation (OAuth 2.1 §6.1) — в v26.2.0 rotation ВСЕГДА
+          # включён (старый toggle `oauth2.refresh_token_rotation` упразднён);
+          # настраивается только grace-window. `rotation_grace_period: 1s` —
+          # concurrent legit refresh (две вкладки); reuse вне grace → family-revoke.
+          # Старые `oauth2.refresh_token_rotation` /
+          # `refresh_token_rotation_grace_period` /
+          # `refresh_token_grant_skip_token_binding_validation` удалены —
+          # их нет в v26.2.0 schema.
+          refresh_token:
+            rotation_grace_period: 1s
         exclude_not_before_claim: false
         # Phase 2 — `ext_claims` единственный top-level claim, разрешённый Hydra
         # для passthrough из token_hook (acceptance §2.3 — ext_claims содержит
@@ -441,21 +445,21 @@ hydra:
           - ext_claims
         client_credentials:
           default_grant_allowed_scope: false
-        # DPoP (RFC 9449) — sender-constrained access tokens. Acceptance §6.4.
-        # iat freshness ≤60s; DPoP JWT alg ∈ {ES256, EdDSA} (whitelist; RS256
-        # запрещён для DPoP — RFC §4.1).
-        dpop:
-          enabled: true
-          signing_algorithms: [ES256, EdDSA]
-          iat_skew_tolerance: 60s
-        # mTLS-bound tokens (RFC 8705) — cnf.x5t#S256 thumbprint. Acceptance §6.5.
-        mtls:
-          enabled: true
-          cnf_thumbprint_algorithm: SHA-256
-        # token_hook + refresh_hook → kacho-iam internal mux на :9091 (acceptance §5.4).
+        # KAC-127 (deploy#37): глобальные `oauth2.dpop` / `oauth2.mtls` блоки
+        # удалены — их нет в Hydra v26.2.0 config-schema. В v26.2.0 sender-
+        # constrained tokens конфигурируются per-client, а не глобально:
+        #   - DPoP (RFC 9449)   — через client-metadata `dpop_bound_access_tokens`
+        #     при регистрации OAuth2-клиента (Hydra-admin `/clients`);
+        #   - mTLS (RFC 8705)   — через client `tls_client_auth_*` /
+        #     `tls_client_certificate_bound_access_tokens`.
+        # Acceptance §6.4/§6.5 — enforcement переезжает на per-client регистрацию
+        # (см. kacho-iam client-bootstrap); глобального config-knob нет.
+        # token_hook + refresh_hook → kacho-iam HTTP hooks listener (acceptance §5.4).
+        # KAC-127 (deploy#39): URL исправлен — webhook'и обслуживает HTTP-listener
+        # на :9092 Service'а `kacho-iam-internal` (НЕ gRPC :9091 на `kacho-iam`).
         # Shared secret через KACHO_IAM_HOOK_TOKEN env (см. Secret kacho-iam-hook-token).
         token_hook:
-          url: "http://kacho-iam.kacho.svc.cluster.local:9091/iam/v1/hooks/token"
+          url: "http://kacho-iam-internal.kacho.svc.cluster.local:9092/iam/v1/hooks/token"
           auth:
             type: api_key
             config:
@@ -463,7 +467,7 @@ hydra:
               name: X-Kacho-Hook-Token
               value: ${KACHO_IAM_HOOK_TOKEN}
         refresh_token_hook:
-          url: "http://kacho-iam.kacho.svc.cluster.local:9091/iam/v1/hooks/refresh"
+          url: "http://kacho-iam-internal.kacho.svc.cluster.local:9092/iam/v1/hooks/refresh"
           auth:
             type: api_key
             config:
@@ -483,8 +487,10 @@ hydra:
       tracing:
         provider: otel
         providers:
+          # KAC-127 (deploy#37): ключ `endpoint` переименован в `server_url` —
+          # Hydra v26.2.0 tracing-schema (ory/x otelx) принимает `otlp.server_url`.
           otlp:
-            endpoint: otel-collector.observability.svc.cluster.local:4317
+            server_url: otel-collector.observability.svc.cluster.local:4317
             insecure: true
 
 keto:
@@ -650,10 +656,10 @@ kacho-iam:
       memory: 512Mi
   env: {}
   # KAC-127 Phase 3: OPA sidecar config propagated from umbrella to sub-chart.
-  # KAC-127: ВРЕМЕННО отключён — см. комментарий у top-level `opaSidecar` ниже
-  # (Phase 3 OPA-bundle-delivery integration не завершена; GitHub-issue).
+  # KAC-127 (deploy#39 fix): включён — kacho-iam отдаёт OPA-bundle по HTTP на
+  # :9092; см. комментарий у top-level `opaSidecar` ниже.
   opaSidecar:
-    enabled: false
+    enabled: true
     # KAC-127: `1.0.0-rootless` тег не существует. Нужен ИМЕННО opa-envoy
     # вариант — kacho-iam Deployment передаёт OPA-сайдкару флаг
     # `--set=plugins.envoy_ext_authz_grpc.enabled=false`; плагин
@@ -678,23 +684,19 @@ kacho-iam:
 # rolling-restart annotation on consumer Deployments.
 # See umbrella/templates/openfga-bootstrap-job.yaml for full behaviour.
 openfgaBootstrap:
-  # KAC-127: ВРЕМЕННО отключён — template-баг в openfga-bootstrap-job.yaml.
-  # `dsl-transform` init-container запускает `/bin/sh`-скрипт на образе
-  # openfga/cli, но ВСЕ актуальные теги openfga/cli (включая v0.6.x, v0.7.x) —
-  # distroless single-binary (нет /bin/sh, sha256sum, awk) → init-container
-  # падает `exec: "/bin/sh": no such file or directory`. Комментарий в шаблоне
-  # «openfga/cli — alpine-based, имеет coreutils» устарел.
-  # Fix (out of scope этого dev-stand-таска — template-логика): `dsl-transform`
-  # должен запускать `fga` нативно (cli entrypoint = /fga), а emptiness-check +
-  # sha256 + JSON-write вынести в main `bootstrap` container (curlimages/curl,
-  # alpine, есть shell). См. GitHub-issue. kacho-iam стартует и без bootstrap'а
-  # (graceful `AuthorizeService returns Unavailable` при пустом model-id).
-  enabled: false
-  image: curlimages/curl:8.5.0
-  # KAC-127 Phase 3: openfga/cli image transforms DSL → JSON in initContainer.
-  # KAC-127: тег `0.6.5` не существует на DockerHub (openfga/cli использует
-  # `v`-префикс; последний — v0.7.13). Исправлено на v0.7.13.
-  cliImage: openfga/cli:v0.7.13
+  # KAC-127 (deploy#38 fix): включён. Раньше был отключён из-за template-бага —
+  # init-container `dsl-transform` запускал `/bin/sh`-скрипт на distroless
+  # образе openfga/cli (нет shell) → падал `exec: "/bin/sh": not found`.
+  # Fix: init-container удалён, DSL→JSON transform перенесён на commit-time —
+  # ConfigMap openfga-model-stub несёт оба ключа (model.fga + model.json).
+  # bootstrap-job (curlimages/curl, alpine) читает model.json напрямую.
+  enabled: true
+  # KAC-127 (deploy#38): alpine/k8s несёт kubectl+jq+curl+coreutils,
+  # бежит root → bootstrap-скрипту не нужен runtime apk add.
+  image: alpine/k8s:1.29.2
+  # cliImage больше не нужен (init-container `dsl-transform` удалён) — оставлен
+  # пустым на случай отката; см. openfga-bootstrap-job.yaml.
+  cliImage: ""
   storeName: kacho-store
   authorizationModelConfigMap: openfga-model-stub
   modelIdSecretName: openfga-model-id
@@ -712,18 +714,30 @@ openfgaBootstrap:
 # integration не завершена — см. GitHub-issue. kacho-iam main-container здоров и
 # отдаёт gRPC API без OPA (OPA — deny-only guardrail-слой поверх FGA).
 opaSidecar:
-  enabled: false
+  # KAC-127 (deploy#39 fix): включён. Раньше отключён — OPA bundle-plugin тянул
+  # bundle по HTTP с `kacho-iam-internal:9091`, но :9091 — gRPC-only listener
+  # (нет HTTP bundle-эндпоинта) → connection refused → sidecar не Ready.
+  # Fix: kacho-iam теперь отдаёт bundle через HTTP на :9092 (тот же listener,
+  # что Hydra-hooks — `OPABundleHTTPHandler`, route `/opa/v1/bundle.tar.gz`);
+  # порт :9092 экспонирован в Service kacho-iam-internal как `http-hooks`.
+  enabled: true
   # KAC-127: opa-envoy-сборка обязательна (envoy_ext_authz_grpc плагин);
   # `-static`-суффикс = rootless static-build. См. opaSidecar выше.
   image: openpolicyagent/opa:1.0.0-envoy-static
   logLevel: info
-  # KAC-127: фактический Service kacho-iam internal-listener'а — `kacho-iam-internal`
-  # (см. `kubectl get svc`), без `kacho-umbrella-` префикса. OPA bundle-pull шёл
-  # на несуществующий `kacho-umbrella-iam-internal` → DNS no-such-host →
-  # bundle_error, OPA-sidecar не становится ready.
+  # KAC-127 (deploy#39): OPA sidecar тянет bundle с kacho-iam-контейнера
+  # В ТОМ ЖЕ pod'е по loopback (127.0.0.1:9092) — НЕ через Service (это
+  # дедлок rollout'а: Service маршрутизирует только на Ready-pod'ы, а pod
+  # Ready только после загрузки bundle). `iamInternalHost` оставлен для
+  # обратной совместимости values-схемы, но в configmap не используется.
   iamInternalHost: kacho-iam-internal
-  iamInternalPort: 9091
+  iamInternalPort: 9092
   bundleResource: bundle.tar.gz
+  # KAC-127 (deploy#39): in-tarball JWS bundle signing. kacho-iam OpaBundleService
+  # currently produces an UNSIGNED tarball (detached JWS via separate gRPC RPC),
+  # so OPA must not require in-bundle `.signatures.json` — иначе bundle не
+  # загрузится. Hardening follow-up: embed `.signatures.json` → flip to true.
+  bundleSigningEnabled: false
   # Shorter poll interval on dev for faster iteration on Rego changes.
   bundlePollMinSec: 60   # ~1min
   bundlePollMaxSec: 90

@@ -1,6 +1,6 @@
 .PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint seed-ipam \
         loadtest-address-allocate loadtest-address-allocate-clean \
-        reload-svc-iam psql-iam logs-iam fga-bootstrap build-ui
+        reload-svc-iam psql-iam logs-iam fga-bootstrap build-ui openfga-model-json
 
 CLUSTER_NAME := kacho
 
@@ -164,6 +164,53 @@ fga-bootstrap:
 	@kubectl -n kacho wait --for=condition=complete job/openfga-bootstrap --timeout=300s || \
 	 kubectl -n kacho wait --for=condition=failed job/openfga-bootstrap --timeout=10s
 	@kubectl -n kacho logs -l job-name=openfga-bootstrap --tail=-1
+
+# KAC-127 (deploy#38): regenerate the pre-transformed `model.json` ConfigMap key
+# from the `model.fga` DSL. Run after any edit of the DSL block in
+# helm/umbrella/templates/openfga-model-stub-configmap.yaml. The openfga/cli
+# image is distroless (no shell), so the transform is done here at commit-time
+# instead of in a runtime init-container — see openfga-bootstrap-job.yaml.
+OPENFGA_CLI_IMAGE ?= openfga/cli:v0.7.13
+openfga-model-json:
+	@echo "Regenerating model.json from model.fga DSL block..."
+	@CM=helm/umbrella/templates/openfga-model-stub-configmap.yaml; \
+	 python3 - "$$CM" <<-'PY'
+	import sys, json, subprocess
+	cm = sys.argv[1]
+	lines = open(cm).read().splitlines()
+	# extract the model.fga block-scalar (4-space-indented body under "  model.fga: |-")
+	dsl, capture = [], False
+	for ln in lines:
+	    if ln.startswith('  model.fga: |-'):
+	        capture = True; continue
+	    if capture:
+	        if ln.startswith('    '):
+	            dsl.append(ln[4:])
+	        elif ln.strip() == '':
+	            dsl.append('')
+	        else:
+	            break
+	dsl_text = '\n'.join(dsl).rstrip() + '\n'
+	out = subprocess.run(
+	    ['docker','run','--rm','-i','$(OPENFGA_CLI_IMAGE)','model','transform',
+	     dsl_text,'--input-format','fga','--output-format','json'],
+	    capture_output=True, text=True)
+	if out.returncode != 0:
+	    sys.exit('fga model transform failed: ' + out.stderr)
+	compact = json.dumps(json.loads(out.stdout), separators=(',',':'))
+	# splice the new model.json block
+	res, cap2 = [], False
+	for ln in lines:
+	    if ln.startswith('  model.json: |-'):
+	        res.append(ln); res.append('    ' + compact); cap2 = True; continue
+	    if cap2:
+	        if ln.startswith('    ') or ln.strip() == '':
+	            continue
+	        cap2 = False
+	    res.append(ln)
+	open(cm,'w').write('\n'.join(res) + '\n')
+	print('model.json regenerated (%d bytes compact)' % len(compact))
+	PY
 
 # ─── KAC-127 Phase 10 — SPIRE / Cilium mesh / cosign ─────────────────────
 # Targets для bootstrap, dry-run проверки, и emergency operations.

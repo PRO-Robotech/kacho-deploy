@@ -77,6 +77,9 @@ image:
 ports:
   grpc: 9090
   internalGrpc: 9091
+  # KAC-127 Phase 2 — HTTP webhook listener (Hydra hooks + CAEP ingress).
+  # KAC-127 deploy#39 — also serves the OPA policy bundle over HTTP.
+  hooksHttp: 9092
 
 service:
   public:
@@ -85,6 +88,9 @@ service:
   internal:
     type: ClusterIP
     port: 9091
+    # KAC-127 deploy#39 — HTTP hooks/OPA-bundle port exposed on the internal
+    # Service (cluster-internal only, запрет #6).
+    hooksHttpPort: 9092
 
 db:
   host: kacho-umbrella-pg-iam

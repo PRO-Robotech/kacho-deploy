@@ -66,7 +66,13 @@ data:
 
     services:
       kacho-iam:
-        url: http://{{ .Values.opaSidecar.iamInternalHost }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.opaSidecar.iamInternalPort }}/opa/v1
+        # KAC-127 (deploy#39): the OPA sidecar pulls the bundle from the
+        # kacho-iam container IN THE SAME POD over loopback (127.0.0.1:9092).
+        # Using the `kacho-iam-internal` Service would dead-lock the rollout:
+        # the Service only routes to Ready pods, but a pod is Ready only after
+        # its OPA sidecar loaded a bundle — circular. Loopback removes the
+        # Service dependency entirely (intra-pod, always reachable).
+        url: http://127.0.0.1:{{ .Values.opaSidecar.iamInternalPort }}/opa/v1
         response_header_timeout_seconds: 5
 
     bundles:
@@ -77,25 +83,27 @@ data:
         polling:
           min_delay_seconds: {{ .Values.opaSidecar.bundlePollMinSec }}
           max_delay_seconds: {{ .Values.opaSidecar.bundlePollMaxSec }}
+{{- if .Values.opaSidecar.bundleSigningEnabled }}
+        # KAC-127 (deploy#39): in-tarball JWS signing — enabled only when the
+        # kacho-iam OpaBundleService embeds `.signatures.json` into the tarball.
+        # Until then the bundle is unsigned (detached JWS via the separate
+        # gRPC GetBundleSignature RPC) and OPA must NOT require in-bundle signing,
+        # otherwise it refuses to load the bundle. Hardening follow-up.
         signing:
           keyid: {{ .Values.opaSidecar.signingKeyId | quote }}
-          # `scope` matches the JWS `scope` header claim emitted by kacho-iam
-          # bundle signer; mismatch → OPA refuses to load. See acceptance §6.11.
           scope: kacho-iam-guardrails
+{{- end }}
 
+{{- if .Values.opaSidecar.bundleSigningEnabled }}
     keys:
       {{ .Values.opaSidecar.signingKeyId | quote }}:
         algorithm: ES256
         # PEM-encoded public key is mounted as a separate volume from
         # ConfigMap `kacho-iam-jwks` (managed by Phase 2 JWKS rotator).
-        # OPA loads the PEM and verifies bundle JWS signature with it.
         key: |
           # Loaded at runtime from /jwks/{{ .Values.opaSidecar.signingKeyId }}.pem
-          # — actual PEM bytes are injected via configmap-template at sidecar
-          # injection time. This placeholder key entry exists so OPA's config
-          # parser does not error if PEM mount is missing (the bundle download
-          # itself fails fast on missing public key — fail-closed, P3-D16).
           REPLACE_AT_RUNTIME
+{{- end }}
 
     decision_logs:
       console: true

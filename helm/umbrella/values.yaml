@@ -280,8 +280,13 @@ openfgaPdb:
 # ─── KAC-127 Phase 3 — openfga-bootstrap-job knobs (model-id Secret) ──────
 openfgaBootstrap:
   enabled: false
-  image: curlimages/curl:8.5.0
-  cliImage: openfga/cli:0.6.5
+  # KAC-127 (deploy#38): alpine/k8s несёт kubectl+jq+curl+coreutils,
+  # бежит root → bootstrap-скрипту не нужен runtime apk add.
+  image: alpine/k8s:1.29.2
+  # cliImage больше не используется — KAC-127 (deploy#38) удалил init-container
+  # `dsl-transform`; DSL→JSON transform перенесён на commit-time (ConfigMap
+  # openfga-model-stub несёт оба ключа model.fga + model.json).
+  cliImage: ""
   storeName: kacho-store
   authorizationModelConfigMap: openfga-model-stub
   modelIdSecretName: openfga-model-id

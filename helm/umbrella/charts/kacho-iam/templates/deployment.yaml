@@ -105,6 +105,12 @@ spec:
               containerPort: {{ .Values.ports.grpc }}
             - name: grpc-internal
               containerPort: {{ .Values.ports.internalGrpc }}
+            # KAC-127 Phase 2 — HTTP webhook listener (Hydra token/refresh hooks,
+            # CAEP ingress). KAC-127 deploy#39 — also serves the OPA policy
+            # bundle (/opa/v1/bundle.tar.gz) for the OPA sidecar, which pulls
+            # over HTTP and cannot reach the gRPC :9091 mux. Cluster-internal.
+            - name: http-hooks
+              containerPort: {{ .Values.ports.hooksHttp | default 9092 }}
           volumeMounts:
             - name: config
               mountPath: /etc/kacho-iam
@@ -205,9 +211,10 @@ spec:
         {{- if .Values.opaSidecar.enabled }}
         # ─── KAC-127 Phase 3 — OPA sidecar (acceptance §5.6, P3-D6) ────────
         # Per-pod OPA evaluates Rego guardrails after FGA Check allows. Localhost-
-        # only listener (:8181) — no Service, no external access. Bundle pulled
-        # from kacho-iam Internal RPC `OpaBundleService.GetBundle` (port 9091,
-        # P3-D20) every ~1h with signature verification (ES256 JWS, P3-D8).
+        # only listener (:8181) — no Service, no external access. KAC-127
+        # (deploy#39): bundle pulled over HTTP from kacho-iam's HTTP listener
+        # (:9092, route /opa/v1/bundle.tar.gz) — the OPA bundle plugin speaks
+        # HTTP and cannot use the gRPC :9091 mux.
         - name: opa
           image: {{ .Values.opaSidecar.image | default "openpolicyagent/opa:1.0.0-rootless" | quote }}
           imagePullPolicy: IfNotPresent

@@ -74,8 +74,8 @@ hydra:
         logout: "https://app.api.kacho.cloud/oauth/logout"
         error: "https://app.api.kacho.cloud/auth/error"
         post_logout_redirect: "https://app.api.kacho.cloud/"
-        identity_provider:
-          publicly_writable: false
+        # KAC-127 (deploy#37): `identity_provider.publicly_writable` удалён —
+        # ключ не существует в Hydra v26.2.0 config-schema.
       secrets:
         system: ["${HYDRA_SYSTEM_SECRET}"]
         cookie: ["${HYDRA_COOKIE_SECRET}"]
@@ -93,31 +93,29 @@ hydra:
         pkce:
           enforced: true
           enforced_for_public_clients: true
+        # KAC-127 (deploy#37): v26.2.0 — `grant` принимает только jwt/refresh_token;
+        # PKCE через `oauth2.pkce`, auth_code-TTL через `ttl.auth_code`.
         grant:
           jwt:
             iat_optional: false
             jti_optional: false
             max_ttl: 720h
-          authorization_code:
-            require_pkce: true
-            ttl: 1m
-        refresh_token_rotation: true
-        refresh_token_rotation_grace_period: 1s
-        refresh_token_grant_skip_token_binding_validation: false
+          # Refresh rotation в v26.2.0 всегда вкл.; настраивается grace-window.
+          refresh_token:
+            rotation_grace_period: 1s
         exclude_not_before_claim: false
         allowed_top_level_claims:
           - ext_claims
         client_credentials:
           default_grant_allowed_scope: false
-        dpop:
-          enabled: true
-          signing_algorithms: [ES256, EdDSA]
-          iat_skew_tolerance: 60s
-        mtls:
-          enabled: true
-          cnf_thumbprint_algorithm: SHA-256
+        # KAC-127 (deploy#37): глобальные `oauth2.dpop` / `oauth2.mtls` удалены —
+        # в Hydra v26.2.0 sender-constrained tokens (DPoP RFC 9449 / mTLS RFC 8705)
+        # конфигурируются per-client (client-metadata `dpop_bound_access_tokens` /
+        # `tls_client_certificate_bound_access_tokens`), не глобальным config.
+        # KAC-127 (deploy#39): webhook'и на HTTP-listener :9092 Service'а
+        # `kacho-iam-internal` (НЕ gRPC :9091 на `kacho-iam`).
         token_hook:
-          url: "http://kacho-iam.kacho.svc.cluster.local:9091/iam/v1/hooks/token"
+          url: "http://kacho-iam-internal.kacho.svc.cluster.local:9092/iam/v1/hooks/token"
           auth:
             type: api_key
             config:
@@ -125,7 +123,7 @@ hydra:
               name: X-Kacho-Hook-Token
               value: ${KACHO_IAM_HOOK_TOKEN}
         refresh_token_hook:
-          url: "http://kacho-iam.kacho.svc.cluster.local:9091/iam/v1/hooks/refresh"
+          url: "http://kacho-iam-internal.kacho.svc.cluster.local:9092/iam/v1/hooks/refresh"
           auth:
             type: api_key
             config:
@@ -143,8 +141,9 @@ hydra:
       tracing:
         provider: otel
         providers:
+          # KAC-127 (deploy#37): `endpoint` → `server_url` (Hydra v26.2.0 otelx).
           otlp:
-            endpoint: otel-collector.observability.svc.cluster.local:4317
+            server_url: otel-collector.observability.svc.cluster.local:4317
             insecure: false
 
 # ─── Kratos production block ───────────────────────────────────────────
@@ -363,8 +362,12 @@ kratosSelfServiceUI:
 # ─── KAC-127 Phase 3: openfga-bootstrap-job — enabled on prod ──────────
 openfgaBootstrap:
   enabled: true
-  image: curlimages/curl:8.5.0
-  cliImage: openfga/cli:0.6.5
+  # KAC-127 (deploy#38): alpine/k8s несёт kubectl+jq+curl+coreutils,
+  # бежит root → bootstrap-скрипту не нужен runtime apk add.
+  image: alpine/k8s:1.29.2
+  # cliImage больше не используется — KAC-127 (deploy#38): init-container
+  # `dsl-transform` удалён, DSL→JSON transform на commit-time.
+  cliImage: ""
   storeName: kacho-store
   authorizationModelConfigMap: openfga-model-stub
   modelIdSecretName: openfga-model-id

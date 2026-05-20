@@ -9,10 +9,15 @@ KAC-127 Phase 3 (acceptance §5.1 / P3.GWT-01..04) — idempotent bootstrap-job 
    annotation на Secret openfga-model-id `kacho-deploy/last-applied-dsl-sha256`.
    Если совпадает → exit-0 без writing FGA-model и без rolling-restart.
 
-2) **DSL → JSON transform**: вместо ручного JSON-каркаса (как в stub'е) исполь­
-   зуем `fga model transform --file model.fga` через image `openfga/cli`. CLI
-   возвращает `{ "schema_version":"1.1", "type_definitions":[...], "conditions":{...} }`,
-   который мы шлём `WriteAuthorizationModel`-эндпоинту.
+2) **DSL → JSON**: KAC-127 (deploy#38 fix) — JSON-модель НЕ трансформируется
+   в runtime. ConfigMap несёт ОБА ключа: `model.fga` (human-readable DSL,
+   используется только для sha256-idempotency) и `model.json` (готовый
+   OpenFGA-JSON, pre-transform на commit-time через `fga model transform`).
+   Bootstrap-job читает `model.json` напрямую и шлёт его
+   `WriteAuthorizationModel`-эндпоинту. Раньше был init-container
+   `dsl-transform` на image `openfga/cli`, но тот distroless (нет `/bin/sh`),
+   а `fga model transform` пишет только в stdout → init-container падал. См.
+   GitHub-issue kacho-deploy#38.
 
 3) **Model write + Secret patch** (P3.GWT-01 / P3.GWT-03): POST authorization-models
    возвращает новый model_id (immutable, FGA-engine retain'ит все версии); kubectl
@@ -36,7 +41,6 @@ Hook policy:
   - hook-delete-policy: before-hook-creation,hook-succeeded — drop stale Job,
     save successful Job logs (last) для debugging.
 
-CLI image: openfga/cli:0.6.x — официальный CLI с `fga model transform`. Размер ~15MB.
 */}}
 apiVersion: batch/v1
 kind: Job
@@ -66,45 +70,21 @@ spec:
       restartPolicy: OnFailure
       serviceAccountName: openfga-bootstrap
       volumes:
+        # ConfigMap несёт ОБА ключа: model.fga (DSL, для sha256-idempotency)
+        # и model.json (pre-transformed OpenFGA-JSON). KAC-127 deploy#38:
+        # init-container `dsl-transform` удалён — transform на commit-time.
         - name: model
           configMap:
             name: {{ .Values.openfgaBootstrap.authorizationModelConfigMap }}
             defaultMode: 0444
-        - name: workdir
-          emptyDir: {}
-      initContainers:
-        # Stage 1: DSL → JSON transform через openfga/cli (CLI с jq/curl/kubectl недоступен
-        # в curlimages/curl image'е). Output записываем в shared emptyDir workdir.
-        - name: dsl-transform
-          image: {{ .Values.openfgaBootstrap.cliImage | quote }}
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -eu
-              echo "[dsl-transform] reading /etc/openfga-model/model.fga"
-              if [ ! -s /etc/openfga-model/model.fga ]; then
-                echo "[dsl-transform] FATAL: model.fga is empty or missing"
-                exit 1
-              fi
-              echo "[dsl-transform] running fga model transform"
-              fga model transform --file /etc/openfga-model/model.fga > /workdir/model.json
-              echo "[dsl-transform] computing sha256 of source DSL"
-              # sha256sum может отсутствовать в minimal image; используем cli-builtin не доступен,
-              # поэтому fallback на embedded openssl/sha256sum (openfga/cli — alpine-based, имеет coreutils).
-              sha256sum /etc/openfga-model/model.fga | awk '{print $1}' > /workdir/dsl.sha256
-              echo "[dsl-transform] dsl sha256 = $(cat /workdir/dsl.sha256)"
-              echo "[dsl-transform] JSON model size = $(wc -c < /workdir/model.json) bytes"
-          volumeMounts:
-            - name: model
-              mountPath: /etc/openfga-model
-              readOnly: true
-            - name: workdir
-              mountPath: /workdir
       containers:
         - name: bootstrap
           image: {{ .Values.openfgaBootstrap.image | quote }}
           command: ["/bin/sh", "-c"]
+          volumeMounts:
+            - name: model
+              mountPath: /etc/openfga-model
+              readOnly: true
           args:
             - |
               set -eu
@@ -116,11 +96,28 @@ spec:
               NAMESPACE="${NAMESPACE:-kacho}"
               CLUSTER_SINGLETON_ID="${CLUSTER_SINGLETON_ID:-cluster_kacho_root}"
 
-              echo "[bootstrap] installing jq + kubectl (alpine)..."
-              apk add --no-cache jq kubectl >/dev/null
+              # KAC-127 (deploy#38): image `alpine/k8s` уже несёт kubectl+jq+curl+
+              # coreutils — runtime `apk add` НЕ нужен (раньше `curlimages/curl`
+              # бежал non-root → `apk add` падал `Permission denied`).
+              echo "[bootstrap] using bundled kubectl + jq (alpine/k8s image)"
 
-              DSL_SHA=$(cat /workdir/dsl.sha256)
+              # KAC-127 deploy#38: model.fga (DSL) + model.json (pre-transformed)
+              # are both ConfigMap keys mounted at /etc/openfga-model. No runtime
+              # DSL→JSON transform — the openfga/cli image is distroless.
+              MODEL_DSL=/etc/openfga-model/model.fga
+              MODEL_JSON=/etc/openfga-model/model.json
+              if [ ! -s "${MODEL_DSL}" ]; then
+                echo "[bootstrap] FATAL: ${MODEL_DSL} missing or empty"
+                exit 1
+              fi
+              if [ ! -s "${MODEL_JSON}" ]; then
+                echo "[bootstrap] FATAL: ${MODEL_JSON} missing or empty"
+                exit 1
+              fi
+              # sha256 of the DSL — fast-path idempotency key (busybox sha256sum).
+              DSL_SHA=$(sha256sum "${MODEL_DSL}" | awk '{print $1}')
               echo "[bootstrap] DSL sha256 = ${DSL_SHA}"
+              echo "[bootstrap] JSON model size = $(wc -c < "${MODEL_JSON}") bytes"
 
               # ─── Step A: wait for OpenFGA healthz ───────────────────────────────
               echo "[bootstrap] waiting for OpenFGA ${OPENFGA_URL}/healthz (max 5min)..."
@@ -174,13 +171,9 @@ spec:
 
               # ─── Step D: write new authorization-model ──────────────────────────
               echo "[bootstrap] writing new authorization model (DSL changed or first install)..."
-              if [ ! -s /workdir/model.json ]; then
-                echo "[bootstrap] FATAL: /workdir/model.json missing or empty (initContainer failed?)"
-                exit 1
-              fi
               MODEL_ID=$(curl -sf -XPOST "${OPENFGA_URL}/stores/${STORE_ID}/authorization-models" \
                 -H 'content-type: application/json' \
-                -d @/workdir/model.json | jq -r '.authorization_model_id')
+                -d @"${MODEL_JSON}" | jq -r '.authorization_model_id')
               if [ -z "${MODEL_ID}" ] || [ "${MODEL_ID}" = "null" ]; then
                 echo "[bootstrap] FATAL: WriteAuthorizationModel returned no model_id"
                 exit 1
@@ -206,8 +199,11 @@ spec:
 
               # ─── Step G: bump rolling-restart annotation on consumer Deployments ─
               # Annotation triggers re-roll because Pods read env from Secret on start.
+              # KAC-127 (deploy#38): фактические имена Deployment'ов — `kacho-iam`,
+              # `api-gateway`, `vpc`, `compute`, `loadbalancer` (без `kacho-umbrella-`
+              # префикса; раньше список был неверным → restart-bump молча скипался).
               REV=$(date +%s)
-              for DEP in kacho-umbrella-iam kacho-umbrella-api-gateway kacho-umbrella-vpc kacho-umbrella-compute kacho-umbrella-loadbalancer; do
+              for DEP in kacho-iam api-gateway vpc compute loadbalancer; do
                 if kubectl -n "${NAMESPACE}" get deployment "${DEP}" >/dev/null 2>&1; then
                   echo "[bootstrap] bumping kacho.cloud/openfga-model-id-rev on ${DEP}..."
                   kubectl -n "${NAMESPACE}" patch deployment "${DEP}" \
@@ -249,9 +245,6 @@ spec:
               value: {{ .Release.Namespace | quote }}
             - name: CLUSTER_SINGLETON_ID
               value: {{ .Values.openfgaBootstrap.clusterSingletonId | default "cluster_kacho_root" | quote }}
-          volumeMounts:
-            - name: workdir
-              mountPath: /workdir
           resources:
             requests:
               cpu: 50m
