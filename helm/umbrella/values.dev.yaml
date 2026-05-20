@@ -37,6 +37,20 @@ api-gateway:
   authn:
     mode: dev
     devSecret: kacho-dev-jwt-secret-2026
+  # KAC-127 (#42): enable the Phase 3 per-RPC authz middleware on the dev
+  # stand. Without it (Go-config default enabled=false) the middleware is
+  # wired pass-through — authenticated-but-unauthorized requests are NOT
+  # blocked, only anonymous-mutating ones (by kacho-iam authzguard), which
+  # makes the 300-case authz-deny matrix untestable (`authz-mw disabled`).
+  #
+  # failOpen=false: fail-closed. A transient IAM-Check failure DENIES rather
+  # than ALLOWS — required so the access-matrix run measures real DENY
+  # decisions, not IAM hiccups leaking through. iamAuthorizeUrl unset →
+  # derived from the `iam` backend (public 9090); AuthorizeService.Check is
+  # the public RPC, not routed through internal :9091 (loop-prevention #6).
+  authz:
+    enabled: true
+    failOpen: false
 
 compute:
   image: kacho-compute:dev
