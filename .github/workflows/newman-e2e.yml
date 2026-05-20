@@ -291,21 +291,6 @@ jobs:
           echo "=== openfga store/model secrets (keys only) ==="
           kubectl -n kacho get secret kacho-iam-openfga-store openfga-model-id \
             -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.data}{"\n"}{end}' 2>/dev/null || true
-          # KAC-127 Bug-2: read the OpenFGA store directly for vpc_network +
-          # project tuples. If the store has no `vpc_network:...#project` tuple
-          # the write-side FGA never landed it; if it has the tuple but the
-          # Check still says `no path`, the model / object id is the problem.
-          echo "=== openfga store: vpc_network + project hierarchy tuples ==="
-          STORE_ID=$(kubectl -n kacho get secret kacho-iam-openfga-store \
-            -o jsonpath='{.data.store_id}' 2>/dev/null | base64 -d 2>/dev/null || true)
-          echo "store_id=${STORE_ID}"
-          if [ -n "${STORE_ID}" ]; then
-            kubectl -n kacho run fga-read-$RANDOM --rm -i --restart=Never \
-              --image=curlimages/curl:8.10.1 --quiet -- \
-              -sS -XPOST "http://kacho-umbrella-openfga:8080/stores/${STORE_ID}/read" \
-              -H 'content-type: application/json' -d '{}' 2>/dev/null \
-              | tr ',' '\n' | grep -iE 'vpc_network|project:' | head -40 || true
-          fi
           echo "=== openfga-bootstrap job logs ==="
           kubectl -n kacho logs job/openfga-bootstrap --tail=200 || true
           echo "=== port-forward logs ==="
