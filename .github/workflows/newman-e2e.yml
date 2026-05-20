@@ -127,9 +127,6 @@ jobs:
 
       - uses: azure/setup-helm@v4
 
-      - name: /etc/hosts override for api.kacho.local
-        run: sudo bash -c 'echo "127.0.0.1 api.kacho.local kacho.local" >> /etc/hosts'
-
       - name: helm install umbrella
         working-directory: kacho-deploy
         run: |
@@ -197,59 +194,64 @@ jobs:
           done
           kubectl -n kacho get pods -o wide || true
 
-      - name: wait for api-gateway healthz
+      # Seed the shared authz fixtures and run the kacho-iam authz Newman
+      # suites — both in ONE step.
+      #
+      # Why one step + port-forward (not the ingress): the api-gateway ingress
+      # is annotated `backend-protocol: GRPC`, so nginx speaks HTTP/2-gRPC to
+      # the backend and answers plain HTTP/1.1 REST POSTs with a 308 redirect
+      # (the api-gateway's own cmux port multiplexes REST + gRPC and serves
+      # REST/1.1 fine — only the GRPC-annotated ingress mangles it). Local dev
+      # already reaches the gateway via `kubectl port-forward` for exactly this
+      # reason; CI does the same. Both the api-gateway and kacho-iam-internal
+      # port-forwards must live in the SAME `run:` block as their consumers —
+      # each GitHub Actions step is a fresh shell, so a port-forward
+      # backgrounded in an earlier step is already dead.
+      - name: bootstrap fixtures + run kacho-iam authz newman suites
         run: |
           set -euo pipefail
-          for i in $(seq 1 30); do
-            if curl -fsS http://api.kacho.local:28080/healthz >/dev/null 2>&1; then
-              echo "api-gateway reachable"; break
-            fi
-            echo "waiting for api-gateway ($i/30)..."; sleep 10
-          done
-
-      # Seed the shared authz fixtures (Accounts/Projects/Users/Bindings/SAs +
-      # JWTs/API-tokens) and patch the newman env files. The kacho-iam-internal
-      # port-forward MUST be started inside this same step — each GitHub Actions
-      # `run:` block is a fresh shell, so a port-forward backgrounded in an
-      # earlier step would already be dead here (the fixture bootstrap upserts
-      # users via the InternalUserService.UpsertFromIdentity gRPC RPC).
-      - name: bootstrap authz fixtures
-        working-directory: ${{ github.workspace }}/kacho-workspace
-        run: |
-          set -euo pipefail
+          kubectl -n kacho port-forward svc/api-gateway 18080:8080 \
+            >/tmp/api-gateway-pf.log 2>&1 &
+          AGW_PF=$!
           kubectl -n kacho port-forward svc/kacho-iam-internal 19091:9091 \
             >/tmp/iam-internal-pf.log 2>&1 &
-          PF_PID=$!
-          trap 'kill "$PF_PID" 2>/dev/null || true' EXIT
+          IAM_PF=$!
+          trap 'kill "$AGW_PF" "$IAM_PF" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
-            if bash -c 'echo > /dev/tcp/127.0.0.1/19091' 2>/dev/null; then
-              echo "iam-internal reachable on :19091"; break
-            fi
-            echo "waiting for iam-internal port-forward ($i/30)..."; sleep 2
+            up=1
+            bash -c 'echo > /dev/tcp/127.0.0.1/18080' 2>/dev/null || up=0
+            bash -c 'echo > /dev/tcp/127.0.0.1/19091' 2>/dev/null || up=0
+            [ "$up" = 1 ] && { echo "port-forwards up (:18080 api-gateway, :19091 iam-internal)"; break; }
+            echo "waiting for port-forwards ($i/30)..."; sleep 2
           done
-          # The fixture script patches env files under
-          # $WORKSPACE_DIR/project/kacho-{vpc,iam,compute}; the CI layout puts
-          # the sibling checkouts directly under $GITHUB_WORKSPACE. Symlink a
-          # `project/` view so patch-env.py finds them.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:18080/healthz >/dev/null 2>&1; then
+              echo "api-gateway healthz OK"; break
+            fi
+            echo "waiting for api-gateway healthz ($i/30)..."; sleep 5
+          done
+
+          # --- fixtures ---------------------------------------------------
+          # setup.sh patches env files under $WORKSPACE_DIR/project/kacho-*;
+          # the CI layout puts the sibling checkouts directly under
+          # $GITHUB_WORKSPACE — symlink a `project/` view so patch-env.py
+          # finds them.
+          cd "${GITHUB_WORKSPACE}/kacho-workspace"
           mkdir -p project
           for s in kacho-iam kacho-vpc kacho-compute; do
             [ -e "project/$s" ] || ln -s "${GITHUB_WORKSPACE}/$s" "project/$s"
           done
-          BASE_URL=http://api.kacho.local:28080 \
+          BASE_URL=http://localhost:18080 \
           IAM_INTERNAL_GRPC=localhost:19091 \
           VERBOSE=true \
           bash tests/authz-fixtures/setup.sh
           echo "=== authz-fixtures.json ==="
           cat tests/authz-fixtures/out/authz-fixtures.json
 
-      # Generate the kacho-iam Newman collections (declarative cases/*.py ->
-      # gen.py) and run the authz suites through the api-gateway.
-      - name: run kacho-iam authz newman suites
-        working-directory: ${{ github.workspace }}/kacho-iam
-        run: |
-          set -euo pipefail
+          # --- newman -----------------------------------------------------
+          cd "${GITHUB_WORKSPACE}/kacho-iam"
           python3 tests/newman/scripts/gen.py
-          tests/newman/scripts/run.sh --env-var baseUrl=http://api.kacho.local:28080
+          tests/newman/scripts/run.sh --env-var baseUrl=http://localhost:18080
 
       - name: dump stack logs on failure
         if: failure()
@@ -264,8 +266,9 @@ jobs:
           done
           echo "=== openfga-bootstrap job logs ==="
           kubectl -n kacho logs job/openfga-bootstrap --tail=200 || true
-          echo "=== iam-internal port-forward log ==="
-          cat /tmp/iam-internal-pf.log || true
+          echo "=== port-forward logs ==="
+          cat /tmp/api-gateway-pf.log 2>/dev/null || true
+          cat /tmp/iam-internal-pf.log 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         if: always()
