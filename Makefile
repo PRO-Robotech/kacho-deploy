@@ -171,46 +171,15 @@ fga-bootstrap:
 # image is distroless (no shell), so the transform is done here at commit-time
 # instead of in a runtime init-container — see openfga-bootstrap-job.yaml.
 OPENFGA_CLI_IMAGE ?= openfga/cli:v0.7.13
+# KAC-127 RC-2b: canonical FGA model source. The ConfigMap below is GENERATED —
+# both the `model.fga` block (byte-identical copy) and the `model.json` block
+# (openfga/cli transform) are derived from this single artifact.
+OPENFGA_CANONICAL_FGA ?= ../kacho-proto/proto/kacho/cloud/iam/v1/fga_model.fga
 openfga-model-json:
-	@echo "Regenerating model.json from model.fga DSL block..."
-	@CM=helm/umbrella/templates/openfga-model-stub-configmap.yaml; \
-	 python3 - "$$CM" <<-'PY'
-	import sys, json, subprocess
-	cm = sys.argv[1]
-	lines = open(cm).read().splitlines()
-	# extract the model.fga block-scalar (4-space-indented body under "  model.fga: |-")
-	dsl, capture = [], False
-	for ln in lines:
-	    if ln.startswith('  model.fga: |-'):
-	        capture = True; continue
-	    if capture:
-	        if ln.startswith('    '):
-	            dsl.append(ln[4:])
-	        elif ln.strip() == '':
-	            dsl.append('')
-	        else:
-	            break
-	dsl_text = '\n'.join(dsl).rstrip() + '\n'
-	out = subprocess.run(
-	    ['docker','run','--rm','-i','$(OPENFGA_CLI_IMAGE)','model','transform',
-	     dsl_text,'--input-format','fga','--output-format','json'],
-	    capture_output=True, text=True)
-	if out.returncode != 0:
-	    sys.exit('fga model transform failed: ' + out.stderr)
-	compact = json.dumps(json.loads(out.stdout), separators=(',',':'))
-	# splice the new model.json block
-	res, cap2 = [], False
-	for ln in lines:
-	    if ln.startswith('  model.json: |-'):
-	        res.append(ln); res.append('    ' + compact); cap2 = True; continue
-	    if cap2:
-	        if ln.startswith('    ') or ln.strip() == '':
-	            continue
-	        cap2 = False
-	    res.append(ln)
-	open(cm,'w').write('\n'.join(res) + '\n')
-	print('model.json regenerated (%d bytes compact)' % len(compact))
-	PY
+	@echo "Regenerating openfga-model-stub configmap from canonical fga_model.fga..."
+	python3 scripts/gen-openfga-model-configmap.py \
+	  helm/umbrella/templates/openfga-model-stub-configmap.yaml \
+	  $(OPENFGA_CANONICAL_FGA) $(OPENFGA_CLI_IMAGE)
 
 # ─── KAC-127 Phase 10 — SPIRE / Cilium mesh / cosign ─────────────────────
 # Targets для bootstrap, dry-run проверки, и emergency operations.
