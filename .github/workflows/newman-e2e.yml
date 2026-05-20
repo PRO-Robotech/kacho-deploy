@@ -17,6 +17,16 @@ name: newman-e2e
 #
 # Trigger: PR + push to KAC-127/main (epic integration branch) plus manual
 # dispatch and a nightly schedule.
+#
+# Cross-repo gate (KAC-127): the authz code this suite exercises lives in the
+# sibling service repos (kacho-iam / kacho-vpc / kacho-compute /
+# kacho-api-gateway). Their own PR `ci.yaml` only generates+validates the
+# Newman collection — it never runs it against a real stack. So each authz
+# repo carries a `newman-trigger.yml` that fires a `repository_dispatch`
+# (event type `newman-e2e`) at THIS repo and waits for the run conclusion.
+# The dispatch carries a `client_payload` of {repo, ref, sha, source} so this
+# workflow checks out the source sibling on the branch under test instead of
+# the default KAC-127 pin (see the "resolve sibling refs" step below).
 
 on:
   push:
@@ -24,6 +34,8 @@ on:
   pull_request:
     branches: [main, KAC-127]
   workflow_dispatch: {}
+  repository_dispatch:
+    types: [newman-e2e]
   schedule:
     - cron: '0 4 * * *'   # nightly
 
@@ -39,32 +51,71 @@ jobs:
       - uses: actions/checkout@v4
         with: { path: kacho-deploy }
 
+      # Resolve the ref for each sibling checkout. The default pin is KAC-127
+      # (epic integration branch). When this run was started by a
+      # `repository_dispatch` from an authz repo, `client_payload.repo` names
+      # that sibling and `client_payload.ref` is the branch under test — only
+      # THAT sibling is overridden, the rest stay on the KAC-127 pin so the
+      # PR is tested against the integration branch of every other component.
+      - name: resolve sibling refs
+        id: refs
+        env:
+          DISPATCH_REPO: ${{ github.event.client_payload.repo }}
+          DISPATCH_REF: ${{ github.event.client_payload.ref }}
+          DISPATCH_SOURCE: ${{ github.event.client_payload.source }}
+        run: |
+          set -euo pipefail
+          PIN=KAC-127
+          # default every sibling to the epic pin
+          for s in corelib proto vpc compute iam api-gateway workspace ui; do
+            key="REF_$(echo "$s" | tr 'a-z-' 'A-Z_')"
+            echo "${key}=${PIN}" >> "$GITHUB_ENV"
+          done
+          if [ -n "${DISPATCH_REPO:-}" ] && [ -n "${DISPATCH_REF:-}" ]; then
+            # client_payload.repo may arrive as "PRO-Robotech/kacho-vpc" or
+            # bare "kacho-vpc" — normalise to the kacho-<name> short form.
+            short="${DISPATCH_REPO##*/}"
+            short="${short#kacho-}"
+            key="REF_$(echo "$short" | tr 'a-z-' 'A-Z_')"
+            case "$short" in
+              corelib|proto|vpc|compute|iam|api-gateway|workspace|ui)
+                echo "${key}=${DISPATCH_REF}" >> "$GITHUB_ENV"
+                echo "cross-repo dispatch: ${DISPATCH_REPO} @ ${DISPATCH_REF}"
+                echo " (source run: ${DISPATCH_SOURCE:-n/a})" ;;
+              *)
+                echo "::warning::unknown dispatch repo '${DISPATCH_REPO}' — ignoring override" ;;
+            esac
+          else
+            echo "no client_payload override — all siblings pinned to ${PIN}"
+          fi
+
       # Siblings are needed both as Go build context (Dockerfile COPY ../kacho-*)
       # and as helm sub-chart sources (umbrella Chart.yaml file:// deps). The
       # authz fixtures + newman suites also live in the sibling repos + the
       # workspace repo. All are pinned to KAC-127 while the epic is in flight
       # (see workspace CLAUDE.md «Кросс-репо зависимости»); revert to main
-      # after the epic merges.
+      # after the epic merges. A `repository_dispatch` from an authz repo
+      # overrides exactly one sibling ref (see "resolve sibling refs" above).
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-corelib, ref: KAC-127, path: kacho-corelib }
+        with: { repository: PRO-Robotech/kacho-corelib, ref: "${{ env.REF_CORELIB }}", path: kacho-corelib }
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-proto, ref: KAC-127, path: kacho-proto }
+        with: { repository: PRO-Robotech/kacho-proto, ref: "${{ env.REF_PROTO }}", path: kacho-proto }
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-vpc, ref: KAC-127, path: kacho-vpc }
+        with: { repository: PRO-Robotech/kacho-vpc, ref: "${{ env.REF_VPC }}", path: kacho-vpc }
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-compute, ref: KAC-127, path: kacho-compute }
+        with: { repository: PRO-Robotech/kacho-compute, ref: "${{ env.REF_COMPUTE }}", path: kacho-compute }
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-iam, ref: KAC-127, path: kacho-iam }
+        with: { repository: PRO-Robotech/kacho-iam, ref: "${{ env.REF_IAM }}", path: kacho-iam }
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-api-gateway, ref: KAC-127, path: kacho-api-gateway }
+        with: { repository: PRO-Robotech/kacho-api-gateway, ref: "${{ env.REF_API_GATEWAY }}", path: kacho-api-gateway }
       # kacho-workspace carries the shared authz-fixtures bootstrap
       # (tests/authz-fixtures/setup.sh + setup-jwt.py + patch-env.py).
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-workspace, ref: KAC-127, path: kacho-workspace }
+        with: { repository: PRO-Robotech/kacho-workspace, ref: "${{ env.REF_WORKSPACE }}", path: kacho-workspace }
       # kacho-ui is a private repo; best-effort checkout (parity with ci.yaml).
       - uses: actions/checkout@v4
         continue-on-error: true
-        with: { repository: PRO-Robotech/kacho-ui, ref: KAC-127, path: kacho-ui }
+        with: { repository: PRO-Robotech/kacho-ui, ref: "${{ env.REF_UI }}", path: kacho-ui }
       - name: stub kacho-ui/deploy if checkout was skipped (private repo)
         working-directory: ${{ github.workspace }}
         run: |
