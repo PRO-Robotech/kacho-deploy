@@ -693,6 +693,13 @@ kacho-iam:
     extapi:
       # KAC-127: zitadel config удалён — identity/OIDC tier на Ory Kratos + Hydra.
       openfga:
+        # KAC-127 Phase 3: REBAC authorization Check is ON for dev. Without
+        # `enabled: true` the kacho-iam config-validate logs
+        # `extapi.openfga.enabled=false — authorization Check disabled` and
+        # the config is inconsistent with the runtime (the FGA client *is*
+        # wired whenever KACHO_IAM_OPENFGA_STORE_ID is populated by the
+        # openfga-bootstrap-job). Set it true so config matches reality.
+        enabled: true
         endpoint: openfga:8081
         # store-id заполняется bootstrap-job'ом в Secret kacho-iam-openfga-store
         storeIdSecretName: kacho-iam-openfga-store

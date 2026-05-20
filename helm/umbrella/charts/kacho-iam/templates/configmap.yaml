@@ -48,6 +48,10 @@ data:
     extapi:
       def-dial-duration: 10s
       openfga:
+        # KAC-127 Phase 3: when true, kacho-iam config-validate stops emitting
+        # the `authorization Check disabled` warning. Defaults false (E0/E1
+        # без REBAC); dev/prod values set it true.
+        enabled: {{ .Values.config.extapi.openfga.enabled | default false }}
         endpoint: {{ .Values.config.extapi.openfga.endpoint | quote }}
         store-id-from-env: KACHO_IAM_OPENFGA_STORE_ID
         # ─── KAC-127 Phase 3 — authz core (acceptance §5.2, P3-D2) ─────
