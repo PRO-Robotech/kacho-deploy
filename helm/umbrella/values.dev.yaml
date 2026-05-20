@@ -676,7 +676,18 @@ kacho-iam:
 # rolling-restart annotation on consumer Deployments.
 # See umbrella/templates/openfga-bootstrap-job.yaml for full behaviour.
 openfgaBootstrap:
-  enabled: true
+  # KAC-127: ВРЕМЕННО отключён — template-баг в openfga-bootstrap-job.yaml.
+  # `dsl-transform` init-container запускает `/bin/sh`-скрипт на образе
+  # openfga/cli, но ВСЕ актуальные теги openfga/cli (включая v0.6.x, v0.7.x) —
+  # distroless single-binary (нет /bin/sh, sha256sum, awk) → init-container
+  # падает `exec: "/bin/sh": no such file or directory`. Комментарий в шаблоне
+  # «openfga/cli — alpine-based, имеет coreutils» устарел.
+  # Fix (out of scope этого dev-stand-таска — template-логика): `dsl-transform`
+  # должен запускать `fga` нативно (cli entrypoint = /fga), а emptiness-check +
+  # sha256 + JSON-write вынести в main `bootstrap` container (curlimages/curl,
+  # alpine, есть shell). См. GitHub-issue. kacho-iam стартует и без bootstrap'а
+  # (graceful `AuthorizeService returns Unavailable` при пустом model-id).
+  enabled: false
   image: curlimages/curl:8.5.0
   # KAC-127 Phase 3: openfga/cli image transforms DSL → JSON in initContainer.
   # KAC-127: тег `0.6.5` не существует на DockerHub (openfga/cli использует
@@ -700,7 +711,11 @@ opaSidecar:
   # `-static`-суффикс = rootless static-build. См. opaSidecar выше.
   image: openpolicyagent/opa:1.0.0-envoy-static
   logLevel: info
-  iamInternalHost: kacho-umbrella-iam-internal
+  # KAC-127: фактический Service kacho-iam internal-listener'а — `kacho-iam-internal`
+  # (см. `kubectl get svc`), без `kacho-umbrella-` префикса. OPA bundle-pull шёл
+  # на несуществующий `kacho-umbrella-iam-internal` → DNS no-such-host →
+  # bundle_error, OPA-sidecar не становится ready.
+  iamInternalHost: kacho-iam-internal
   iamInternalPort: 9091
   bundleResource: bundle.tar.gz
   # Shorter poll interval on dev for faster iteration on Rego changes.
