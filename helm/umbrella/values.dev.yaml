@@ -652,10 +652,12 @@ kacho-iam:
   # KAC-127 Phase 3: OPA sidecar config propagated from umbrella to sub-chart.
   opaSidecar:
     enabled: true
-    # KAC-127: `1.0.0-rootless` тег не существует в openpolicyagent/opa
-    # (OPA не публикует `-rootless` для 1.x). Rootless-эквивалент — `-static`
-    # (static-build, non-root по умолчанию).
-    image: openpolicyagent/opa:1.0.0-static
+    # KAC-127: `1.0.0-rootless` тег не существует. Нужен ИМЕННО opa-envoy
+    # вариант — kacho-iam Deployment передаёт OPA-сайдкару флаг
+    # `--set=plugins.envoy_ext_authz_grpc.enabled=false`; плагин
+    # `envoy_ext_authz_grpc` есть только в opa-envoy-сборке (plain `opa`
+    # падает `plugin not registered`). `-static`-суффикс = rootless static-build.
+    image: openpolicyagent/opa:1.0.0-envoy-static
     logLevel: info
     jwks:
       configMapName: kacho-iam-jwks
@@ -677,7 +679,9 @@ openfgaBootstrap:
   enabled: true
   image: curlimages/curl:8.5.0
   # KAC-127 Phase 3: openfga/cli image transforms DSL → JSON in initContainer.
-  cliImage: openfga/cli:0.6.5
+  # KAC-127: тег `0.6.5` не существует на DockerHub (openfga/cli использует
+  # `v`-префикс; последний — v0.7.13). Исправлено на v0.7.13.
+  cliImage: openfga/cli:v0.7.13
   storeName: kacho-store
   authorizationModelConfigMap: openfga-model-stub
   modelIdSecretName: openfga-model-id
@@ -692,8 +696,9 @@ openfgaBootstrap:
 # (allows kubectl port-forward debugging).
 opaSidecar:
   enabled: true
-  # KAC-127: `-rootless` тег не существует — rootless-эквивалент `-static`.
-  image: openpolicyagent/opa:1.0.0-static
+  # KAC-127: opa-envoy-сборка обязательна (envoy_ext_authz_grpc плагин);
+  # `-static`-суффикс = rootless static-build. См. opaSidecar выше.
+  image: openpolicyagent/opa:1.0.0-envoy-static
   logLevel: info
   iamInternalHost: kacho-umbrella-iam-internal
   iamInternalPort: 9091
