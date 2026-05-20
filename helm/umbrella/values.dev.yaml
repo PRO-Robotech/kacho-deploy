@@ -61,6 +61,10 @@ compute:
 ui:
   image: kacho-ui:dev
   imagePullPolicy: IfNotPresent
+  # Лок-стенд: ingress на host `localhost` (kind host-port 28080) — UI открывается
+  # http://localhost:28080 без записи в /etc/hosts. Kratos/Hydra urls — туда же.
+  ingress:
+    host: localhost
 
 ingress-nginx:
   controller:
@@ -156,6 +160,27 @@ vpc:
   networkPolicy:
     enabled: false
     adminPodsSelector: {}
+  # KAC-127 issue #22: write-side FGA. Each VPC resource Create publishes
+  # `vpc_<resource>:<id>#project@project:<project_id>` into the shared OpenFGA
+  # store so per-resource Get/Update/Delete Checks resolve. store-id / model-id
+  # are bootstrap-job-populated Secrets, injected as config ENV-override.
+  authz:
+    # KAC-127 Phase 4 — FGA-filtered List: List RPCs return 200 with only the
+    # caller-visible ids instead of a per-RPC 403. Required for the authz
+    # matrix *-LS-*-EMPTY scope-filter cases.
+    listFilter:
+      enabled: true
+      authorizeEndpoint: kacho-iam.kacho.svc.cluster.local:9090
+    tupleWrite:
+      enabled: true
+      # OpenFGA HTTP API (http port 8080; grpc is 8081). Same store kacho-iam
+      # writes its account/project tuples into.
+      openfgaEndpoint: kacho-umbrella-openfga:8080
+      storeIdSecretName: kacho-iam-openfga-store
+      storeIdSecretKey: store_id
+      modelIdSecretName: openfga-model-id
+      modelIdSecretKey: current
+      timeoutMs: 2000
 
 # ─── KAC-105: IAM stack (sub-phase 2.0) ─────────────────────────────────
 # Отдельные Postgres-инстансы (запрет #8: database-per-service):
@@ -298,15 +323,15 @@ kratos:
       dsn: "postgres://kratos:dev-kratos-password@kacho-umbrella-pg-kratos:5432/kratos?sslmode=disable"
       serve:
         public:
-          base_url: "http://5.35.93.58/.ory/kratos/public/"
+          base_url: "http://localhost:28080/.ory/kratos/public/"
           cors:
             enabled: true
-            allowed_origins: ["http://5.35.93.58"]
+            allowed_origins: ["http://localhost:28080"]
         admin:
           base_url: "http://kacho-umbrella-kratos-admin:80/"
       selfservice:
-        default_browser_return_url: "http://5.35.93.58/"
-        allowed_return_urls: ["http://5.35.93.58"]
+        default_browser_return_url: "http://localhost:28080/"
+        allowed_return_urls: ["http://localhost:28080"]
         methods:
           password: { enabled: true }
           oidc: { enabled: false }
@@ -314,20 +339,20 @@ kratos:
         flows:
           registration:
             enabled: true
-            ui_url: "http://5.35.93.58/registration"
+            ui_url: "http://localhost:28080/registration"
             after:
               password: { hooks: [{ hook: "session" }] }
           login:
-            ui_url: "http://5.35.93.58/login"
+            ui_url: "http://localhost:28080/login"
           settings:
-            ui_url: "http://5.35.93.58/settings"
+            ui_url: "http://localhost:28080/settings"
           recovery:
             enabled: true
-            ui_url: "http://5.35.93.58/recovery"
+            ui_url: "http://localhost:28080/recovery"
           verification:
             enabled: false
           error:
-            ui_url: "http://5.35.93.58/error"
+            ui_url: "http://localhost:28080/error"
       log:
         level: info
         format: json
@@ -388,7 +413,7 @@ kratos:
 #
 # Dev-стенд (kind, kacho.local) — `enabled: false` по умолчанию; включается через
 # overrides.yaml в clusters/<cluster>/. URLs используют intentional dev-IP
-# (5.35.93.58 — kacho-deploy historic dev-cluster). Prod-overlay переопределит
+# (localhost:28080 — kind ingress, host-port 28080). Prod-overlay переопределит
 # все `urls.*` через `{{ .Values.kacho.domain }}` — см. values.prod.yaml.
 hydra:
   # KAC-127: Phase 2 IAM-стек требует Hydra (OAuth2/OIDC) включённым для smoke.
@@ -408,18 +433,18 @@ hydra:
         public:
           cors:
             enabled: true
-            allowed_origins: ["http://5.35.93.58"]
+            allowed_origins: ["http://localhost:28080"]
       urls:
         # Dev URLs — kacho-deploy историчный IP (kind ingress port-forward).
         # В prod values.prod.yaml override'ит через `https://hydra.{{ .Values.kacho.domain }}`.
         self:
-          public: "http://5.35.93.58/.ory/hydra/public/"
-          issuer: "http://5.35.93.58/.ory/hydra/public/"
-        consent: "http://5.35.93.58/consent"
-        login: "http://5.35.93.58/login"
-        logout: "http://5.35.93.58/logout"
-        error: "http://5.35.93.58/error"
-        post_logout_redirect: "http://5.35.93.58/"
+          public: "http://localhost:28080/.ory/hydra/public/"
+          issuer: "http://localhost:28080/.ory/hydra/public/"
+        consent: "http://localhost:28080/consent"
+        login: "http://localhost:28080/login"
+        logout: "http://localhost:28080/logout"
+        error: "http://localhost:28080/error"
+        post_logout_redirect: "http://localhost:28080/"
         # KAC-127 (deploy#37): `urls.identity_provider.publicly_writable` удалён —
         # ключ не существует в Hydra v26.2.0 config-schema (`urls.identity_provider`
         # принимает только `url` / `publicUrl` / `headers`). Динамическая
@@ -581,7 +606,7 @@ kratosSelfServiceUI:
   image:
     repository: oryd/kratos-selfservice-ui-node
     tag: "v1.3.1"
-  kratosBrowserUrl: "http://5.35.93.58/.ory/kratos/public"
+  kratosBrowserUrl: "http://localhost:28080/.ory/kratos/public"
   kratosPublicUrl: "http://kacho-umbrella-kratos-public:80"
   hydraAdminUrl: "http://kacho-umbrella-hydra-admin:4445"
   cookieSecret: "please-change-this-32-bytes-A1Bx"
