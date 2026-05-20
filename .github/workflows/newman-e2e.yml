@@ -273,6 +273,18 @@ jobs:
           kubectl -n kacho logs "deploy/kacho-iam" --tail=-1 2>/dev/null \
             | grep -iE 'operation failed|level":"ERROR|panic|tuple-write failed|authz' \
             | tail -80 || true
+          # kacho-vpc write-side FGA: each Network/Subnet/... Create publishes a
+          # `vpc_<type>:<id>#project@project:<pid>` hierarchy tuple from its
+          # Operation worker. The fixture's seed-network Creates run at the start
+          # of the test step → past --tail=200; grep the full vpc log so a
+          # nil/disabled FGA writer or a failed tuple-write stays diagnosable.
+          echo "=== kacho-vpc: write-side FGA traces (full log grep) ==="
+          kubectl -n kacho logs "deploy/vpc" --tail=-1 2>/dev/null \
+            | grep -iE 'fga|tuple|openfga|write-side|store_id|model_id|authz|level":"ERROR|operation failed|panic' \
+            | tail -80 || true
+          echo "=== openfga store/model secrets (keys only) ==="
+          kubectl -n kacho get secret kacho-iam-openfga-store openfga-model-id \
+            -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.data}{"\n"}{end}' 2>/dev/null || true
           echo "=== openfga-bootstrap job logs ==="
           kubectl -n kacho logs job/openfga-bootstrap --tail=200 || true
           echo "=== port-forward logs ==="
