@@ -650,8 +650,10 @@ kacho-iam:
       memory: 512Mi
   env: {}
   # KAC-127 Phase 3: OPA sidecar config propagated from umbrella to sub-chart.
+  # KAC-127: ВРЕМЕННО отключён — см. комментарий у top-level `opaSidecar` ниже
+  # (Phase 3 OPA-bundle-delivery integration не завершена; GitHub-issue).
   opaSidecar:
-    enabled: true
+    enabled: false
     # KAC-127: `1.0.0-rootless` тег не существует. Нужен ИМЕННО opa-envoy
     # вариант — kacho-iam Deployment передаёт OPA-сайдкару флаг
     # `--set=plugins.envoy_ext_authz_grpc.enabled=false`; плагин
@@ -703,10 +705,14 @@ openfgaBootstrap:
 # ─── KAC-127 Phase 3: OPA sidecar pipeline (acceptance §5.6) ────────────
 # Enables per-pod OPA sidecar across api-gateway + kacho-iam + vpc + compute
 # + loadbalancer for runtime guardrails (deny-only Rego on top of FGA ALLOW).
-# On dev kind-stand: enabled (full integration smoke), NetworkPolicy disabled
-# (allows kubectl port-forward debugging).
+# KAC-127: ВРЕМЕННО отключён на dev. OPA bundle-plugin тянет policy-bundle по
+# HTTP с `kacho-iam-internal:9091/opa/v1/bundle.tar.gz`, но порт 9091 kacho-iam —
+# gRPC-only listener (нет HTTP bundle-эндпоинта) → connection refused → OPA
+# sidecar не становится Ready → pod'ы застревают 1/2. Phase 3 OPA-bundle-delivery
+# integration не завершена — см. GitHub-issue. kacho-iam main-container здоров и
+# отдаёт gRPC API без OPA (OPA — deny-only guardrail-слой поверх FGA).
 opaSidecar:
-  enabled: true
+  enabled: false
   # KAC-127: opa-envoy-сборка обязательна (envoy_ext_authz_grpc плагин);
   # `-static`-суффикс = rootless static-build. См. opaSidecar выше.
   image: openpolicyagent/opa:1.0.0-envoy-static
