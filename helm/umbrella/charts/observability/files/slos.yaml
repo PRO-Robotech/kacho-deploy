@@ -1,0 +1,113 @@
+# Kachō SLOs — declarative definitions consumed by Sloth controller.
+# Each SLO becomes 5 PrometheusRule entries (recording + multi-window burn-rate alerts).
+# Reference: https://sloth.dev/specs/
+#
+# All thresholds configurable via Helm values.observability.sloth.targets.
+version: prometheus/v1
+service: kacho-iam
+labels:
+  app: kacho-iam
+  owner: kacho-platform-team
+slos:
+  - name: auth-availability
+    objective: 99.95
+    description: "AuthN endpoint availability (successful login flows / total attempts)"
+    sli:
+      events:
+        error_query: |
+          sum(rate(kratos_self_service_login_request_total{result="error"}[{{.window}}]))
+        total_query: |
+          sum(rate(kratos_self_service_login_request_total[{{.window}}]))
+    alerting:
+      name: KachoAuthAvailabilityBurn
+      labels:
+        category: availability
+        severity: P1
+      page_alert:
+        labels:
+          severity: P1
+          pager: pagerduty
+      ticket_alert:
+        labels:
+          severity: P3
+          pager: slack
+
+  - name: fga-check-latency-p95
+    objective: 99.0
+    description: "OpenFGA Check requests under 20ms"
+    sli:
+      events:
+        error_query: |
+          sum(rate(openfga_request_duration_ms_bucket{method="Check",le="20"}[{{.window}}]))
+            -
+          sum(rate(openfga_request_duration_ms_bucket{method="Check",le="20"}[{{.window}}] offset 30s))
+        total_query: |
+          sum(rate(openfga_request_total{method="Check"}[{{.window}}]))
+    alerting:
+      name: KachoFGACheckLatencyBurn
+      labels:
+        category: latency
+        severity: P2
+
+  - name: token-issuance-latency-p95
+    objective: 99.0
+    description: "Hydra token issuance under 100ms p95"
+    sli:
+      events:
+        error_query: |
+          sum(rate(hydra_token_request_duration_seconds_bucket{le="0.1"}[{{.window}}]))
+        total_query: |
+          sum(rate(hydra_token_request_total[{{.window}}]))
+    alerting:
+      name: KachoTokenIssuanceLatencyBurn
+      labels:
+        category: latency
+        severity: P2
+
+  - name: caep-delivery-p99
+    objective: 99.0
+    description: "CAEP webhook delivery under 10s p99"
+    sli:
+      events:
+        error_query: |
+          sum(rate(kacho_iam_caep_delivery_seconds_bucket{le="10"}[{{.window}}]))
+        total_query: |
+          sum(rate(kacho_iam_caep_delivery_total[{{.window}}]))
+    alerting:
+      name: KachoCaepDeliveryBurn
+      labels:
+        category: latency
+        severity: P2
+
+  - name: audit-ingest-lag-p99
+    objective: 99.0
+    description: "Audit event Kafka→ClickHouse ingest under 60s p99"
+    sli:
+      events:
+        error_query: |
+          sum(rate(kacho_audit_kafka_to_clickhouse_seconds_bucket{le="60"}[{{.window}}]))
+        total_query: |
+          sum(rate(kacho_audit_kafka_to_clickhouse_total[{{.window}}]))
+    alerting:
+      name: KachoAuditIngestLagBurn
+      labels:
+        category: pipeline
+        severity: P2
+
+  - name: api-gateway-5xx
+    objective: 99.9
+    description: "API gateway 5xx error rate under 0.1%"
+    sli:
+      events:
+        error_query: |
+          sum(rate(grpc_server_handled_total{
+            service="kacho-api-gateway",
+            code=~"Internal|Unavailable|Unknown|DeadlineExceeded"
+          }[{{.window}}]))
+        total_query: |
+          sum(rate(grpc_server_handled_total{service="kacho-api-gateway"}[{{.window}}]))
+    alerting:
+      name: KachoAPIGatewayErrorBurn
+      labels:
+        category: availability
+        severity: P1

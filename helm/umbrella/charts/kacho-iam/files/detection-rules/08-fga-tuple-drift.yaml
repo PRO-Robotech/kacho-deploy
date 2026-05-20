@@ -1,0 +1,32 @@
+title: OpenFGA Tuple Drift
+id: kacho-audit-rule-08-fga-tuple-drift
+description: |
+  Detects split-brain between Postgres access_bindings.status=ACTIVE rows and
+  corresponding OpenFGA tuples (existence mismatch in either direction).
+  Phase 9 §2.10 rule #8. Severity Medium.
+
+  Detection runs hourly via fga-reconciler CronJob (kacho-iam); this descriptor
+  exists for alerting + dashboarding.
+status: stable
+author: Kacho Cloud Security
+date: 2026-05-19
+tags:
+  - attack.defense_evasion
+logsource:
+  product: kacho_iam
+  category: integrity_reconciliation
+detection:
+  selection:
+    metric: kacho_fga_tuple_drift_count
+  condition: selection > 0
+fields:
+  - binding_id
+  - drift_direction  # pg_only | fga_only
+  - actor_id
+falsepositives:
+  - In-flight write race (drift detected within 30s of mutation;
+    auto-clears on next pass) — reconciler suppresses fresh drift
+level: medium
+response:
+  action: auto_repair_via_reconciler
+  notification: slack_security_alerts

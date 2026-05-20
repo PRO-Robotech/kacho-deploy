@@ -1,0 +1,38 @@
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: "kacho-iam-platform-otel"
+  namespace: "kacho-system"
+  labels:
+    kacho.cloud/component: otel-instrumentation
+spec:
+  exporter:
+    endpoint: "http://otel-collector.{{ .Values.observability.namespace }}.svc.cluster.local:4317"
+  propagators:
+    - tracecontext
+    - baggage
+    - b3
+  sampler:
+    type: parentbased_traceidratio
+    argument: "{{ .Values.observability.otelCollector.sampling.dataPlane }}"
+  resource:
+    addK8sUIDAttributes: true
+    resourceAttributes:
+      kacho.cloud/component: "kacho-iam-platform"
+      service.namespace: "kacho-system"
+  go:
+    env:
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: grpc
+      - name: OTEL_GO_AUTO_PARENT_PID_FILE
+        value: /tmp/otel-go-auto.pid
+      - name: OTEL_GO_AUTO_TARGET_EXE
+        value: ""                            # set per-pod via annotation `instrumentation.opentelemetry.io/inject-go: "/usr/local/bin/<svc>"`
+  python:
+    env:
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: grpc
+  nodejs:
+    env:
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: grpc

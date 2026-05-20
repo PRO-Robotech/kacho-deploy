@@ -1,0 +1,169 @@
+# KAC-127 Phase 10 — Cilium mesh values.
+#
+# Configurable parameters — НЕ ХАРДКОДИТЬ:
+#   - spiffe.trustDomain — must match SPIRE Server (per-env).
+#   - cosign.publicKey — kacho-platform team key (PEM format).
+#   - hubble.ui.host — Hubble UI Ingress hostname (built from kacho.domain).
+
+# Cilium CNI / mesh top-level toggle.
+enabled: true
+
+# SPIFFE integration (P10-D5).
+spiffe:
+  # Trust domain — per-env. Override через umbrella `cilium.spiffe.trustDomain`.
+  trustDomain: kacho.cloud
+  # SPIRE Server address для Cilium mesh auth.
+  spireServerAddress: "kacho-umbrella-spire-server.spire-system.svc.cluster.local:8081"
+  # Workload API socket path mounted into cilium-agent pods.
+  socketPath: "/run/spire/sockets/agent.sock"
+
+# Service mesh.
+serviceMesh:
+  enabled: true
+  # mTLS authentication mode: required | optional | disabled.
+  # P10-D11 + acceptance §3.6: `required` (drop traffic without valid SPIFFE auth).
+  authenticationMode: "required"
+
+# WireGuard L3 encryption between nodes (P10-D6).
+encryption:
+  enabled: true
+  type: "wireguard"
+  # NodeEncryption — encrypt also host-host traffic (kubelet, etcd peer).
+  nodeEncryption: true
+
+# kube-proxy replacement (P10-D5).
+kubeProxyReplacement: "strict"
+
+# Hubble — observability.
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+  ui:
+    enabled: true
+    # Hubble UI Ingress (templated from `kacho.domain`); admin-only via OIDC.
+    ingress:
+      enabled: false
+      className: "nginx"
+      host: ""                          # set from umbrella, e.g. "hubble.api.kacho.cloud"
+      certIssuer: "letsencrypt-prod"
+      # OIDC annotations — go to ingress controller; кroмe ingress-nginx
+      # `auth-url` annotation patterns.
+      annotations:
+        nginx.ingress.kubernetes.io/auth-url: "https://hydra.example.com/oauth2/sessions/whoami"
+        nginx.ingress.kubernetes.io/auth-signin: "https://hydra.example.com/oauth2/auth"
+  metrics:
+    enabled: true
+    # Hubble metrics exported для Prometheus.
+    enableOpenMetrics: true
+  exporter:
+    # Export flows to OpenTelemetry collector (Phase 11 stack).
+    enabled: true
+    otlpEndpoint: "otel-collector.observability.svc.cluster.local:4317"
+
+# IPAM mode: cluster-pool (default; Cilium operator allocates per-node CIDRs).
+ipam:
+  mode: "cluster-pool"
+  clusterPoolIPv4PodCIDR: "10.244.0.0/16"
+  clusterPoolIPv4MaskSize: 24
+
+# Cosign image attestation (P10-D9 / P10-D10).
+cosign:
+  enabled: true
+  # PEM-encoded public key. Override per-env via Secret (preferred).
+  # Empty here — pulled from `cosignSecret`.
+  publicKey: ""
+  # Secret containing cosign public key. Created externally (External Secrets in prod).
+  secretName: "cilium-cosign-public-key"
+  secretKey: "cosign.pub"
+
+# CiliumNetworkPolicy — per-service templates rendered by this chart.
+# Each service gets:
+#   - default-deny ingress + egress per podSelector
+#   - explicit allow per peer SPIFFE-ID
+#   - L7 path-based rules for sensitive endpoints
+networkPolicies:
+  enabled: true
+  # Target namespace — kacho-system.
+  namespace: "kacho-system"
+  # Default SPIFFE-ID pattern: spiffe://<trust>/ns/<ns>/sa/<sa>.
+  # Per-service mappings emitted by this chart per acceptance §2.3 + §2.4.
+  services:
+    # kacho-iam — leaf-owner; ingress from vpc/compute/loadbalancer/api-gateway/ui-admin.
+    kacho-iam:
+      enabled: true
+      ingressFrom:
+        - vpc
+        - compute
+        - loadbalancer
+        - api-gateway
+        - ui-admin
+      egressTo: []   # leaf-owner, calls nothing internally
+      l7Rules:
+        # /v1/internal/* — only vpc/compute/loadbalancer.
+        - pathRegex: "^/v1/internal/.*"
+          allowedPeers: [vpc, compute, loadbalancer]
+        # /v1/internal/breakglass/* — only api-gateway-internal-mux.
+        - pathRegex: "^/v1/internal/breakglass/.*"
+          allowedPeers: [api-gateway]
+        # /v1/admin/* — only ui-admin; requires Authorization header non-empty.
+        - pathRegex: "^/v1/admin/.*"
+          allowedPeers: [ui-admin]
+          requireHeader: "Authorization"
+    kacho-vpc:
+      enabled: true
+      ingressFrom:
+        - compute
+        - loadbalancer
+        - api-gateway
+        - vpc-implement
+      egressTo:
+        - iam
+        - compute
+      l7Rules:
+        - pathRegex: "^/v1/internal/networkInterfaces/.*/reportDataplane"
+          allowedPeers: [vpc-implement]
+    kacho-compute:
+      enabled: true
+      ingressFrom:
+        - vpc
+        - loadbalancer
+        - api-gateway
+      egressTo:
+        - iam
+        - vpc
+      l7Rules:
+        - pathRegex: "^/v1/internal/hypervisors/.*"
+          allowedPeers: [vpc-implement]
+    kacho-loadbalancer:
+      enabled: true
+      ingressFrom:
+        - api-gateway
+      egressTo:
+        - iam
+        - vpc
+        - compute
+      l7Rules: []
+    kacho-api-gateway:
+      enabled: true
+      # Public ingress — from external (Ingress controller in ingress-nginx ns).
+      ingressFromExternal: true
+      ingressFrom:
+        - ui-admin
+      egressTo:
+        - iam
+        - vpc
+        - compute
+        - loadbalancer
+      l7Rules: []
+
+# Optional: mTLS global enforce policy.
+mtlsEnforcePolicy:
+  enabled: true
+
+# Grafana dashboards (Hubble + SPIRE mesh).
+grafanaDashboards:
+  enabled: true
+  # ConfigMap label keys for Grafana sidecar auto-discovery.
+  labelKey: "grafana_dashboard"
+  labelValue: "1"

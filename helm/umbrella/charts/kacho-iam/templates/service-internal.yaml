@@ -17,3 +17,8 @@ spec:
     - name: grpc-internal
       port: {{ .Values.service.internal.port }}
       targetPort: grpc-internal
+    # KAC-127 deploy#39 — HTTP hooks listener (Hydra token/refresh webhooks +
+    # CAEP ingress + OPA policy bundle pull). Cluster-internal-only (запрет #6).
+    - name: http-hooks
+      port: {{ .Values.service.internal.hooksHttpPort | default 9092 }}
+      targetPort: http-hooks

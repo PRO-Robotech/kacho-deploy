@@ -1,7 +1,7 @@
 apiVersion: v2
 name: kacho-umbrella
-version: 1.0.9
-description: "Kachō Cloud Control Plane — dev umbrella (flat API + Operations). KAC-125: User per-Account + Invite-flow + helm-lint fix (sibling chart versions unpinned)."
+version: 2.0.0
+description: "Kachō Cloud Control Plane — production umbrella (flat API + Operations). KAC-127 Phase 11: Multi-region active-active + Cloudflare WAF/DDoS/Access + cert-manager Let's Encrypt + Argo CD GitOps with canary ArgoRollouts + SBOM/SLSA L3/cosign supply-chain + OpenTelemetry/Tempo/Mimir/Loki/Grafana observability + Sloth SLO controller + AlertManager → PagerDuty + Patroni Postgres HA. Builds on Phase 10 (SPIRE+Cilium mesh), Phase 9 (audit pipeline), Phase 3 (OpenFGA+OPA+Conditions), Phase 2 (Kratos+Hydra+JWKS), Phase 1 (DB foundation)."
 dependencies:
   - name: ingress-nginx
     version: 4.x
@@ -15,17 +15,13 @@ dependencies:
     alias: pg-compute
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
-  # KAC-105: IAM stack — отдельные Postgres-инстансы под kacho-iam / Zitadel / OpenFGA
+  # KAC-105: IAM stack — отдельные Postgres-инстансы под kacho-iam / OpenFGA
   # (запрет #8: database-per-service; +«независимые БД» из sub-phase-2.0-iam-overview §4).
+  # KAC-127: pg-zitadel удалён — auth-tier (identity/OIDC) на Ory Kratos + Hydra.
   - name: postgresql
     alias: pg-iam
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
-  - name: postgresql
-    alias: pg-zitadel
-    version: 13.x
-    repository: https://charts.bitnami.com/bitnami
-    condition: pg-zitadel.enabled
   - name: postgresql
     alias: pg-openfga
     version: 13.x
@@ -38,6 +34,11 @@ dependencies:
   # любой версии. Жёсткий pin (например `1.2.0`) ломает `helm dep update` в CI:
   # `can't get a valid version for "api-gateway"`. Локально и в проде версия всё
   # равно резолвится из самого Chart.yaml sibling-репо — pin тут только проверка.
+  # Sibling sub-charts are resolved from sibling repo checkouts laid out next to
+  # kacho-deploy (CI checks them out into $GITHUB_WORKSPACE/kacho-<svc>; локально —
+  # kacho-workspace/project/kacho-<svc>). CI pins the sibling checkout to the
+  # KAC-127 branch while the epic is in flight (см. .github/workflows/ci.yaml) —
+  # the `file://` path itself is branch-agnostic and stays canonical.
   - name: vpc
     version: ">= 0.0.0"
     repository: file://../../../kacho-vpc/deploy
@@ -56,24 +57,15 @@ dependencies:
   # (file:// относительно Chart.yaml). На E0 image скорее всего ещё не существует —
   # см. values.dev.yaml `kacho-iam.image.repository` / `tag` для конкретики.
   - name: kacho-iam
-    version: 1.0.0
+    version: ">= 1.0.0"
     repository: file://./charts/kacho-iam
-  # External charts для IAM stack. Версии резолвнуты `helm dependency update`
-  # на 2026-05-17 (KAC-105): zitadel-8.13.4, openfga-0.2.62.
-  # Conditions добавлены 2026-05-17 — позволяют выключать chart'ы через values
-  # (`zitadel.enabled: false` / `openfga.enabled: false`). Нужны для E0/E1 deploy,
-  # пока Zitadel/OpenFGA-инфраструктура не развернута; включить на E2/E3.
-  - name: zitadel
-    version: 8.x
-    repository: https://charts.zitadel.com
-    condition: zitadel.enabled
+  # OpenFGA — REBAC engine для kacho-iam (Phase 3). Condition-gated.
   - name: openfga
     version: 0.2.x
     repository: https://openfga.github.io/helm-charts
     condition: openfga.enabled
-  # KAC-115: Ory stack — Kratos (identity+self-service flows), Hydra (OAuth2/OIDC),
-  # Keto (REBAC ≈ OpenFGA). Включаются через `<chart>.enabled` в overrides;
-  # заменяют Zitadel+OpenFGA одной командой helm upgrade.
+  # KAC-115/127: Ory stack — Kratos (identity+self-service flows), Hydra (OAuth2/OIDC),
+  # Keto (REBAC). Kratos+Hydra заменили Zitadel (удалён из umbrella в KAC-127).
   - name: kratos
     version: 0.x
     repository: https://k8s.ory.sh/helm/charts
@@ -101,3 +93,82 @@ dependencies:
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
     condition: pg-keto.enabled
+  # KAC-127 Phase 9 — Audit pipeline (sub-phase 3.9): Kafka KRaft + ClickHouse
+  # + Kafka Connect S3 sink. Все три chart'а — vendored под helm/umbrella/charts/.
+  # Все три выключены по умолчанию (condition: <chart>.enabled); включаются
+  # values.prod.yaml или helm upgrade --set kafka.enabled=true.
+  - name: kafka
+    version: ">= 0.0.0"
+    repository: file://./charts/kafka
+    condition: kafka.enabled
+  - name: clickhouse
+    version: ">= 0.0.0"
+    repository: file://./charts/clickhouse
+    condition: clickhouse.enabled
+  - name: kafka-connect
+    version: ">= 0.0.0"
+    repository: file://./charts/kafka-connect
+    condition: kafka-connect.enabled
+  # KAC-127 Phase 10 — SPIFFE/SPIRE + Cilium eBPF mesh + cosign attestor.
+  # All charts vendored under helm/umbrella/charts/; all condition'ы (opt-in).
+  # Dev умbrellа kind-стенд: all disabled by default (нужна полноценная Cilium
+  # CNI install + HSM, что выходит за рамки single-node kind). Включаются
+  # values.prod.yaml или helm upgrade --set spire-server.enabled=true.
+  - name: spire-server
+    version: ">= 0.0.0"
+    repository: file://./charts/spire-server
+    condition: spire-server.enabled
+  - name: spire-agent
+    version: ">= 0.0.0"
+    repository: file://./charts/spire-agent
+    condition: spire-agent.enabled
+  - name: cilium
+    version: ">= 0.0.0"
+    repository: file://./charts/cilium
+    condition: cilium.enabled
+  - name: cosign-policy-controller
+    version: ">= 0.0.0"
+    repository: file://./charts/cosign-policy-controller
+    condition: cosign-policy-controller.enabled
+  - name: spiffe-csi-driver
+    version: ">= 0.0.0"
+    repository: file://./charts/spiffe-csi-driver
+    condition: spiffe-csi-driver.enabled
+  # Postgres-instance под SPIRE Server DataStore (database-per-service, запрет #8).
+  - name: postgresql
+    alias: pg-spire
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: pg-spire.enabled
+  # KAC-127 Phase 11 — Production deploy + Observability subcharts. All vendored.
+  # Conditionally enabled via values.prod.yaml; disabled by default in dev/staging.
+  - name: cloudflare-config
+    version: ">= 0.0.0"
+    repository: file://./charts/cloudflare-config
+    condition: cloudflare-config.enabled
+  - name: cert-manager-config
+    version: ">= 0.0.0"
+    repository: file://./charts/cert-manager-config
+    condition: cert-manager-config.enabled
+  - name: argo-cd
+    version: ">= 0.0.0"
+    repository: file://./charts/argo-cd
+    condition: argo-cd.enabled
+  - name: multi-region-router
+    version: ">= 0.0.0"
+    repository: file://./charts/multi-region-router
+    condition: multi-region-router.enabled
+  - name: observability
+    version: ">= 0.0.0"
+    repository: file://./charts/observability
+    condition: observability.enabled
+  - name: postgres-ha
+    version: ">= 0.0.0"
+    repository: file://./charts/postgres-ha
+    condition: postgres-ha.enabled
+  # KAC-127 Phase 12 — Litmus chaos engineering. Opt-in (chaos game-days
+  # are operator-driven; never enabled by default in prod values.yaml).
+  - name: litmus-chaos
+    version: ">= 0.0.0"
+    repository: file://./charts/litmus-chaos
+    condition: litmus-chaos.enabled

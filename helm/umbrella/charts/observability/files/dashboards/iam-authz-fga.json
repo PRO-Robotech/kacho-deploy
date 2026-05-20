@@ -1,0 +1,15 @@
+{
+  "title": "Kachō IAM — AuthZ (OpenFGA + OPA)",
+  "uid": "iam-authz-fga",
+  "tags": ["kacho", "iam", "authz", "openfga"],
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {"id": 1, "type": "graph", "title": "OpenFGA Check p95/p99 latency", "datasource": "Mimir", "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}, "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(openfga_request_duration_ms_bucket{method=\"Check\"}[5m])))", "legendFormat": "p95"}, {"expr": "histogram_quantile(0.99, sum by (le) (rate(openfga_request_duration_ms_bucket{method=\"Check\"}[5m])))", "legendFormat": "p99"}]},
+    {"id": 2, "type": "graph", "title": "ListObjects p95/p99 latency", "datasource": "Mimir", "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}, "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(openfga_request_duration_ms_bucket{method=\"ListObjects\"}[5m])))", "legendFormat": "p95"}, {"expr": "histogram_quantile(0.99, sum by (le) (rate(openfga_request_duration_ms_bucket{method=\"ListObjects\"}[5m])))", "legendFormat": "p99"}]},
+    {"id": 3, "type": "graph", "title": "Tuple write rate per store", "datasource": "Mimir", "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}, "targets": [{"expr": "sum by (store_id) (rate(openfga_request_total{method=\"Write\"}[5m]))"}]},
+    {"id": 4, "type": "graph", "title": "OPA decision rate + denials", "datasource": "Mimir", "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}, "targets": [{"expr": "sum by (decision) (rate(opa_decisions_total[5m]))"}]}
+  ],
+  "time": {"from": "now-3h", "to": "now"},
+  "refresh": "30s"
+}

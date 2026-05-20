@@ -1,0 +1,171 @@
+{{- if .Values.enabled }}
+{{/*
+KAC-127 Phase 9 — Kafka KRaft StatefulSet.
+
+Vanilla StatefulSet (operator=bitnami pattern, без CRD'ов). Каждый pod —
+combined broker+controller (mode=combined) либо разделённый по NodeSet'у
+(mode=dedicated; в этом случае emit-им два StatefulSet'а).
+
+Дизайн по acceptance §2.5 + §4.1:
+  - process.roles=broker,controller (combined) либо broker / controller.
+  - controller.quorum.voters=<id>@<host>:9094 список всех controller'ов.
+  - listeners — INTERNAL (SSL для inter-broker), CLIENT (SASL_SSL для clients),
+                CONTROLLER (KRaft RPC).
+  - min.insync.replicas=2 + acks=all + idempotent producer → exactly-once.
+
+Anti-affinity (если enabled) — soft pod-anti-affinity, чтобы scheduler
+пытался размазать broker'ы по нодам. Hard anti-affinity на single-node kind
+заблокирует scheduling.
+*/}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "kafka.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kafka.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "kafka.fullname" . }}-headless
+  replicas: {{ .Values.cluster.brokers }}
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "kafka.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kafka.selectorLabels" . | nindent 8 }}
+        {{- include "kafka.labels" . | nindent 8 }}
+      annotations:
+        # Force rolling restart на изменение auth users / broker config.
+        checksum/auth: {{ .Values.auth | toJson | sha256sum }}
+        checksum/broker-config: {{ .Values.brokerConfig | toJson | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "kafka.fullname" . }}
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      {{- if .Values.affinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: {{ .Values.affinity.topologyKey | quote }}
+                labelSelector:
+                  matchLabels:
+                    {{- include "kafka.selectorLabels" . | nindent 20 }}
+      {{- end }}
+      containers:
+        - name: kafka
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: client
+              containerPort: {{ .Values.listeners.client.port }}
+              protocol: TCP
+            - name: internal
+              containerPort: {{ .Values.listeners.internal.port }}
+              protocol: TCP
+            - name: controller
+              containerPort: 9095
+              protocol: TCP
+            {{- if .Values.metrics.jmx.enabled }}
+            - name: jmx
+              containerPort: {{ .Values.metrics.jmx.port }}
+              protocol: TCP
+            {{- end }}
+          env:
+            - name: KAFKA_CFG_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+              # NOTE: bitnami/kafka extracts ordinal from pod name automatically
+              # when KAFKA_CFG_NODE_ID начинается с stable prefix. Если custom
+              # operator — конвертировать в численный id через initContainer.
+            - name: KAFKA_CFG_PROCESS_ROLES
+              value: {{ if eq .Values.cluster.mode "combined" }}"broker,controller"{{ else }}"broker"{{ end }}
+            - name: KAFKA_CFG_LISTENERS
+              value: "{{ .Values.listeners.internal.name }}://:{{ .Values.listeners.internal.port }},{{ .Values.listeners.client.name }}://:{{ .Values.listeners.client.port }},CONTROLLER://:9095"
+            - name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "{{ .Values.listeners.internal.name }}:{{ .Values.listeners.internal.protocol }},{{ .Values.listeners.client.name }}:{{ .Values.listeners.client.protocol }},CONTROLLER:SSL"
+            - name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME
+              value: {{ .Values.listeners.internal.name | quote }}
+            - name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
+              value: {{ include "kafka.controllerQuorum" . | quote }}
+            - name: KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE
+              value: {{ .Values.brokerConfig.autoCreateTopicsEnable | quote }}
+            - name: KAFKA_CFG_DEFAULT_REPLICATION_FACTOR
+              value: {{ .Values.brokerConfig.defaultReplicationFactor | quote }}
+            - name: KAFKA_CFG_MIN_INSYNC_REPLICAS
+              value: {{ .Values.brokerConfig.minInsyncReplicas | quote }}
+            - name: KAFKA_CFG_UNCLEAN_LEADER_ELECTION_ENABLE
+              value: {{ .Values.brokerConfig.uncleanLeaderElectionEnable | quote }}
+            - name: KAFKA_CFG_COMPRESSION_TYPE
+              value: {{ .Values.brokerConfig.compressionType | quote }}
+            # SASL/SCRAM credentials JAAS configured через volume mount of
+            # kafka_server_jaas.conf, не env — env exposes password в pod logs.
+            - name: KAFKA_OPTS
+              value: "-Djava.security.auth.login.config=/opt/kafka/config/kafka_server_jaas.conf"
+            - name: KAFKA_HEAP_OPTS
+              value: "-Xms4g -Xmx4g"
+          volumeMounts:
+            - name: data
+              mountPath: /bitnami/kafka
+            - name: jaas-config
+              mountPath: /opt/kafka/config/kafka_server_jaas.conf
+              subPath: kafka_server_jaas.conf
+              readOnly: true
+            - name: tls
+              mountPath: /opt/kafka/tls
+              readOnly: true
+          livenessProbe:
+            tcpSocket:
+              port: client
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: client
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: jaas-config
+          secret:
+            secretName: {{ include "kafka.fullname" . }}-jaas
+        - name: tls
+          secret:
+            secretName: {{ include "kafka.fullname" . }}-tls
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.cluster.storage.storageClass }}
+        storageClassName: {{ .Values.cluster.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.cluster.storage.size }}
+{{- end }}
+
+{{/* Generate controller.quorum.voters — comma-list <id>@<host>:9095. */}}
+{{- define "kafka.controllerQuorum" -}}
+{{- $name := include "kafka.fullname" . -}}
+{{- $ns := .Release.Namespace -}}
+{{- $voters := list -}}
+{{- range $i, $_ := until (int .Values.cluster.controllers) -}}
+{{- $voters = append $voters (printf "%d@%s-%d.%s-headless.%s.svc.cluster.local:9095" (add $i 1) $name $i $name $ns) -}}
+{{- end -}}
+{{- join "," $voters -}}
+{{- end -}}

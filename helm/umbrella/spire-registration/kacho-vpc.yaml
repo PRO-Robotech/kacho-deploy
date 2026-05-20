@@ -1,0 +1,22 @@
+# KAC-127 Phase 10 — SPIFFE registration entry for kacho-vpc.
+apiVersion: kacho.cloud/v1
+kind: SpiffeRegistration
+metadata:
+  name: kacho-vpc
+  labels:
+    kacho.cloud/component: spiffe-registration
+    kacho.cloud/phase: "10"
+spec:
+  spiffeId: "spiffe://{{ trustDomain }}/ns/kacho-system/sa/kacho-vpc"
+  parentId: "spiffe://{{ trustDomain }}/ns/spire-system/sa/spire-agent"
+  selectors:
+    - type: k8s
+      value: "ns:kacho-system"
+    - type: k8s
+      value: "sa:kacho-vpc"
+    - type: cosign
+      value: "image-signature:{{ cosignFingerprint }}"
+  ttl: 3600
+  dnsNames:
+    - "kacho-vpc.kacho-system.svc"
+    - "kacho-vpc.kacho-system.svc.cluster.local"

@@ -1,0 +1,56 @@
+certManager:
+  # Email for ACME registration + renewal-failure alerts.
+  acmeEmail: "platform@kacho.cloud"
+
+  # Namespace where ClusterIssuer Secret lives.
+  namespace: "cert-manager"
+
+  # Cloudflare API token Secret (created via ExternalSecrets-operator from
+  # Vault path `secret/kacho/prod/cert-manager-cloudflare-token`).
+  cloudflare:
+    apiTokenSecret:
+      name: "cert-manager-cloudflare-token"
+      key: "token"
+
+  # ClusterIssuer ACME endpoints.
+  issuers:
+    prod:
+      enabled: true
+      name: "letsencrypt-prod"
+      server: "https://acme-v02.api.letsencrypt.org/directory"
+    staging:
+      enabled: true
+      name: "letsencrypt-staging"
+      server: "https://acme-staging-v02.api.letsencrypt.org/directory"
+
+  # DNS zones managed by Cloudflare (one per configured domain).
+  dnsZones:
+    - "{{ .Values.kacho.domain }}"
+
+  # Wildcard certificates issued per domain.
+  certificates:
+    - name: "kacho-wildcard-tls"
+      namespace: "kacho-system"
+      secretName: "kacho-wildcard-tls"
+      issuerRef: "letsencrypt-prod"
+      dnsNames:
+        - "{{ .Values.kacho.domain }}"
+        - "*.{{ .Values.kacho.domain }}"
+        - "api.{{ .Values.kacho.domain }}"
+        - "spire.{{ .Values.kacho.domain }}"
+        - "grafana.{{ .Values.kacho.domain }}"
+        - "hubble.{{ .Values.kacho.domain }}"
+        - "argocd.{{ .Values.kacho.domain }}"
+        - "hydra.{{ .Values.kacho.domain }}"
+        - "kratos.{{ .Values.kacho.domain }}"
+      duration: "2160h"                    # 90d (Let's Encrypt cap)
+      renewBefore: "720h"                  # 30d before expiry — start renewal
+      privateKey:
+        algorithm: "ECDSA"
+        size: 256
+
+kacho:
+  domain: "api.kacho.local"
+global:
+  kacho:
+    domain: ""

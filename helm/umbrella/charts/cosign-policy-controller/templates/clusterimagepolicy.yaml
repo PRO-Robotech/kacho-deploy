@@ -1,0 +1,70 @@
+{{- if .Values.enabled }}
+# KAC-127 Phase 10 — ClusterImagePolicy: enforce signed images в kacho-system.
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  name: {{ include "cosign-policy.fullname" . }}-enforce
+  labels:
+    {{- include "cosign-policy.labels" . | nindent 4 }}
+spec:
+  images:
+    {{- range .Values.imagePatterns }}
+    - glob: {{ . | quote }}
+    {{- end }}
+  authorities:
+    {{- if .Values.cosign.publicKey }}
+    - name: kacho-platform-team
+      key:
+        data: |
+{{ .Values.cosign.publicKey | indent 10 }}
+      ctlog:
+        url: "https://rekor.sigstore.dev"
+    {{- else }}
+    # When publicKey empty, pull from Secret (preferred in prod).
+    - name: kacho-platform-team
+      key:
+        secretRef:
+          name: {{ .Values.cosign.secretName }}
+          namespace: cosign-system
+      ctlog:
+        url: "https://rekor.sigstore.dev"
+    {{- end }}
+    {{- if .Values.fulcio.enabled }}
+    # Keyless OIDC via Fulcio (build-time signing).
+    - name: fulcio-keyless
+      keyless:
+        url: {{ .Values.fulcio.url | quote }}
+        identities:
+          - issuer: {{ .Values.fulcio.identity.issuer | quote }}
+            subjectRegExp: {{ .Values.fulcio.identity.subject | quote }}
+    {{- end }}
+  match:
+    - resource: pods
+      version: v1
+  mode: enforce
+---
+{{- /* Soft-warn policy for non-enforced namespaces */ -}}
+{{- if .Values.warnNamespaces }}
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  name: {{ include "cosign-policy.fullname" . }}-warn
+  labels:
+    {{- include "cosign-policy.labels" . | nindent 4 }}
+spec:
+  images:
+    {{- range .Values.imagePatterns }}
+    - glob: {{ . | quote }}
+    {{- end }}
+  authorities:
+    - name: kacho-platform-team-soft
+      key:
+        secretRef:
+          name: {{ .Values.cosign.secretName }}
+          namespace: cosign-system
+  match:
+    - resource: pods
+      version: v1
+  mode: warn
+{{- end }}
+{{- end }}

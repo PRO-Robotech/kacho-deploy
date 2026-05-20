@@ -14,9 +14,17 @@ spec:
     metadata:
       labels:
         {{- include "kacho-iam.labels" . | nindent 8 }}
+        # KAC-127 Phase 3: pod label that the OPA-sidecar egress NetworkPolicy
+        # uses to allowlist outbound traffic. Without it, OPA sidecar cannot
+        # reach bundle endpoint (intentional fail-closed for unlabeled pods).
+        kacho.cloud/opa-sidecar: "true"
       annotations:
         # ConfigMap-content hash → pod rolling-restart при изменении config.yaml.
         kacho.cloud/config-checksum: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # KAC-127 Phase 3: bump on openfga model-id change (set by
+        # openfga-bootstrap-job patching this Deployment annotation post-install).
+        # Initial value `pending` — replaced by bootstrap-job after WriteAuthorizationModel.
+        kacho.cloud/openfga-model-id-rev: "pending"
     spec:
       # KACHO_IAM_* — собственный config-namespace сервиса. К-net auto-инжектит
       # KACHO_IAM_INTERNAL_PORT=tcp://<ip>:9091 (из Service `kacho-iam-internal`),
@@ -28,6 +36,16 @@ spec:
         - name: config
           configMap:
             name: {{ include "kacho-iam.fullname" . }}-config
+        {{- if .Values.opaSidecar.enabled }}
+        # KAC-127 Phase 3 (acceptance §5.6) — OPA sidecar config + JWKS public key.
+        # Shared ConfigMaps managed at umbrella level (not per sub-chart).
+        - name: opa-config
+          configMap:
+            name: opa-sidecar-config
+        - name: kacho-iam-jwks
+          configMap:
+            name: {{ .Values.opaSidecar.jwks.configMapName | default "kacho-iam-jwks" }}
+        {{- end }}
       initContainers:
         {{- if .Values.initContainer.migrator.enabled }}
         # skill evgeniy §9 K.1: миграции БД исполняет отдельный binary `kacho-migrator`
@@ -52,32 +70,14 @@ spec:
                   key: {{ .Values.db.passwordSecretKey }}
         {{- end }}
         # KAC-105 / sub-phase-2.0-iam-overview-acceptance NFR-9:
-        # «kacho-iam config-load fails-fast, если Zitadel issuer недоступен;
-        #  ordering managed через post-install hook / init-container, пингующий
-        #  issuer/OpenFGA HTTP-ready endpoint».
-        # На E0 коду kacho-iam ещё не нужны Zitadel/OpenFGA (это E2/E3). НО:
-        # init-container остаётся в шаблоне как infrastructure-readiness гарантия,
-        # чтобы при включении extapi в E2/E3 startup-порядок уже работал.
-        # Заглушка — wait-for-it на TCP-уровне (curl недоступен в distroless).
+        # «kacho-iam config-load fails-fast, если OpenFGA недоступен;
+        #  ordering managed через init-container, пингующий OpenFGA HTTP-ready
+        #  endpoint». На E0/E1 коду kacho-iam ещё не нужен OpenFGA (это E3); НО
+        # init-container остаётся в шаблоне как infrastructure-readiness гарантия.
         # Условие `initContainer.waitForExtAuth.enabled` (default `true`) позволяет
-        # отключить ожидание для E0/E1-стендов где Zitadel/OpenFGA ещё не задеплоены.
+        # отключить ожидание для E0/E1-стендов где OpenFGA ещё не задеплоен.
+        # KAC-127: wait-for-zitadel удалён — identity/OIDC tier на Ory Kratos + Hydra.
         {{- if .Values.initContainer.waitForExtAuth.enabled }}
-        - name: wait-for-zitadel
-          image: busybox:1.36
-          command:
-            - sh
-            - -c
-            - |
-              echo "wait-for-zitadel: ожидаем kacho-umbrella-zitadel:8080 (max 300s)…"
-              for i in $(seq 1 60); do
-                if nc -z kacho-umbrella-zitadel 8080 2>/dev/null; then
-                  echo "wait-for-zitadel: OK"
-                  exit 0
-                fi
-                sleep 5
-              done
-              echo "wait-for-zitadel: TIMEOUT — kacho-umbrella-zitadel:8080 недоступен"
-              exit 1
         - name: wait-for-openfga
           image: busybox:1.36
           command:
@@ -105,6 +105,12 @@ spec:
               containerPort: {{ .Values.ports.grpc }}
             - name: grpc-internal
               containerPort: {{ .Values.ports.internalGrpc }}
+            # KAC-127 Phase 2 — HTTP webhook listener (Hydra token/refresh hooks,
+            # CAEP ingress). KAC-127 deploy#39 — also serves the OPA policy
+            # bundle (/opa/v1/bundle.tar.gz) for the OPA sidecar, which pulls
+            # over HTTP and cannot reach the gRPC :9091 mux. Cluster-internal.
+            - name: http-hooks
+              containerPort: {{ .Values.ports.hooksHttp | default 9092 }}
           volumeMounts:
             - name: config
               mountPath: /etc/kacho-iam
@@ -127,10 +133,69 @@ spec:
                   name: {{ .Values.config.extapi.openfga.storeIdSecretName }}
                   key: {{ .Values.config.extapi.openfga.storeIdSecretKey }}
                   optional: true
+            # ─── KAC-127 Phase 3 — authz core env vars ──────────────────
+            # acceptance §5.2 / P3-D2: pinned authorization_model_id (versioned + immutable).
+            # Источник — Secret openfga-model-id, key `current`, patch'ит openfga-bootstrap-job.
+            # `optional: true` для cold-start до первого bootstrap; кешируется in-memory
+            # после первого успешного fetch, refreshes на NOTIFY `kacho_iam_subjects`.
+            - name: KACHO_IAM_OPENFGA_MODEL_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.openfgaBootstrap.modelIdSecretName | default "openfga-model-id" }}
+                  key: current
+                  optional: true
+            # OPA bundle server — список knobs для build-side bundle generation
+            # (kacho-iam serves bundle.tar.gz). См. opa-bundle-server-configmap.yaml.
+            {{- if .Values.opaSidecar.enabled }}
+            - name: KACHO_BUILD_SHA
+              value: {{ .Values.image.tag | quote }}   # CI sets tag = git sha (or :dev for local).
+            {{- end }}
+            # ─── KAC-127 Phase 2 — AuthN core env vars ──────────────────
+            # Hydra ↔ kacho-iam shared secret для token_hook / refresh_hook.
+            # Создаётся отдельным Secret kacho-iam-hook-token (см. cluster overrides);
+            # optional: true позволяет pod'у стартовать на E0/E1 (до Phase 2 включения).
+            - name: KACHO_IAM_HOOK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kacho.hooks.tokenHookSecretName }}
+                  key: {{ .Values.kacho.hooks.tokenHookSecretKey }}
+                  optional: true
+            # AES-GCM key для encrypt-at-rest JWKS private_key_pem (acceptance §2.4).
+            # В prod — KMS-CMK через external-secrets; в dev — раз-сгенерированный
+            # 32-byte base64url в Secret kacho-iam-jwks-enc-key.
+            - name: KACHO_IAM_JWKS_ENC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kacho.iam.jwks.encKeySecretName }}
+                  key: {{ .Values.kacho.iam.jwks.encKeySecretKey }}
+                  optional: true
+            # Cache knobs (acceptance §2.5 + §2.6) — дублируются как env для
+            # сервисов, читающих их напрямую (api-gateway, kacho-iam).
+            - name: KACHO_IAM_SESSION_REVOCATIONS_CACHE_TTL_SECONDS
+              value: {{ .Values.kacho.iam.sessionRevocations.cacheTTLSeconds | quote }}
+            - name: KACHO_IAM_DPOP_REPLAY_CACHE_TTL_SECONDS
+              value: {{ .Values.kacho.iam.dpopReplay.cacheTTLSeconds | quote }}
+            - name: KACHO_IAM_DPOP_REPLAY_CACHE_SIZE
+              value: {{ .Values.kacho.iam.dpopReplay.cacheSize | quote }}
+            - name: KACHO_IAM_JWKS_ROTATION_DAYS
+              value: {{ .Values.kacho.iam.jwks.rotationDays | quote }}
+            # Domain — для self-issued tokens / OIDC discovery / WebAuthn RP-id.
+            - name: KACHO_IAM_DOMAIN
+              value: {{ .Values.kacho.domain | quote }}
+            - name: KACHO_IAM_HYDRA_ISSUER
+              value: {{ printf "https://%s.%s" .Values.kacho.subdomains.hydra .Values.kacho.domain | quote }}
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+          {{- if .Values.opaSidecar.enabled }}
+          # KAC-127 Phase 3: bulk-import OPA bundle-server knobs (see
+          # umbrella/templates/opa-bundle-server-configmap.yaml).
+          envFrom:
+            - configMapRef:
+                name: opa-bundle-server-config
+                optional: false
+          {{- end }}
           readinessProbe:
             tcpSocket:
               port: grpc
@@ -143,3 +208,62 @@ spec:
             periodSeconds: 30
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.opaSidecar.enabled }}
+        # ─── KAC-127 Phase 3 — OPA sidecar (acceptance §5.6, P3-D6) ────────
+        # Per-pod OPA evaluates Rego guardrails after FGA Check allows. Localhost-
+        # only listener (:8181) — no Service, no external access. KAC-127
+        # (deploy#39): bundle pulled over HTTP from kacho-iam's HTTP listener
+        # (:9092, route /opa/v1/bundle.tar.gz) — the OPA bundle plugin speaks
+        # HTTP and cannot use the gRPC :9091 mux.
+        - name: opa
+          image: {{ .Values.opaSidecar.image | default "openpolicyagent/opa:1.0.0-rootless" | quote }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - run
+            - --server
+            - --addr=127.0.0.1:8181
+            - --diagnostic-addr=0.0.0.0:8282
+            - --config-file=/config/config.yaml
+            - --log-level={{ .Values.opaSidecar.logLevel | default "info" }}
+            - --log-format=json
+            - --set=plugins.envoy_ext_authz_grpc.enabled=false
+          volumeMounts:
+            - name: opa-config
+              mountPath: /config
+              readOnly: true
+            - name: kacho-iam-jwks
+              mountPath: /jwks
+              readOnly: true
+          ports:
+            # Diagnostic port (health, metrics) is exposed on 0.0.0.0 for kubelet
+            # probes — Rego eval API stays on 127.0.0.1:8181 (intra-pod only).
+            - name: opa-diag
+              containerPort: 8282
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /health?bundles=true
+              port: opa-diag
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: opa-diag
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: {{ .Values.opaSidecar.resources.requests.cpu | default "20m" }}
+              memory: {{ .Values.opaSidecar.resources.requests.memory | default "64Mi" }}
+            limits:
+              cpu: {{ .Values.opaSidecar.resources.limits.cpu | default "200m" }}
+              memory: {{ .Values.opaSidecar.resources.limits.memory | default "256Mi" }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+        {{- end }}

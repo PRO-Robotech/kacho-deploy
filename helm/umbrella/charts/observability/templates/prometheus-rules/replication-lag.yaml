@@ -1,0 +1,59 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: "replication-lag-alerts"
+  namespace: {{ .Values.observability.namespace | quote }}
+  labels:
+    kacho.cloud/component: prometheus-rules
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    - name: kacho-replication-lag
+      rules:
+        - alert: KachoPostgresReplicationLagHigh
+          expr: |
+            pg_stat_replication_pg_wal_lsn_diff_bytes > 100 * 1024 * 1024
+          for: 5m
+          labels:
+            severity: P2
+            service: postgres-ha
+          annotations:
+            summary: "Postgres streaming replication lag > 100MB on {{`{{ $labels.application_name }}`}}"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/regional-failover.md"
+
+        - alert: KachoKafkaMirrorMakerLag
+          expr: |
+            mm2_replication_lag_ms > 5000
+          for: 5m
+          labels:
+            severity: P2
+            service: kafka
+          annotations:
+            summary: "Kafka MirrorMaker 2 replication lag > 5s for 5m"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/audit-pipeline-incident.md"
+
+        - alert: KachoClickhouseReplicationLag
+          expr: |
+            chr_replica_max_absolute_delay > 60
+          for: 5m
+          labels:
+            severity: P2
+            service: clickhouse
+          annotations:
+            summary: "ClickHouse Replicated max absolute delay > 60s"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/audit-pipeline-incident.md"
+
+        - alert: KachoOpenfgaWriteErrorRate
+          expr: |
+            sum(rate(openfga_request_total{method="Write",grpc_code!="OK"}[5m]))
+            /
+            sum(rate(openfga_request_total{method="Write"}[5m]))
+            > 0.01
+          for: 5m
+          labels:
+            severity: P2
+            service: openfga
+          annotations:
+            summary: "OpenFGA Write error rate > 1% for 5m"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/fga-tuple-drift-reconciliation.md"

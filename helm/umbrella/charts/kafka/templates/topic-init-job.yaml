@@ -1,0 +1,134 @@
+{{- if .Values.enabled }}
+{{/*
+KAC-127 Phase 9 — Kafka topic + SCRAM user init Job.
+
+Создаёт три topic'а (kacho-audit-events.shared / kacho-audit-dlq / kacho-caep-events
+по acceptance §2.5 нормативной таблице) и SCRAM users (.Values.auth.users)
+после того как broker'ы поднялись.
+
+Helm hooks:
+  - post-install + post-upgrade — re-apply при изменении topics/users list
+  - hook-weight=10 — после StatefulSet, до consumer'ов
+
+Idempotency: kafka-topics.sh --create --if-not-exists; SCRAM upsert через
+delete+create (admin API SCRAM idempotency depends on Kafka version).
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "kafka.fullname" . }}-topic-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kafka.labels" . | nindent 4 }}
+    kacho.cloud/component: kafka-topic-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 5
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "kafka.labels" . | nindent 8 }}
+        kacho.cloud/component: kafka-topic-init
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "kafka.fullname" . }}
+      initContainers:
+        - name: wait-for-kafka
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Kafka brokers..."
+              for i in $(seq 1 60); do
+                if nc -z {{ include "kafka.fullname" . }}-bootstrap {{ .Values.listeners.client.port }}; then
+                  echo "Kafka reachable."
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "Kafka did not become ready in 5min."
+              exit 1
+      containers:
+        - name: topic-init
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: BOOTSTRAP
+              value: {{ printf "%s-bootstrap:%d" (include "kafka.fullname" .) (int .Values.listeners.client.port) | quote }}
+          command:
+            - bash
+            - -ec
+            - |
+              # Create SCRAM users из values.auth.users.
+              {{- range .Values.auth.users }}
+              PASSWORD="$(cat /etc/kafka-scram/{{ .username }}/password)"
+              kafka-configs.sh \
+                --bootstrap-server "$BOOTSTRAP" \
+                --command-config /etc/kafka-admin/admin.properties \
+                --alter \
+                --add-config "SCRAM-SHA-512=[password=$PASSWORD]" \
+                --entity-type users --entity-name "{{ .username }}" || echo "user {{ .username }} may already exist"
+              {{- end }}
+
+              # Create topics.
+              {{- range .Values.topics }}
+              kafka-topics.sh \
+                --bootstrap-server "$BOOTSTRAP" \
+                --command-config /etc/kafka-admin/admin.properties \
+                --create --if-not-exists \
+                --topic "{{ .name }}" \
+                --partitions {{ .partitions }} \
+                --replication-factor {{ .replicationFactor }} \
+                {{- range $k, $v := .configs }}
+                --config "{{ $k }}={{ $v }}" \
+                {{- end }}
+              {{- end }}
+
+              echo "Topic + user init complete."
+          volumeMounts:
+            - name: admin-properties
+              mountPath: /etc/kafka-admin
+              readOnly: true
+            {{- range .Values.auth.users }}
+            - name: scram-{{ .username }}
+              mountPath: /etc/kafka-scram/{{ .username }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: admin-properties
+          secret:
+            secretName: {{ include "kafka.fullname" . }}-admin-properties
+        {{- range .Values.auth.users }}
+        - name: scram-{{ .username }}
+          secret:
+            secretName: {{ .passwordSecretName }}
+            optional: false
+        {{- end }}
+---
+{{/*
+Admin client properties — JAAS config + truststore — для kafka-topics.sh
+вызовов из init-job.
+
+ВНИМАНИЕ: admin SCRAM bootstrap password — placeholder; на prod подаваться
+через external-secrets, не Helm-rendered.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "kafka.fullname" . }}-admin-properties
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kafka.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  admin.properties: |
+    security.protocol=SASL_SSL
+    sasl.mechanism=SCRAM-SHA-512
+    sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="admin" password="ADMIN_BOOTSTRAP_PASSWORD_REPLACE_VIA_EXTERNAL_SECRETS";
+    ssl.truststore.location=/opt/kafka/tls/ca.crt
+{{- end }}

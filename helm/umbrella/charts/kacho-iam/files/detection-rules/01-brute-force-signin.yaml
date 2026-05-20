@@ -1,0 +1,32 @@
+title: Brute-Force Sign-in
+id: kacho-audit-rule-01-brute-force-signin
+description: |
+  Detects >10 failed sign-in attempts from same (actor_ip, tenant_account_id)
+  within 5-minute window. KAC-127 Phase 9 §2.10 rule #1. Severity High.
+status: stable
+author: Kacho Cloud Security
+date: 2026-05-19
+references:
+  - https://attack.mitre.org/techniques/T1110/  # MITRE ATT&CK Brute Force
+tags:
+  - attack.credential_access
+  - attack.t1110
+logsource:
+  product: kacho_iam
+  category: authentication
+detection:
+  selection:
+    event_type: 'iam.signin.failed'
+  timeframe: 5m
+  condition: selection | count() by actor_ip, tenant_account_id > 10
+fields:
+  - actor_ip
+  - tenant_account_id
+  - actor_id
+falsepositives:
+  - Legitimate user with mistyped password (rare to exceed 10 attempts in 5m)
+  - Automated test runner with bad credentials
+level: high
+response:
+  action: block_ip_via_waf
+  notification: pagerduty_p2

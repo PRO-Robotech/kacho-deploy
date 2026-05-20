@@ -1,0 +1,137 @@
+{{- range $role, $replicas := .Values.observability.loki.replicas }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ printf "loki-%s" $role | quote }}
+  namespace: {{ $.Values.observability.namespace | quote }}
+  labels:
+    kacho.cloud/component: loki
+    kacho.cloud/role: {{ $role | quote }}
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/component: {{ $role | quote }}
+    app.kubernetes.io/part-of: kacho-iam-platform
+spec:
+  serviceName: {{ printf "loki-%s" $role | quote }}
+  replicas: {{ $replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+      app.kubernetes.io/component: {{ $role | quote }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loki
+        app.kubernetes.io/component: {{ $role | quote }}
+        app.kubernetes.io/part-of: kacho-iam-platform
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: loki
+                  app.kubernetes.io/component: {{ $role | quote }}
+              topologyKey: "kubernetes.io/hostname"
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "topology.kubernetes.io/zone"
+          whenUnsatisfiable: "DoNotSchedule"
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+              app.kubernetes.io/component: {{ $role | quote }}
+      containers:
+        - name: loki
+          image: {{ $.Values.observability.loki.image | quote }}
+          args:
+            - "-target={{ $role }}"
+            - "-config.file=/etc/loki/loki.yaml"
+          ports:
+            - containerPort: 3100
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+            - name: data
+              mountPath: /loki
+          resources:
+            {{- with index $.Values.observability.loki.resources $role }}
+            requests:
+              cpu: {{ .requests.cpu | quote }}
+              memory: {{ .requests.memory | quote }}
+            limits:
+              cpu: {{ .limits.cpu | quote }}
+              memory: {{ .limits.memory | quote }}
+            {{- else }}
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: "loki-config"
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 50Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "loki-%s" $role | quote }}
+  namespace: {{ $.Values.observability.namespace | quote }}
+spec:
+  selector:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/component: {{ $role | quote }}
+  ports:
+    - name: http
+      port: 3100
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "loki-config"
+  namespace: {{ .Values.observability.namespace | quote }}
+data:
+  loki.yaml: |
+    auth_enabled: false
+    server:
+      http_listen_port: 3100
+    common:
+      storage:
+        s3:
+          bucketnames: {{ .Values.observability.loki.storage.s3.bucket | quote }}
+          endpoint: {{ .Values.observability.loki.storage.s3.endpoint | default "s3.amazonaws.com" | quote }}
+          region: {{ .Values.observability.loki.storage.s3.region | quote }}
+          insecure: false
+      replication_factor: 3
+      ring:
+        kvstore:
+          store: memberlist
+    schema_config:
+      configs:
+        - from: "2026-01-01"
+          store: tsdb
+          object_store: s3
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    limits_config:
+      retention_period: {{ .Values.observability.loki.retention | quote }}
+      max_streams_per_user: 100000
+      max_query_parallelism: 32
+    compactor:
+      working_directory: /loki/compactor
+      retention_enabled: true

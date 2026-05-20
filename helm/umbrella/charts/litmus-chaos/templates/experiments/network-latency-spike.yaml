@@ -1,0 +1,46 @@
+{{- if .Values.enabled }}
+# KAC-127 Phase 12 — ChaosExperiment: network-latency-spike.
+# Injects 500ms latency on api-gateway → kacho-iam path.
+# Verifies p99 latency SLO, circuit-breaker activation, graceful UX.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: network-latency-spike
+  namespace: litmus-chaos
+  labels:
+    {{- include "litmus-chaos.labels" . | nindent 4 }}
+    kacho.cloud/chaos-severity: {{ (index .Values.severity "network-partition") | quote }}
+spec:
+  definition:
+    scope: Namespaced
+    permissions:
+      - apiGroups: [""]
+        resources: ["pods", "events"]
+        verbs: ["get", "list", "create", "patch", "exec"]
+      - apiGroups: ["litmuschaos.io"]
+        resources: ["chaosengines", "chaosexperiments", "chaosresults"]
+        verbs: ["get", "list", "patch", "update"]
+    image: "{{ .Values.imageRegistry }}/go-runner:3.10.0"
+    imagePullPolicy: Always
+    args:
+      - -c
+      - ./experiments -name pod-network-latency
+    command:
+      - /bin/bash
+    env:
+      - name: TOTAL_CHAOS_DURATION
+        value: "180"
+      - name: NETWORK_LATENCY
+        value: "500"               # milliseconds
+      - name: JITTER
+        value: "50"
+      - name: APP_NAMESPACE
+        value: "kacho-system"
+      - name: APP_LABEL
+        value: "app.kubernetes.io/name=api-gateway"
+      - name: DESTINATION_HOSTS
+        value: "kacho-iam.kacho-system.svc.cluster.local"
+    labels:
+      name: pod-network-latency
+      app.kubernetes.io/part-of: litmus
+{{- end }}

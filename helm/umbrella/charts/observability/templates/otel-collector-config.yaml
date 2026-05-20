@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "otel-collector-config"
+  namespace: {{ .Values.observability.namespace | quote }}
+  labels:
+    kacho.cloud/component: otel-collector
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+          http:
+            endpoint: "0.0.0.0:4318"
+      filelog/pods:
+        include: [ /var/log/pods/*/*/*.log ]
+        start_at: end
+        include_file_path: true
+        include_file_name: false
+        operators:
+          - type: regex_parser
+            regex: '^(?P<time>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d+Z)\s+(?P<stream>stdout|stderr)\s+(?P<flag>\w)\s+(?P<log>.*)$'
+            timestamp:
+              parse_from: attributes.time
+              layout: '%Y-%m-%dT%H:%M:%S.%LZ'
+      hostmetrics:
+        collection_interval: 30s
+        scrapers:
+          cpu: {}
+          disk: {}
+          load: {}
+          filesystem: {}
+          memory: {}
+          network: {}
+          paging: {}
+    processors:
+      batch:
+        send_batch_size: 8192
+        timeout: 5s
+      resource:
+        attributes:
+          - key: "kacho.cloud/region"
+            from_attribute: "KACHO_REGION"
+            action: upsert
+          - key: "kacho.cloud/cluster"
+            from_attribute: "KACHO_CLUSTER"
+            action: upsert
+          - key: "kacho.cloud/canary"
+            from_attribute: "KACHO_CANARY"
+            action: upsert
+      attributes/pii:
+        actions:
+          {{- range .Values.observability.otelCollector.piiScrubbing.fields }}
+          - key: {{ . | quote }}
+            action: delete
+          {{- end }}
+      tail_sampling:
+        decision_wait: "10s"
+        num_traces: 50000
+        expected_new_traces_per_sec: 5000
+        policies:
+          - name: always_error
+            type: status_code
+            status_code: { status_codes: [ERROR] }
+          - name: control_plane
+            type: string_attribute
+            string_attribute:
+              key: "service.name"
+              values: ["kacho-iam","kacho-api-gateway"]
+          - name: probabilistic_data_plane
+            type: probabilistic
+            probabilistic:
+              sampling_percentage: {{ mul .Values.observability.otelCollector.sampling.dataPlane 100 }}
+    exporters:
+      otlp/tempo:
+        endpoint: "tempo.{{ .Values.observability.namespace }}.svc.cluster.local:4317"
+        tls:
+          insecure: true                   # in-cluster SPIFFE provides mTLS
+      prometheusremotewrite/mimir:
+        endpoint: "http://mimir-distributor.{{ .Values.observability.namespace }}.svc.cluster.local:8080/api/v1/push"
+        external_labels:
+          kacho_cloud_region: "${KACHO_REGION}"
+      loki/loki:
+        endpoint: "http://loki-distributor.{{ .Values.observability.namespace }}.svc.cluster.local:3100/loki/api/v1/push"
+        default_labels_enabled:
+          exporter: false
+          job: true
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [resource, attributes/pii, tail_sampling, batch]
+          exporters: [otlp/tempo]
+        metrics:
+          receivers: [otlp, hostmetrics]
+          processors: [resource, batch]
+          exporters: [prometheusremotewrite/mimir]
+        logs:
+          receivers: [otlp, filelog/pods]
+          processors: [resource, attributes/pii, batch]
+          exporters: [loki/loki]
+      telemetry:
+        logs:
+          level: info
+        metrics:
+          level: detailed
+          address: "0.0.0.0:8888"

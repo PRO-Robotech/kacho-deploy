@@ -1,0 +1,44 @@
+{{- if .Values.enabled }}
+# KAC-127 Phase 12 — ChaosExperiment: cpu-stress-clickhouse.
+# Saturates ClickHouse CPU. Verifies audit query graceful-degradation
+# (timeout limit + fallback to S3-cold-read).
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: cpu-stress-clickhouse
+  namespace: litmus-chaos
+  labels:
+    {{- include "litmus-chaos.labels" . | nindent 4 }}
+    kacho.cloud/chaos-severity: {{ (index .Values.severity "slow-postgres") | quote }}
+spec:
+  definition:
+    scope: Namespaced
+    permissions:
+      - apiGroups: [""]
+        resources: ["pods", "events"]
+        verbs: ["get", "list", "create", "patch", "exec"]
+      - apiGroups: ["litmuschaos.io"]
+        resources: ["chaosengines", "chaosexperiments", "chaosresults"]
+        verbs: ["get", "list", "patch", "update"]
+    image: "{{ .Values.imageRegistry }}/go-runner:3.10.0"
+    imagePullPolicy: Always
+    args:
+      - -c
+      - ./experiments -name pod-cpu-hog
+    command:
+      - /bin/bash
+    env:
+      - name: TOTAL_CHAOS_DURATION
+        value: "300"
+      - name: CPU_LOAD
+        value: "100"
+      - name: CPU_CORES
+        value: "4"
+      - name: APP_NAMESPACE
+        value: "kacho-system"
+      - name: APP_LABEL
+        value: "app.kubernetes.io/name=clickhouse"
+    labels:
+      name: pod-cpu-hog
+      app.kubernetes.io/part-of: litmus
+{{- end }}

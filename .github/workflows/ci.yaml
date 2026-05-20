@@ -30,14 +30,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: PRO-Robotech/kacho-vpc
+          ref: KAC-127
           path: kacho-vpc
       - uses: actions/checkout@v4
         with:
           repository: PRO-Robotech/kacho-compute
+          ref: KAC-127
           path: kacho-compute
       - uses: actions/checkout@v4
         with:
           repository: PRO-Robotech/kacho-api-gateway
+          ref: KAC-127
           path: kacho-api-gateway
       # kacho-ui is a private repo; the default GITHUB_TOKEN cannot access it
       # (Not Found - https://docs.github.com/rest/repos/repos#get-a-repository).
@@ -74,11 +77,11 @@ jobs:
         with: { path: kacho-deploy }
 
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-vpc, path: kacho-vpc }
+        with: { repository: PRO-Robotech/kacho-vpc, ref: KAC-127, path: kacho-vpc }
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-compute, path: kacho-compute }
+        with: { repository: PRO-Robotech/kacho-compute, ref: KAC-127, path: kacho-compute }
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-api-gateway, path: kacho-api-gateway }
+        with: { repository: PRO-Robotech/kacho-api-gateway, ref: KAC-127, path: kacho-api-gateway }
       # kacho-ui is a private repo; best-effort checkout (see helm-lint job).
       - uses: actions/checkout@v4
         continue-on-error: true

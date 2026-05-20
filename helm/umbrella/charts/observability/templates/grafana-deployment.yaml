@@ -1,0 +1,199 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "grafana"
+  namespace: {{ .Values.observability.namespace | quote }}
+  labels:
+    kacho.cloud/component: grafana
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: kacho-iam-platform
+spec:
+  replicas: {{ .Values.observability.grafana.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grafana
+        app.kubernetes.io/part-of: kacho-iam-platform
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: grafana
+              topologyKey: "kubernetes.io/hostname"
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "topology.kubernetes.io/zone"
+          whenUnsatisfiable: "DoNotSchedule"
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      containers:
+        - name: grafana
+          image: {{ .Values.observability.grafana.image | quote }}
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GF_SERVER_ROOT_URL
+              value: "https://grafana.{{ .Values.kacho.domain }}"
+            {{- if .Values.observability.grafana.oidc.enabled }}
+            - name: GF_AUTH_GENERIC_OAUTH_ENABLED
+              value: "true"
+            - name: GF_AUTH_GENERIC_OAUTH_NAME
+              value: "Hydra"
+            - name: GF_AUTH_GENERIC_OAUTH_AUTH_URL
+              value: "{{ tpl .Values.observability.grafana.oidc.issuer . }}/oauth2/auth"
+            - name: GF_AUTH_GENERIC_OAUTH_TOKEN_URL
+              value: "{{ tpl .Values.observability.grafana.oidc.issuer . }}/oauth2/token"
+            - name: GF_AUTH_GENERIC_OAUTH_API_URL
+              value: "{{ tpl .Values.observability.grafana.oidc.issuer . }}/userinfo"
+            - name: GF_AUTH_GENERIC_OAUTH_CLIENT_ID
+              value: {{ .Values.observability.grafana.oidc.clientId | quote }}
+            - name: GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: "grafana-oidc-credentials"
+                  key: "client-secret"
+                  optional: true
+            - name: GF_AUTH_GENERIC_OAUTH_SCOPES
+              value: {{ join " " .Values.observability.grafana.oidc.scopes | quote }}
+            - name: GF_AUTH_GENERIC_OAUTH_ALLOWED_DOMAINS
+              value: {{ .Values.observability.grafana.oidc.allowedDomains | quote }}
+            - name: GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT
+              value: {{ .Values.observability.grafana.oidc.roleAttributeStrict | quote }}
+            - name: GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH
+              value: "contains(groups[*], 'kacho-platform-admins') && 'Admin' || contains(groups[*], 'kacho-sre') && 'Editor' || 'Viewer'"
+            {{- end }}
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboards-providers
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+          resources:
+            requests:
+              cpu: {{ .Values.observability.grafana.resources.requests.cpu | quote }}
+              memory: {{ .Values.observability.grafana.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.observability.grafana.resources.limits.cpu | quote }}
+              memory: {{ .Values.observability.grafana.resources.limits.memory | quote }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: datasources
+          configMap:
+            name: "grafana-datasources"
+        - name: dashboards-providers
+          configMap:
+            name: "grafana-dashboards-providers"
+        - name: dashboards
+          configMap:
+            name: "grafana-dashboards"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "grafana"
+  namespace: {{ .Values.observability.namespace | quote }}
+spec:
+  selector:
+    app.kubernetes.io/name: grafana
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+{{- if .Values.observability.grafana.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: "grafana"
+  namespace: {{ .Values.observability.namespace | quote }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.observability.grafana.ingress.certIssuer | quote }}
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - {{ tpl .Values.observability.grafana.ingress.host . | quote }}
+      secretName: {{ .Values.observability.grafana.ingress.tlsSecretName | quote }}
+  rules:
+    - host: {{ tpl .Values.observability.grafana.ingress.host . | quote }}
+      http:
+        paths:
+          - pathType: Prefix
+            path: "/"
+            backend:
+              service:
+                name: "grafana"
+                port:
+                  number: 80
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "grafana-datasources"
+  namespace: {{ .Values.observability.namespace | quote }}
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Mimir
+        type: prometheus
+        access: proxy
+        url: "http://mimir-querier.{{ .Values.observability.namespace }}.svc.cluster.local:8080/prometheus"
+        isDefault: true
+      - name: Tempo
+        type: tempo
+        access: proxy
+        url: "http://tempo.{{ .Values.observability.namespace }}.svc.cluster.local:3200"
+        jsonData:
+          tracesToLogs:
+            datasourceUid: loki
+          tracesToMetrics:
+            datasourceUid: mimir
+      - name: Loki
+        type: loki
+        access: proxy
+        url: "http://loki-querier.{{ .Values.observability.namespace }}.svc.cluster.local:3100"
+      - name: ClickHouse-Audit
+        type: grafana-clickhouse-datasource
+        access: proxy
+        url: "http://clickhouse.kacho-system.svc.cluster.local:8123"
+        editable: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "grafana-dashboards-providers"
+  namespace: {{ .Values.observability.namespace | quote }}
+data:
+  providers.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'kacho-dashboards'
+        orgId: 1
+        folder: 'Kachō Platform'
+        type: file
+        disableDeletion: true
+        editable: false
+        options:
+          path: /var/lib/grafana/dashboards

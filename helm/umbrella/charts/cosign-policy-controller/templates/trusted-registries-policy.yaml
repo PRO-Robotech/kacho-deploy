@@ -1,0 +1,29 @@
+{{- if and .Values.enabled (gt (len .Values.trustedRegistries) 0) }}
+---
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  name: "kacho-trusted-registries-only"
+  labels:
+    kacho.cloud/component: cosign-registry-policy
+    app.kubernetes.io/managed-by: helm
+spec:
+  images:
+    - glob: "**/*"
+  authorities:
+    {{- range .Values.trustedRegistries }}
+    - name: {{ printf "trust-%s" (. | replace "/" "-" | replace "." "-") | quote }}
+      static:
+        action: "pass"
+        includeSpec: |
+          {
+            "include": {
+              "type": "glob",
+              "pattern": "{{ . }}/**"
+            }
+          }
+    {{- end }}
+    - name: "reject-untrusted"
+      static:
+        action: "fail"
+{{- end }}

@@ -1,0 +1,28 @@
+{{- if and .Values.cloudflare.crossplane.enabled .Values.cloudflare.rateLimit.enabled }}
+{{- range .Values.cloudflare.rateLimit.rules }}
+---
+apiVersion: cloudflare.crossplane.io/v1alpha1
+kind: RateLimit
+metadata:
+  name: {{ .id | quote }}
+  labels:
+    kacho.cloud/component: cloudflare-ratelimit
+spec:
+  forProvider:
+    zone: {{ $.Values.cloudflare.zone | quote }}
+    description: {{ .description | quote }}
+    disabled: false
+    threshold: {{ .threshold.requests }}
+    period: {{ .threshold.periodSeconds }}
+    match:
+      request:
+        urlPattern: {{ .match.pathPattern | quote }}
+        schemes: ["HTTPS"]
+        methods: ["_ALL_"]
+    action:
+      mode: {{ .action | quote }}
+      timeout: {{ .threshold.periodSeconds }}
+  providerConfigRef:
+    name: cloudflare-default
+{{- end }}
+{{- end }}

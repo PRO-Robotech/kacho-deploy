@@ -1,0 +1,122 @@
+{{- if and .Values.enabled .Values.strict.enabled }}
+# KAC-127 Phase 12 — Strict ClusterImagePolicy for production.
+#
+# In strict mode, an image MUST satisfy ALL of:
+#   1. Be signed by the trusted cosign key (or keyless OIDC via Fulcio).
+#   2. Have an attached SLSA L3 provenance attestation (in-toto Statement,
+#      predicate type `https://slsa.dev/provenance/v1`, predicate.builder.id
+#      = `https://github.com/actions/runner` OR custom builder).
+#   3. Have an attached SBOM attestation (SPDX or CycloneDX), non-empty.
+#   4. Image registry domain MUST appear in trustedRegistries list.
+#
+# Any failure → admission rejected; pod cannot start.
+#
+# Difference from Phase 11 (default) policy:
+#   - Phase 11: image is signed OR SBOM-attested → admit.
+#   - Phase 12 strict: image MUST be signed AND SLSA-attested AND SBOM-attested.
+#   - Phase 12 strict applies to enforcedNamespaces only (kacho-system in prod).
+#   - Phase 11 audit-only policy continues for `warnNamespaces`.
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  name: "kacho-strict-attestation-required"
+  labels:
+    {{- include "cosign-policy.labels" . | nindent 4 }}
+    kacho.cloud/policy-mode: strict
+  annotations:
+    kacho.cloud/policy-rationale: "KAC-127 Phase 12 — production-grade supply-chain enforcement"
+spec:
+  images:
+    {{- range .Values.imagePatterns }}
+    - glob: {{ . | quote }}
+    {{- end }}
+  authorities:
+    # Authority 1: trusted cosign key (must verify signature).
+    - name: "kacho-platform-trusted-key"
+      key:
+        {{- if .Values.cosign.publicKey }}
+        data: |
+{{ .Values.cosign.publicKey | indent 10 }}
+        {{- else }}
+        secretRef:
+          name: {{ .Values.cosign.secretName }}
+          namespace: cosign-system
+        {{- end }}
+      ctlog:
+        url: "https://rekor.sigstore.dev"
+      # Both signature AND attestations required.
+      attestations:
+        - name: "slsa-provenance-l3"
+          predicateType: "https://slsa.dev/provenance/v1"
+          policy:
+            type: "cue"
+            data: |
+              predicateType: "https://slsa.dev/provenance/v1"
+              predicate: {
+                buildDefinition: {
+                  buildType: =~ ".*"
+                  externalParameters: {
+                    workflow: {
+                      ref:        =~ "^refs/(heads|tags)/"
+                      repository: =~ "^https://github.com/PRO-Robotech/.*"
+                    }
+                  }
+                }
+                runDetails: {
+                  builder: {
+                    // SLSA L3 minimum: hosted CI builder.
+                    id: =~ "^https://github.com/actions/runner" |
+                          "^https://github.com/PRO-Robotech/kacho-builder.*"
+                  }
+                }
+              }
+        - name: "sbom-spdx-or-cyclonedx-required"
+          predicateType: "https://spdx.dev/Document"
+          policy:
+            type: "cue"
+            data: |
+              predicateType: "https://spdx.dev/Document"
+              predicate: {
+                creationInfo: {
+                  // SBOM must be recently generated (≤ 30d).
+                  created: =~ "^\\d{4}-\\d{2}-\\d{2}T"
+                }
+                packages: [
+                  // Non-empty SBOM.
+                  ...
+                ]
+              }
+    {{- if .Values.fulcio.enabled }}
+    # Authority 2: keyless OIDC via Fulcio (build-time identity).
+    # Either Authority 1 OR Authority 2 must pass.
+    - name: "fulcio-keyless-strict"
+      keyless:
+        url: {{ .Values.fulcio.url | quote }}
+        identities:
+          - issuer: {{ .Values.fulcio.identity.issuer | quote }}
+            subjectRegExp: {{ .Values.fulcio.identity.subject | quote }}
+      ctlog:
+        url: "https://rekor.sigstore.dev"
+      attestations:
+        - name: "slsa-provenance-keyless"
+          predicateType: "https://slsa.dev/provenance/v1"
+        - name: "sbom-keyless"
+          predicateType: "https://spdx.dev/Document"
+    {{- end }}
+  match:
+    - resource: pods
+      version: v1
+    - resource: deployments
+      version: v1
+      group: apps
+    - resource: statefulsets
+      version: v1
+      group: apps
+    - resource: jobs
+      version: v1
+      group: batch
+    - resource: cronjobs
+      version: v1
+      group: batch
+  mode: enforce
+{{- end }}

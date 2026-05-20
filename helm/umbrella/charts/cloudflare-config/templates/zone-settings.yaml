@@ -1,0 +1,32 @@
+{{- if .Values.cloudflare.crossplane.enabled }}
+---
+apiVersion: cloudflare.crossplane.io/v1alpha1
+kind: ZoneSettingsOverride
+metadata:
+  name: "kacho-zone-settings"
+  labels:
+    kacho.cloud/component: cloudflare-zone
+spec:
+  forProvider:
+    zone: {{ .Values.cloudflare.zone | quote }}
+    settings:
+      minTlsVersion: {{ printf "%s.0" .Values.cloudflare.zoneSettings.tls.minVersion | quote }}
+      tls13: "on"
+      automaticHttpsRewrites: "on"
+      alwaysUseHttps: "on"
+      opportunisticEncryption: "on"
+      securityHeader:
+        enabled: true
+        maxAge: {{ .Values.cloudflare.zoneSettings.tls.hstsMaxAge }}
+        includeSubdomains: {{ .Values.cloudflare.zoneSettings.tls.hstsIncludeSubdomains }}
+        preload: {{ .Values.cloudflare.zoneSettings.tls.hstsPreload }}
+      http3: {{ ternary "on" "off" .Values.cloudflare.zoneSettings.http3 | quote }}
+      earlyHints: {{ ternary "on" "off" .Values.cloudflare.zoneSettings.earlyHints | quote }}
+      brotli: {{ ternary "on" "off" .Values.cloudflare.zoneSettings.brotli | quote }}
+      minify:
+        css: {{ ternary "on" "off" .Values.cloudflare.zoneSettings.minify.css | quote }}
+        js: {{ ternary "on" "off" .Values.cloudflare.zoneSettings.minify.js | quote }}
+        html: {{ ternary "on" "off" .Values.cloudflare.zoneSettings.minify.html | quote }}
+  providerConfigRef:
+    name: cloudflare-default
+{{- end }}

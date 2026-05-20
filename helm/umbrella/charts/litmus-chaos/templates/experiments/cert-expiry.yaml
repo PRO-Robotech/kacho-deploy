@@ -1,0 +1,59 @@
+{{- if .Values.enabled }}
+# KAC-127 Phase 12 — ChaosExperiment: cert-expiry.
+# Force-expires the wildcard TLS cert for `*.<domain>`. Verifies cert-manager
+# auto-renewal (Let's Encrypt + ACME-HTTP-01) within 60s; no user impact.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: cert-expiry
+  namespace: litmus-chaos
+  labels:
+    {{- include "litmus-chaos.labels" . | nindent 4 }}
+    kacho.cloud/chaos-severity: {{ (index .Values.severity "cert-expiry") | quote }}
+spec:
+  definition:
+    scope: Cluster
+    permissions:
+      - apiGroups: [""]
+        resources: ["secrets", "events"]
+        verbs: ["get", "list", "patch", "update", "delete"]
+      - apiGroups: ["cert-manager.io"]
+        resources: ["certificates", "certificaterequests"]
+        verbs: ["get", "list", "patch", "update", "delete"]
+      - apiGroups: ["litmuschaos.io"]
+        resources: ["chaosengines", "chaosexperiments", "chaosresults"]
+        verbs: ["get", "list", "patch", "update"]
+    # Custom experiment — invokes kubectl to delete the cert Secret which
+    # triggers cert-manager re-issuance. Uses kubectl image from upstream
+    # litmus tooling.
+    image: "{{ .Values.imageRegistry }}/litmus-go-runner-kubectl:3.10.0"
+    imagePullPolicy: Always
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        # Delete the TLS Secret to force cert-manager to re-issue.
+        kubectl -n kacho-system delete secret kacho-wildcard-tls --ignore-not-found
+        # Wait up to 90s for cert-manager to re-issue.
+        for i in $(seq 1 30); do
+          if kubectl -n kacho-system get secret kacho-wildcard-tls >/dev/null 2>&1; then
+            echo "Cert re-issued after $((i*3))s"
+            exit 0
+          fi
+          sleep 3
+        done
+        echo "ERROR: cert not re-issued within 90s"
+        exit 1
+    command:
+      - /bin/bash
+    env:
+      - name: TOTAL_CHAOS_DURATION
+        value: "90"
+      - name: APP_NAMESPACE
+        value: "kacho-system"
+      - name: CERT_NAME
+        value: "kacho-wildcard-tls"
+    labels:
+      name: cert-expiry
+      app.kubernetes.io/part-of: litmus
+{{- end }}

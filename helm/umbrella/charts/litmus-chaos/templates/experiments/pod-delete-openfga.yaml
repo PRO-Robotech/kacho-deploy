@@ -1,0 +1,51 @@
+{{- if .Values.enabled }}
+# KAC-127 Phase 12 — ChaosExperiment: pod-delete-openfga.
+# Kills random OpenFGA pod; verifies authorization plane fault tolerance.
+# Expected behaviour: 5s window of fallback to deny + automatic recovery.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: pod-delete-openfga
+  namespace: litmus-chaos
+  labels:
+    {{- include "litmus-chaos.labels" . | nindent 4 }}
+    kacho.cloud/chaos-severity: {{ (index .Values.severity "openfga-replica") | quote }}
+spec:
+  definition:
+    scope: Namespaced
+    permissions:
+      - apiGroups: [""]
+        resources: ["pods", "events", "configmaps"]
+        verbs: ["get", "list", "delete", "create"]
+      - apiGroups: ["apps"]
+        resources: ["deployments", "replicasets"]
+        verbs: ["get", "list"]
+      - apiGroups: ["litmuschaos.io"]
+        resources: ["chaosengines", "chaosexperiments", "chaosresults"]
+        verbs: ["get", "list", "patch", "update"]
+    image: "{{ .Values.imageRegistry }}/go-runner:3.10.0"
+    imagePullPolicy: Always
+    args:
+      - -c
+      - ./experiments -name pod-delete
+    command:
+      - /bin/bash
+    env:
+      - name: TOTAL_CHAOS_DURATION
+        value: "60"
+      - name: CHAOS_INTERVAL
+        value: "10"
+      - name: FORCE
+        value: "false"
+      - name: PODS_AFFECTED_PERC
+        value: "50"
+      - name: APP_NAMESPACE
+        value: "kacho-system"
+      - name: APP_LABEL
+        value: "app.kubernetes.io/name=openfga"
+      - name: APP_KIND
+        value: "deployment"
+    labels:
+      name: pod-delete
+      app.kubernetes.io/part-of: litmus
+{{- end }}

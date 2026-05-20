@@ -1,0 +1,44 @@
+{{- if .Values.enabled }}
+# KAC-127 Phase 12 — ChaosExperiment: node-drain-region.
+# Drains all nodes in one region; verifies multi-region failover
+# (multi-region-router subchart Phase 11). Expected: traffic shifts to
+# remaining regions within 30s; SLO maintained.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: node-drain-region
+  namespace: litmus-chaos
+  labels:
+    {{- include "litmus-chaos.labels" . | nindent 4 }}
+    kacho.cloud/chaos-severity: {{ (index .Values.severity "node-drain") | quote }}
+spec:
+  definition:
+    scope: Cluster
+    permissions:
+      - apiGroups: [""]
+        resources: ["nodes", "pods", "events"]
+        verbs: ["get", "list", "patch", "update", "delete"]
+      - apiGroups: ["apps"]
+        resources: ["deployments", "daemonsets", "statefulsets"]
+        verbs: ["get", "list"]
+      - apiGroups: ["litmuschaos.io"]
+        resources: ["chaosengines", "chaosexperiments", "chaosresults"]
+        verbs: ["get", "list", "patch", "update"]
+    image: "{{ .Values.imageRegistry }}/go-runner:3.10.0"
+    imagePullPolicy: Always
+    args:
+      - -c
+      - ./experiments -name node-drain
+    command:
+      - /bin/bash
+    env:
+      - name: TOTAL_CHAOS_DURATION
+        value: "300"           # 5 minutes drain
+      - name: TARGET_NODE_LABEL
+        value: "topology.kubernetes.io/region=us-east-1"
+      - name: NODES_AFFECTED_PERC
+        value: "100"
+    labels:
+      name: node-drain
+      app.kubernetes.io/part-of: litmus
+{{- end }}

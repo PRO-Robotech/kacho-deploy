@@ -1,0 +1,52 @@
+{{- if .Values.cloudflare.crossplane.enabled }}
+{{- if .Values.cloudflare.waf.managed.owaspCrs.enabled }}
+---
+apiVersion: cloudflare.crossplane.io/v1alpha1
+kind: Ruleset
+metadata:
+  name: "owasp-crs-managed"
+  labels:
+    kacho.cloud/component: cloudflare-waf
+    app.kubernetes.io/managed-by: helm
+spec:
+  forProvider:
+    zone: {{ .Values.cloudflare.zone | quote }}
+    name: "OWASP CRS managed override"
+    description: "Enable Cloudflare Managed OWASP CRS 3.x ruleset for the kacho.cloud zone"
+    phase: "http_request_firewall_managed"
+    rules:
+      - action: "execute"
+        actionParameters:
+          id: "efb7b8c949ac4650a09736fc376e9aee"   # OWASP CRS managed ruleset
+          overrides:
+            sensitivity: {{ .Values.cloudflare.waf.managed.owaspCrs.sensitivity | quote }}
+            action: {{ .Values.cloudflare.waf.managed.owaspCrs.action | quote }}
+        expression: 'true'
+        enabled: true
+  providerConfigRef:
+    name: cloudflare-default
+{{- end }}
+{{- if .Values.cloudflare.waf.managed.cloudflareSpecials.enabled }}
+---
+apiVersion: cloudflare.crossplane.io/v1alpha1
+kind: Ruleset
+metadata:
+  name: "cloudflare-managed-rules"
+  labels:
+    kacho.cloud/component: cloudflare-waf
+spec:
+  forProvider:
+    zone: {{ .Values.cloudflare.zone | quote }}
+    name: "Cloudflare Managed Rules"
+    description: "Cloudflare-curated rules covering known exploits + CVEs"
+    phase: "http_request_firewall_managed"
+    rules:
+      - action: "execute"
+        actionParameters:
+          id: "c2e184081120413c86c3ab7e14069605"   # Cloudflare Managed Ruleset id
+        expression: 'true'
+        enabled: true
+  providerConfigRef:
+    name: cloudflare-default
+{{- end }}
+{{- end }}

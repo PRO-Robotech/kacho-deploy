@@ -1,0 +1,24 @@
+{{- if .Values.cloudflare.crossplane.enabled }}
+{{- range .Values.cloudflare.waf.custom }}
+---
+apiVersion: cloudflare.crossplane.io/v1alpha1
+kind: Ruleset
+metadata:
+  name: {{ .id | quote }}
+  labels:
+    kacho.cloud/component: cloudflare-firewall
+    app.kubernetes.io/managed-by: helm
+spec:
+  forProvider:
+    zone: {{ $.Values.cloudflare.zone | quote }}
+    name: {{ .id | quote }}
+    description: {{ .description | quote }}
+    phase: "http_request_firewall_custom"
+    rules:
+      - action: {{ .action | quote }}
+        expression: {{ .expression | quote }}
+        enabled: true
+  providerConfigRef:
+    name: cloudflare-default
+{{- end }}
+{{- end }}

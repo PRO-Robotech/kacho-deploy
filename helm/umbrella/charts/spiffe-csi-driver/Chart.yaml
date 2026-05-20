@@ -1,0 +1,24 @@
+apiVersion: v2
+name: spiffe-csi-driver
+version: 0.1.0
+appVersion: "0.2.6"
+description: |
+  KAC-127 Phase 10 — SPIFFE CSI Driver (P10-D24).
+
+  Mounts SPIFFE Workload API socket (`/run/spire/sockets/agent.sock`) into
+  container `spec.volumes[].csi.driver: csi.spiffe.io` — avoids hostPath
+  volume requirement in pod spec.
+
+  Pod-Identity webhook injects `SPIFFE_ENDPOINT_SOCKET=unix:///run/spiffe/sockets/spiffe.sock`
+  env var into kacho-* containers с annotation `spiffe.io/spire-managed-identity: "true"`.
+
+  Configurable: socket path matches spire-agent.values.socket.hostPath.
+type: application
+keywords:
+  - spiffe
+  - csi
+  - workload-identity
+home: https://github.com/PRO-Robotech/kacho-deploy
+maintainers:
+  - name: Kacho Cloud
+    email: platform@kacho.cloud

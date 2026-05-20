@@ -1,0 +1,34 @@
+{{- if .Values.audit.enabled }}
+{{/*
+KAC-127 Phase 9 — SIEM detection rules ConfigMap (P9-D...).
+
+Содержит Sigma format rules (industry-standard для SIEM-agnostic detection)
++ provider-specific transformed versions (Datadog Workflows, Splunk SPL,
+Elastic Watcher).
+
+8 rules per acceptance §2.10:
+  1. brute_force_signin     — 5min window, >10 failed signins per (ip, account)
+  2. impossible_travel      — 2h window, 2+ signins from different countries
+  3. mass_deletion          — 5min window, >100 deletes per actor
+  4. out_of_hours_admin     — admin action outside business hours
+  5. privilege_escalation_sa — SA created binding with role.scope > actor.scope
+  6. audit_signature_failure — verified_broken batch (local detection only)
+  7. break_glass_usage      — actor.acr=4 or event_type startswith break_glass
+  8. fga_tuple_drift        — reconciliation found split-brain Postgres vs FGA
+
+Файлы загружаются из files/detection-rules/. Каждый файл = 1 rule.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kacho-iam.fullname" . }}-detection-rules
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kacho-iam.labels" . | nindent 4 }}
+    kacho.cloud/component: detection-rules
+data:
+{{- range $path, $_ := .Files.Glob "files/detection-rules/**" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}
+{{- end }}

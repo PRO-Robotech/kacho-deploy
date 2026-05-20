@@ -1,0 +1,30 @@
+{{- range .Values.certManager.certificates }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .name | quote }}
+  namespace: {{ .namespace | quote }}
+  labels:
+    kacho.cloud/component: cert-manager
+    app.kubernetes.io/managed-by: helm
+spec:
+  secretName: {{ .secretName | quote }}
+  duration: {{ .duration | quote }}
+  renewBefore: {{ .renewBefore | quote }}
+  privateKey:
+    algorithm: {{ .privateKey.algorithm | quote }}
+    size: {{ .privateKey.size }}
+    rotationPolicy: "Always"               # rotate key on every renewal (cryptographic agility)
+  issuerRef:
+    name: {{ .issuerRef | quote }}
+    kind: ClusterIssuer
+    group: cert-manager.io
+  dnsNames:
+    {{- range .dnsNames }}
+    - {{ tpl . $ | quote }}
+    {{- end }}
+  usages:
+    - server auth
+    - client auth                          # mTLS-ready (RFC 8705 cnf=x5t#S256)
+{{- end }}

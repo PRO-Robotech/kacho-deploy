@@ -1,8 +1,17 @@
 {{- if .Values.openfgaBootstrap.enabled }}
 {{/*
-KAC-105: ServiceAccount + Role + RoleBinding для openfga-bootstrap-job.
-Нужны права:
-  - create/get/update secret kacho-iam-openfga-store (записать store_id).
+KAC-127 Phase 3 (acceptance §5.1) — ServiceAccount + Role + RoleBinding для
+openfga-bootstrap-job. Расширяет E0 RBAC (KAC-105) для нужд Phase 3:
+  - secrets: create/get/update/patch — store-id Secret + model-id Secret + annotations.
+  - deployments: get/patch — rolling-restart-bump на kacho-iam / api-gateway /
+    vpc / compute / loadbalancer Deployments через `kacho.cloud/openfga-model-id-rev`
+    annotation (P3.GWT-03).
+
+Hook lifecycle:
+  - post-install,post-upgrade, hook-weight=0 — создаётся до job (weight=10).
+  - hook-delete-policy: before-hook-creation — drop stale SA/Role/Binding перед
+    каждым новым install/upgrade. (Без hook-succeeded — RoleBinding нужен
+    оставленным до конца Job-execution; ttlSecondsAfterFinished на самом Job чистит финально.)
 */}}
 apiVersion: v1
 kind: ServiceAccount
@@ -11,7 +20,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/part-of: kacho
     kacho.cloud/component: openfga-bootstrap
+    kacho.cloud/phase: "3"
+    kacho.cloud/kac-ticket: KAC-127
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "0"
@@ -24,15 +36,25 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/part-of: kacho
     kacho.cloud/component: openfga-bootstrap
+    kacho.cloud/phase: "3"
+    kacho.cloud/kac-ticket: KAC-127
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "0"
     "helm.sh/hook-delete-policy": before-hook-creation
 rules:
+  # Phase 3: secrets — kacho-iam-openfga-store + openfga-model-id (create/update/annotate).
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "get", "update", "patch"]
+  # Phase 3: deployments — patch annotation `kacho.cloud/openfga-model-id-rev`
+  # на consumer Deployments (P3.GWT-03 rolling-restart on model change).
+  # Scope ограничен read+patch (никакого delete/create — Job не вправе создавать pod'ов).
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -41,7 +63,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/part-of: kacho
     kacho.cloud/component: openfga-bootstrap
+    kacho.cloud/phase: "3"
+    kacho.cloud/kac-ticket: KAC-127
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "0"

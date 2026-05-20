@@ -1,0 +1,63 @@
+postgresHa:
+  namespace: "kacho-system"
+
+  # Common image for all clusters.
+  patroniImage: "ghcr.io/cloudnative-pg/postgresql:16.4"
+  pgbouncerImage: "edoburu/pgbouncer:1.23.0-p2"
+  pgBackRestImage: "ghcr.io/cloudnative-pg/pgbackrest:2.51"
+
+  # Default settings applied to every per-service cluster unless overridden.
+  defaults:
+    replicas: 3                            # 1 primary + 2 sync standby
+    storageSize: "50Gi"
+    storageClass: ""                       # set per-cluster
+    syncStandbyCount: 1                    # synchronous replication count
+    resources:
+      requests: { cpu: 500m, memory: 1Gi }
+      limits:   { cpu: 4000m, memory: 8Gi }
+    backup:
+      enabled: true
+      schedule: "0 2 * * *"                # daily 02:00 UTC
+      retentionDays: 30
+      s3:
+        bucket: "kacho-postgres-backups-prod"
+        endpoint: ""                       # AWS default
+        region: "eu-central-1"
+        accessKeySecret: "postgres-s3-backup-credentials"
+    wal:
+      archiveTimeoutSec: 60
+      keepWalSegments: 256
+    tls:
+      enabled: true
+      certSecretName: "postgres-tls"
+      issuer: "letsencrypt-prod"
+
+  # Per-service clusters.
+  clusters:
+    - name: "kacho-iam-postgres"
+      database: "kacho_iam"
+      username: "kacho_iam"
+    - name: "kacho-vpc-postgres"
+      database: "kacho_vpc"
+      username: "kacho_vpc"
+    - name: "kacho-compute-postgres"
+      database: "kacho_compute"
+      username: "kacho_compute"
+    - name: "kacho-loadbalancer-postgres"
+      database: "kacho_loadbalancer"
+      username: "kacho_loadbalancer"
+    - name: "spire-postgres"
+      database: "kacho_spire"
+      username: "spire"
+    - name: "kratos-postgres"
+      database: "kacho_kratos"
+      username: "kratos"
+    - name: "hydra-postgres"
+      database: "kacho_hydra"
+      username: "hydra"
+    - name: "keto-postgres"
+      database: "kacho_keto"
+      username: "keto"
+    - name: "openfga-postgres"
+      database: "kacho_openfga"
+      username: "openfga"

@@ -1,0 +1,37 @@
+# KAC-127 Phase 10 — Cosign attestor config for SPIRE Agent (P10-D10).
+#
+# Defines trusted-signers — kacho-platform team key (primary) + optional
+# Fulcio root для keyless OIDC (non-prod).
+#
+# Production deploys MUST use offline-key-signed builds (Phase 11 CI gating).
+# Keyless OIDC только для non-production builds during transition.
+apiVersion: kacho.cloud/v1
+kind: CosignAttestorConfig
+metadata:
+  name: kacho-spire-cosign-trusted-signers
+  labels:
+    kacho.cloud/component: cosign-attestor
+    kacho.cloud/phase: "10"
+spec:
+  # Primary — kacho-platform team's offline-stored PGP/cosign key.
+  # Fingerprint and PEM data sourced from Secret `cosign-trusted-key` in
+  # cosign-system namespace (referenced by SPIRE Agent via volumeMount).
+  trustedSigners:
+    - name: kacho-platform-team
+      type: key
+      secretRef:
+        name: cosign-trusted-key
+        namespace: cosign-system
+        key: cosign.pub
+      # Fingerprint applied in selector — configurable through Helm value.
+      fingerprint: "{{ cosignFingerprint }}"
+      ctlogVerification:
+        enabled: true
+        rekorUrl: "https://rekor.sigstore.dev"
+  # Optional Fulcio root для keyless OIDC (non-prod).
+  fulcio:
+    enabled: false
+    rootUrl: "https://fulcio.sigstore.dev"
+    oidcIdentities:
+      - issuer: "https://token.actions.githubusercontent.com"
+        subjectRegExp: "https://github.com/PRO-Robotech/.*"

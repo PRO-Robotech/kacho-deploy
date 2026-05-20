@@ -1,13 +1,62 @@
 {{- if .Values.openfgaBootstrap.enabled }}
 {{/*
-KAC-105: stub authorization model для OpenFGA (минимум для bootstrap'а на E0).
-E3 (epic KAC-108) заменит на полноценную DSL-модель из
-`kacho-iam/internal/apps/kacho/api/access_binding/fga_model.fga`.
+KAC-127 Phase 3 (acceptance §5.1 / design §4) — full OpenFGA Authorization Model v2.
+=====================================================================================
 
-Здесь только тривиальный схема с типом `user` — этого хватает, чтобы создать
-store + написать authorization-model + получить authorization_model_id.
-Bootstrap-job ниже использует JSON-форму (proto-format), потому что DSL → JSON
-требует отдельной toolchain (cli.openfga) — в curlimages/curl её нет.
+KAC-127 reconciliation: `model.fga` / `model.json` ниже — сгенерированы из
+**канонического** артефакта `kacho-proto/proto/kacho/cloud/iam/v1/fga_model.fga`
+(единый источник истины). DSL покрывает:
+  - cluster (singleton `cluster_kacho_root`) с system_admin / emergency_admin
+    (break-glass, conditioned `break_glass_window`) / system_viewer / billing_admin /
+    console / any_admin (union system_admin∪emergency_admin).
+  - organization tier (optional B2B); owner / admin / editor / viewer / billing_admin / member.
+  - account / project tiers с cascading `or admin from <parent>` semantics —
+    `account.admin` каскадит `any_admin from cluster` + `admin from organization` + `owner`.
+  - per-service resource-types: vpc_network / vpc_subnet / vpc_security_group /
+    vpc_route_table / vpc_address / vpc_gateway / vpc_private_endpoint /
+    vpc_network_interface / vpc_address_pool / compute_instance / compute_disk /
+    compute_image / compute_snapshot / compute_hypervisor / lb_network_load_balancer /
+    lb_target_group.
+  - IAM resource-types (per-resource scope в permission catalog scope_extractor):
+    iam_user / iam_service_account / iam_group / iam_role / iam_access_binding /
+    iam_condition.
+  - 7 предустановленных Conditions (mfa_fresh / non_expired / source_ip_in_range /
+    break_glass_window / jit_window / business_hours / device_compliant).
+
+Bootstrap-job (см. openfga-bootstrap-job.yaml) реализует idempotent-deploy
+(sha256-compare DSL с current Secret annotation, skip-write если совпадает;
+иначе WriteAuthorizationModel из `data.model.json` + patch Secret
+`openfga-model-id.current` + annotate Deployments для rolling-restart).
+
+KAC-127 (deploy#38 fix): bootstrap-job больше НЕ делает runtime DSL→JSON
+transform. Причина: `openfga/cli` image — distroless single-binary (нет
+`/bin/sh`), `fga model transform` умеет писать только в stdout (нет `--output`),
+поэтому init-container `dsl-transform` падал `exec: "/bin/sh": not found`.
+Решение — pre-transform на build/commit-time: `data.model.json` ниже —
+готовый OpenFGA-JSON, сгенерированный `fga model transform` из `data.model.fga`.
+DSL frozen (design §4), drift невозможен; regenerate-команда — см.
+`make openfga-model-json` (kacho-deploy/Makefile). Bootstrap-job читает
+`model.json` напрямую и шлёт его `WriteAuthorizationModel`-эндпоинту;
+`model.fga` остаётся для human-readable diff + sha256-idempotency.
+
+Naming convention (запреты #2): все types — kacho.cloud.<domain>-style.
+Conditions — CEL-syntax (OpenFGA 1.5+ stable feature, см. P3-D3).
+
+ВНИМАНИЕ при edit'е:
+  - НЕ редактировать DSL здесь напрямую. Канонический источник —
+    `kacho-proto/proto/kacho/cloud/iam/v1/fga_model.fga`. После правки канона
+    регенерировать оба блока: `make openfga-model-json`.
+  - Любое изменение DSL → новый authorization_model_id (P3-D1: versioned +
+    immutable). Bootstrap-job detect'ит sha256-diff DSL'а и пишет новую модель.
+  - На rollback (helm rollback) FGA-engine retains old model_id (immutable, никогда
+    не удаляет) → rollback просто пиннит Secret обратно. См. P3.GWT-04.
+
+DataSource хранения id'а — Kubernetes Secret `openfga-model-id` (P3-D2):
+  metadata.name        = openfga-model-id
+  metadata.namespace   = {{ .Release.Namespace }}
+  data.current         = <base64 model_id ULID>
+  annotations:
+    kacho-deploy/last-applied-dsl-sha256: <hex>
 */}}
 apiVersion: v1
 kind: ConfigMap
@@ -16,76 +65,338 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/part-of: kacho
     kacho.cloud/component: openfga-bootstrap
+    kacho.cloud/phase: "3"
+    kacho.cloud/kac-ticket: KAC-127
+  annotations:
+    # Hash content of DSL — позволяет bootstrap-job-у быстро sha256-compare без
+    # пересчёта на каждый запуск (idempotency fast-path).
+    kacho.cloud/dsl-version: "v2"
 data:
-  model.json: |
-    {
-      "schema_version": "1.1",
-      "type_definitions": [
-        { "type": "user" }
-      ]
+  model.fga: |-
+    model
+      schema 1.1
+
+    # OpenFGA Authorization Model v2 — Kachō (Phase 3, KAC-127).
+    #
+    # This file is the **canonical source** of the authorization model. It is
+    # bundled into kacho-proto so every consumer (kacho-iam, openfga-bootstrap-job,
+    # admin-UI catalog) reads from the same artifact. Helm umbrella's
+    # `openfga-model-stub-configmap.yaml` is generated from this file at
+    # image-build time (acceptance §5.1) — `make openfga-model-json`.
+    #
+    # KAC-127 reconciliation: this file is the canonical superset of the deployed
+    # model. It carries the full hierarchy cascade (`emergency_admin` break-glass,
+    # `any_admin from cluster` reaching account/project, `group#member`-userset
+    # subjects, `owner` on org/account) AND the per-domain resource types whose
+    # `object_type` is referenced by the api-gateway permission catalog
+    # (`vpc_network` / `compute_disk` / `iam_group` / ...).
+    #
+    # DSL conventions (acceptance §4):
+    #   - `cluster:cluster_kacho_root`     — singleton enforced on write-side
+    #     (P3-D17). One global cluster object.
+    #   - `organization` / `account` / `project` — hierarchy parents
+    #     (cluster ▶ organization ▶ account ▶ project ▶ <domain resource>).
+    #   - per-domain object types — `vpc_network`, `vpc_subnet`, `vpc_address`,
+    #     `vpc_security_group`, `vpc_route_table`, `vpc_gateway`,
+    #     `vpc_private_endpoint`, `vpc_network_interface`, `vpc_address_pool`,
+    #     `compute_instance`, `compute_disk`, `compute_image`, `compute_snapshot`,
+    #     `compute_hypervisor`, `lb_network_load_balancer`, `lb_target_group`,
+    #     `iam_role`, `iam_access_binding`, `iam_service_account`, `iam_group`,
+    #     `iam_user`, `iam_condition`.
+    #   - relations: `viewer` / `editor` / `admin` / `owner` / `member` per the
+    #     YC-style roles vocabulary (KAC-121).
+    #   - conditional relations: `with` clause names a Condition (built-in or
+    #     custom) — FGA pre-compiles CEL on `WriteAuthorizationModel`.
+
+    # ---------------------------------------------------------------------------
+    # Generic principal / subject types.
+    # ---------------------------------------------------------------------------
+
+    type user
+
+    type service_account
+
+    type federated_subject
+
+    # group — subject-grouping type. `group#member` usersets are accepted as
+    # direct subjects on hierarchy + resource relations.
+    type group
+      relations
+        define member: [user, service_account, federated_subject, group#member]
+
+    # ---------------------------------------------------------------------------
+    # Cluster — singleton "cluster_kacho_root". Write-side enforcement rejects
+    # tuples with any other object id (P3-D17).
+    #   - system_admin  — standing cluster administrator.
+    #   - emergency_admin — break-glass (Phase 7); conditioned by `break_glass_window`
+    #     so it auto-expires; grants the same reach as system_admin while active.
+    #   - system_viewer — read-only cluster catalog viewer.
+    #   - billing_admin — cluster-wide billing.
+    #   - console       — cluster console access, MFA-gated.
+    #   - any_admin     — convenience union (system_admin OR emergency_admin) that
+    #     hierarchy types cascade from.
+    # ---------------------------------------------------------------------------
+
+    type cluster
+      relations
+        define system_admin: [user, service_account]
+        define emergency_admin: [user with break_glass_window]
+        define system_viewer: [user, service_account]
+        define billing_admin: [user, service_account]
+        define console: [user with mfa_fresh, service_account with mfa_fresh]
+        define any_admin: system_admin or emergency_admin
+
+    # ---------------------------------------------------------------------------
+    # Identity & hierarchy — organization → account → project.
+    # ---------------------------------------------------------------------------
+
+    type organization
+      relations
+        define cluster: [cluster]
+        define owner: [user]
+        define admin: [user, service_account, group#member] or any_admin from cluster or owner
+        define billing_admin: [user, service_account] or admin or billing_admin from cluster
+        define editor: [user, service_account, group#member] or admin
+        define member: [user, service_account, group#member]
+        define viewer: [user, service_account, group#member] or member or editor
+
+    type account
+      relations
+        define cluster: [cluster]
+        define organization: [organization]
+        define owner: [user]
+        define admin: [user, service_account, group#member] or any_admin from cluster or admin from organization or owner
+        define editor: [user, service_account, group#member] or admin or editor from organization
+        define viewer: [user, service_account, group#member] or editor or viewer from organization
+        define billing_admin: [user, service_account] or admin or billing_admin from organization
+
+    type project
+      relations
+        define account: [account]
+        define admin: [user, service_account, group#member] or admin from account
+        define editor: [user, service_account, group#member] or admin or editor from account
+        define viewer: [user, service_account, group#member] or editor or viewer from account
+
+    # ---------------------------------------------------------------------------
+    # IAM resources. Group / ServiceAccount / Role / User are account-scoped
+    # (their `parent` relation cascades from the owning Account); AccessBinding
+    # / Condition are project-scoped (their `parent` cascades from the Project
+    # the binding is attached to).
+    # ---------------------------------------------------------------------------
+
+    type iam_user
+      relations
+        define account: [account]
+        define subject: [user]
+        define admin: admin from account
+        define editor: editor from account or admin
+        define viewer: subject or editor or viewer from account
+
+    type iam_service_account
+      relations
+        define account: [account]
+        define admin: admin from account
+        define editor: [user, service_account, group#member] or editor from account or admin
+        define viewer: [user, service_account, group#member] or viewer from account or editor
+        define user: [user, service_account] or editor
+        define token_creator: [user, service_account] or admin
+
+    type iam_group
+      relations
+        define account: [account]
+        define member: [user, service_account]
+        define admin: admin from account
+        define editor: [user, service_account, group#member] or editor from account or admin
+        define viewer: [user, service_account, group#member] or viewer from account or editor
+
+    type iam_role
+      relations
+        define account: [account]
+        define admin: admin from account
+        define editor: editor from account or admin
+        define viewer: viewer from account or editor
+
+    type iam_access_binding
+      relations
+        define project: [project]
+        define admin: admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type iam_condition
+      relations
+        define project: [project]
+        define admin: admin from project
+        define editor: editor from project or admin
+        define viewer: viewer from project or editor
+
+    # ---------------------------------------------------------------------------
+    # VPC domain.
+    # ---------------------------------------------------------------------------
+
+    type vpc_network
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_subnet
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+        define use: [user, service_account] or editor
+
+    type vpc_security_group
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_route_table
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_address
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+        define use: [user, service_account] or editor
+
+    type vpc_gateway
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_private_endpoint
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_network_interface
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type vpc_address_pool
+      relations
+        define cluster: [cluster]
+        define admin: [user, service_account] or any_admin from cluster
+        define viewer: [user, service_account] or admin or system_viewer from cluster
+
+    # ---------------------------------------------------------------------------
+    # Compute domain.
+    # ---------------------------------------------------------------------------
+
+    type compute_instance
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+        define ssh: [user with mfa_fresh, service_account] or admin
+        define console: [user with mfa_fresh] or admin
+
+    type compute_disk
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+        define use: [user, service_account] or editor
+
+    type compute_image
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+        define use: [user, service_account] or editor
+
+    type compute_snapshot
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type compute_hypervisor
+      relations
+        define cluster: [cluster]
+        define admin: [user, service_account] or any_admin from cluster
+        define viewer: [user, service_account] or admin or system_viewer from cluster
+
+    # ---------------------------------------------------------------------------
+    # Load-balancer domain.
+    # ---------------------------------------------------------------------------
+
+    type lb_network_load_balancer
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    type lb_target_group
+      relations
+        define project: [project]
+        define admin: [user, service_account, group#member] or admin from project
+        define editor: [user, service_account, group#member] or editor from project or admin
+        define viewer: [user, service_account, group#member] or viewer from project or editor
+
+    # ---------------------------------------------------------------------------
+    # Conditions catalog — 7 frozen built-ins (acceptance §4.5).
+    # ---------------------------------------------------------------------------
+
+    condition mfa_fresh(amr_claims: list<string>, acr_value: string, current_time: timestamp, mfa_at: timestamp) {
+      acr_value == "3" &&
+      "webauthn" in amr_claims &&
+      current_time - mfa_at < duration("15m")
     }
-  bootstrap.sh: |
-    #!/bin/sh
-    # KAC-105: bootstrap OpenFGA store + authorization-model для kacho-iam.
-    # Идемпотентно: повторный запуск не дублирует store / model.
-    #
-    # Шаги:
-    # 1. Дождаться OpenFGA :8080/healthz (max 5 мин).
-    # 2. GET /stores — если store с name=kacho-store существует, использовать его id.
-    # 3. Иначе POST /stores {"name":"kacho-store"} → запомнить id.
-    # 4. POST /stores/<id>/authorization-models (stub-model).
-    # 5. Создать/обновить Secret kacho-iam-openfga-store со store_id.
-    #
-    # Зависимости: curl, jq, kubectl. Образ — curlimages/curl + апгрейд jq/kubectl
-    # ставится через apk inline (curlimages/curl построен на alpine).
-    set -eu
 
-    OPENFGA_URL="${OPENFGA_URL:-http://kacho-umbrella-openfga:8080}"
-    STORE_NAME="${STORE_NAME:-kacho-store}"
-    SECRET_NAME="${SECRET_NAME:-kacho-iam-openfga-store}"
-    NAMESPACE="${NAMESPACE:-kacho}"
+    condition non_expired(current_time: timestamp, valid_until: timestamp) {
+      current_time < valid_until
+    }
 
-    echo "[bootstrap] устанавливаем jq+kubectl (alpine)…"
-    apk add --no-cache jq kubectl >/dev/null
+    condition source_ip_in_range(client_ip: ipaddress, allowed_cidrs: list<string>) {
+      allowed_cidrs.exists(c, client_ip.in_cidr(c))
+    }
 
-    echo "[bootstrap] ждём OpenFGA $OPENFGA_URL/healthz (max 5 мин)…"
-    for i in $(seq 1 60); do
-      if curl -sf "$OPENFGA_URL/healthz" >/dev/null 2>&1; then
-        echo "[bootstrap] OpenFGA готов"
-        break
-      fi
-      sleep 5
-      if [ "$i" -eq 60 ]; then
-        echo "[bootstrap] TIMEOUT: OpenFGA не отвечает"
-        exit 1
-      fi
-    done
+    condition break_glass_window(current_time: timestamp, expires_at: timestamp) {
+      current_time < expires_at
+    }
 
-    echo "[bootstrap] ищем существующий store '$STORE_NAME'…"
-    STORE_ID=$(curl -sf "$OPENFGA_URL/stores" | jq -r --arg n "$STORE_NAME" '.stores[]? | select(.name==$n) | .id' || true)
+    condition jit_window(current_time: timestamp, activated_at: timestamp, ttl_seconds: int) {
+      current_time - activated_at < duration(string(ttl_seconds) + "s")
+    }
 
-    if [ -z "$STORE_ID" ]; then
-      echo "[bootstrap] store не найден — создаём"
-      STORE_ID=$(curl -sf -XPOST "$OPENFGA_URL/stores" \
-        -H 'content-type: application/json' \
-        -d "{\"name\":\"$STORE_NAME\"}" | jq -r '.id')
-      echo "[bootstrap] создан store id=$STORE_ID"
-    else
-      echo "[bootstrap] переиспользуем существующий store id=$STORE_ID"
-    fi
+    condition business_hours(current_time: timestamp, tz: string, start_h: int, end_h: int) {
+      current_time.getHours(tz) >= start_h && current_time.getHours(tz) < end_h
+    }
 
-    echo "[bootstrap] загружаем authorization-model (stub)…"
-    MODEL_ID=$(curl -sf -XPOST "$OPENFGA_URL/stores/$STORE_ID/authorization-models" \
-      -H 'content-type: application/json' \
-      -d @/etc/openfga-model/model.json | jq -r '.authorization_model_id')
-    echo "[bootstrap] authorization_model_id=$MODEL_ID"
+    condition device_compliant(device_attestation: string, allowed_attestations: list<string>) {
+      device_attestation in allowed_attestations
+    }
 
-    echo "[bootstrap] записываем store_id в Secret $NAMESPACE/$SECRET_NAME…"
-    kubectl -n "$NAMESPACE" create secret generic "$SECRET_NAME" \
-      --from-literal=store_id="$STORE_ID" \
-      --from-literal=authorization_model_id="$MODEL_ID" \
-      --dry-run=client -o yaml | kubectl apply -f -
-
-    echo "[bootstrap] OK"
+  # Pre-transformed OpenFGA-JSON. Generated from the canonical
+  # kacho-proto fga_model.fga via `make openfga-model-json`. Do NOT edit
+  # by hand — the bootstrap-job consumes this verbatim.
+  model.json: |-
+    {"schema_version":"1.1","type_definitions":[{"type":"user"},{"type":"service_account"},{"type":"federated_subject"},{"metadata":{"relations":{"member":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"type":"federated_subject"},{"relation":"member","type":"group"}]}}},"relations":{"member":{"this":{}}},"type":"group"},{"metadata":{"relations":{"any_admin":{},"billing_admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"console":{"directly_related_user_types":[{"condition":"mfa_fresh","type":"user"},{"condition":"mfa_fresh","type":"service_account"}]},"emergency_admin":{"directly_related_user_types":[{"condition":"break_glass_window","type":"user"}]},"system_admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"system_viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]}}},"relations":{"any_admin":{"union":{"child":[{"computedUserset":{"relation":"system_admin"}},{"computedUserset":{"relation":"emergency_admin"}}]}},"billing_admin":{"this":{}},"console":{"this":{}},"emergency_admin":{"this":{}},"system_admin":{"this":{}},"system_viewer":{"this":{}}},"type":"cluster"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"billing_admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"cluster":{"directly_related_user_types":[{"type":"cluster"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"member":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"owner":{"directly_related_user_types":[{"type":"user"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"any_admin"},"tupleset":{"relation":"cluster"}}},{"computedUserset":{"relation":"owner"}}]}},"billing_admin":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"admin"}},{"tupleToUserset":{"computedUserset":{"relation":"billing_admin"},"tupleset":{"relation":"cluster"}}}]}},"cluster":{"this":{}},"editor":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"admin"}}]}},"member":{"this":{}},"owner":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"member"}},{"computedUserset":{"relation":"editor"}}]}}},"type":"organization"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"billing_admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"cluster":{"directly_related_user_types":[{"type":"cluster"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"organization":{"directly_related_user_types":[{"type":"organization"}]},"owner":{"directly_related_user_types":[{"type":"user"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"any_admin"},"tupleset":{"relation":"cluster"}}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"organization"}}},{"computedUserset":{"relation":"owner"}}]}},"billing_admin":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"admin"}},{"tupleToUserset":{"computedUserset":{"relation":"billing_admin"},"tupleset":{"relation":"organization"}}}]}},"cluster":{"this":{}},"editor":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"admin"}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"organization"}}}]}},"organization":{"this":{}},"owner":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"editor"}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"organization"}}}]}}},"type":"account"},{"metadata":{"relations":{"account":{"directly_related_user_types":[{"type":"account"}]},"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"account":{"this":{}},"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"account"}}}]}},"editor":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"admin"}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"account"}}}]}},"viewer":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"editor"}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"account"}}}]}}},"type":"project"},{"metadata":{"relations":{"account":{"directly_related_user_types":[{"type":"account"}]},"admin":{},"editor":{},"subject":{"directly_related_user_types":[{"type":"user"}]},"viewer":{}}},"relations":{"account":{"this":{}},"admin":{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"account"}}},"editor":{"union":{"child":[{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"account"}}},{"computedUserset":{"relation":"admin"}}]}},"subject":{"this":{}},"viewer":{"union":{"child":[{"computedUserset":{"relation":"subject"}},{"computedUserset":{"relation":"editor"}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"account"}}}]}}},"type":"iam_user"},{"metadata":{"relations":{"account":{"directly_related_user_types":[{"type":"account"}]},"admin":{},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"token_creator":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"user":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"account":{"this":{}},"admin":{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"account"}}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"account"}}},{"computedUserset":{"relation":"admin"}}]}},"token_creator":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"admin"}}]}},"user":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"editor"}}]}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"account"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"iam_service_account"},{"metadata":{"relations":{"account":{"directly_related_user_types":[{"type":"account"}]},"admin":{},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"member":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"account":{"this":{}},"admin":{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"account"}}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"account"}}},{"computedUserset":{"relation":"admin"}}]}},"member":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"account"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"iam_group"},{"metadata":{"relations":{"account":{"directly_related_user_types":[{"type":"account"}]},"admin":{},"editor":{},"viewer":{}}},"relations":{"account":{"this":{}},"admin":{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"account"}}},"editor":{"union":{"child":[{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"account"}}},{"computedUserset":{"relation":"admin"}}]}},"viewer":{"union":{"child":[{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"account"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"iam_role"},{"metadata":{"relations":{"admin":{},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"iam_access_binding"},{"metadata":{"relations":{"admin":{},"editor":{},"project":{"directly_related_user_types":[{"type":"project"}]},"viewer":{}}},"relations":{"admin":{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}},"editor":{"union":{"child":[{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"viewer":{"union":{"child":[{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"iam_condition"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"vpc_network"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"use":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"use":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"editor"}}]}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"vpc_subnet"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"vpc_security_group"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"vpc_route_table"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"use":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"use":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"editor"}}]}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"vpc_address"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"vpc_gateway"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"vpc_private_endpoint"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"vpc_network_interface"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"cluster":{"directly_related_user_types":[{"type":"cluster"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"any_admin"},"tupleset":{"relation":"cluster"}}}]}},"cluster":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"admin"}},{"tupleToUserset":{"computedUserset":{"relation":"system_viewer"},"tupleset":{"relation":"cluster"}}}]}}},"type":"vpc_address_pool"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"console":{"directly_related_user_types":[{"condition":"mfa_fresh","type":"user"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"ssh":{"directly_related_user_types":[{"condition":"mfa_fresh","type":"user"},{"type":"service_account"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"console":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"admin"}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"ssh":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"admin"}}]}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"compute_instance"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"use":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"use":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"editor"}}]}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"compute_disk"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"use":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"use":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"editor"}}]}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"compute_image"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"compute_snapshot"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]},"cluster":{"directly_related_user_types":[{"type":"cluster"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"any_admin"},"tupleset":{"relation":"cluster"}}}]}},"cluster":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"computedUserset":{"relation":"admin"}},{"tupleToUserset":{"computedUserset":{"relation":"system_viewer"},"tupleset":{"relation":"cluster"}}}]}}},"type":"compute_hypervisor"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"lb_network_load_balancer"},{"metadata":{"relations":{"admin":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"editor":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]},"project":{"directly_related_user_types":[{"type":"project"}]},"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"service_account"},{"relation":"member","type":"group"}]}}},"relations":{"admin":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"admin"},"tupleset":{"relation":"project"}}}]}},"editor":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"editor"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"admin"}}]}},"project":{"this":{}},"viewer":{"union":{"child":[{"this":{}},{"tupleToUserset":{"computedUserset":{"relation":"viewer"},"tupleset":{"relation":"project"}}},{"computedUserset":{"relation":"editor"}}]}}},"type":"lb_target_group"}],"conditions":{"break_glass_window":{"expression":"current_time < expires_at","name":"break_glass_window","parameters":{"current_time":{"type_name":"TYPE_NAME_TIMESTAMP"},"expires_at":{"type_name":"TYPE_NAME_TIMESTAMP"}}},"business_hours":{"expression":"current_time.getHours(tz) >= start_h && current_time.getHours(tz) < end_h","name":"business_hours","parameters":{"current_time":{"type_name":"TYPE_NAME_TIMESTAMP"},"end_h":{"type_name":"TYPE_NAME_INT"},"start_h":{"type_name":"TYPE_NAME_INT"},"tz":{"type_name":"TYPE_NAME_STRING"}}},"device_compliant":{"expression":"device_attestation in allowed_attestations","name":"device_compliant","parameters":{"allowed_attestations":{"generic_types":[{"type_name":"TYPE_NAME_STRING"}],"type_name":"TYPE_NAME_LIST"},"device_attestation":{"type_name":"TYPE_NAME_STRING"}}},"jit_window":{"expression":"current_time - activated_at < duration(string(ttl_seconds) + \"s\")","name":"jit_window","parameters":{"activated_at":{"type_name":"TYPE_NAME_TIMESTAMP"},"current_time":{"type_name":"TYPE_NAME_TIMESTAMP"},"ttl_seconds":{"type_name":"TYPE_NAME_INT"}}},"mfa_fresh":{"expression":"acr_value == \"3\" &&\n  \"webauthn\" in amr_claims &&\n  current_time - mfa_at < duration(\"15m\")","name":"mfa_fresh","parameters":{"acr_value":{"type_name":"TYPE_NAME_STRING"},"amr_claims":{"generic_types":[{"type_name":"TYPE_NAME_STRING"}],"type_name":"TYPE_NAME_LIST"},"current_time":{"type_name":"TYPE_NAME_TIMESTAMP"},"mfa_at":{"type_name":"TYPE_NAME_TIMESTAMP"}}},"non_expired":{"expression":"current_time < valid_until","name":"non_expired","parameters":{"current_time":{"type_name":"TYPE_NAME_TIMESTAMP"},"valid_until":{"type_name":"TYPE_NAME_TIMESTAMP"}}},"source_ip_in_range":{"expression":"allowed_cidrs.exists(c, client_ip.in_cidr(c))","name":"source_ip_in_range","parameters":{"allowed_cidrs":{"generic_types":[{"type_name":"TYPE_NAME_STRING"}],"type_name":"TYPE_NAME_LIST"},"client_ip":{"type_name":"TYPE_NAME_IPADDRESS"}}}}}
 {{- end }}

@@ -1,0 +1,117 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: "iam-availability-alerts"
+  namespace: {{ .Values.observability.namespace | quote }}
+  labels:
+    kacho.cloud/component: prometheus-rules
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    - name: kacho-iam-availability
+      rules:
+        - alert: KachoIamAuthSuccessRateLow
+          expr: |
+            (1 - (
+              sum(rate(kacho_iam_authn_failures_total[5m]))
+              /
+              sum(rate(kacho_iam_authn_attempts_total[5m]))
+            )) < 0.999
+          for: 5m
+          labels:
+            severity: P1
+            service: kacho-iam
+          annotations:
+            summary: "AuthN success rate below 99.9% for 5m"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/kratos-flow-broken.md"
+
+        - alert: KachoFGACheckLatencyP95High
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(openfga_request_duration_ms_bucket{method="Check"}[5m]))
+            ) > 20
+          for: 5m
+          labels:
+            severity: P2
+            service: kacho-iam
+          annotations:
+            summary: "OpenFGA Check p95 latency > 20ms for 5m"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/fga-tuple-drift-reconciliation.md"
+
+        - alert: KachoTokenIssuanceLatencyP95High
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(hydra_token_request_duration_seconds_bucket[5m]))
+            ) > 0.1
+          for: 5m
+          labels:
+            severity: P2
+            service: kacho-iam
+          annotations:
+            summary: "Hydra token issuance p95 latency > 100ms for 5m"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/hydra-token-error.md"
+
+        - alert: KachoCaepDeliveryP99High
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le) (rate(kacho_iam_caep_delivery_seconds_bucket[5m]))
+            ) > 10
+          for: 5m
+          labels:
+            severity: P2
+            service: kacho-iam
+          annotations:
+            summary: "CAEP delivery p99 > 10s for 5m"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/caep-backlog.md"
+
+        - alert: KachoApiGatewayErrorRate5xxHigh
+          expr: |
+            sum(rate(grpc_server_handled_total{
+              service="kacho-api-gateway",
+              code=~"Internal|Unavailable|Unknown|DeadlineExceeded"
+            }[5m]))
+            /
+            sum(rate(grpc_server_handled_total{service="kacho-api-gateway"}[5m]))
+            > 0.001
+          for: 5m
+          labels:
+            severity: P1
+            service: kacho-api-gateway
+          annotations:
+            summary: "API Gateway 5xx error rate > 0.1% for 5m"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/slo-budget-burn.md"
+
+        - alert: KachoCertRenewalFailed
+          expr: |
+            certmanager_certificate_ready_status{condition="False"} == 1
+          for: 30m
+          labels:
+            severity: P1
+            service: cert-manager
+          annotations:
+            summary: "Certificate {{`{{ $labels.name }}`}} renewal failed for 30m"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/cert-renewal-failed.md"
+
+        - alert: KachoJwksRotationOverdue
+          expr: |
+            (time() - max(kacho_iam_jwks_current_key_created_timestamp_seconds)) > 7776000
+          for: 1h
+          labels:
+            severity: P2
+            service: kacho-iam
+          annotations:
+            summary: "JWKS current key age > 90 days — rotation overdue"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/jwks-rotation-overdue.md"
+
+        - alert: KachoRegionFailoverTriggered
+          expr: |
+            sum(up{kacho_cloud_region="prod-eu-central", job="kacho-iam"}) == 0
+            and on() sum(up{kacho_cloud_region="prod-eu-west", job="kacho-iam"}) > 0
+          for: 2m
+          labels:
+            severity: P1
+            service: multi-region
+          annotations:
+            summary: "Primary region prod-eu-central is DOWN — failover to prod-eu-west active"
+            runbook_url: "https://github.com/PRO-Robotech/kacho-deploy/blob/main/docs/runbooks/iam/regional-failover.md"

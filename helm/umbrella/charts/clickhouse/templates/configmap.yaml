@@ -1,0 +1,64 @@
+{{- if .Values.enabled }}
+{{/*
+KAC-127 Phase 9 — ClickHouse server config.d ConfigMap.
+
+config.xml — cluster definition (shards × replicas), Keeper coordination,
+listen host, metrics.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "clickhouse.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clickhouse.labels" . | nindent 4 }}
+data:
+  cluster.xml: |
+    <clickhouse>
+      <listen_host>0.0.0.0</listen_host>
+      <interserver_http_host from_host="hostname"/>
+      <remote_servers>
+        <{{ .Values.cluster.name }}>
+          {{- range $shardIdx := until (int .Values.cluster.shards) }}
+          <shard>
+            <internal_replication>true</internal_replication>
+            {{- range $replicaIdx := until (int $.Values.cluster.replicas) }}
+            {{- $podIdx := add (mul $shardIdx (int $.Values.cluster.replicas)) $replicaIdx }}
+            <replica>
+              <host>{{ include "clickhouse.fullname" $ }}-{{ $podIdx }}.{{ include "clickhouse.fullname" $ }}-headless.{{ $.Release.Namespace }}.svc.cluster.local</host>
+              <port>9000</port>
+            </replica>
+            {{- end }}
+          </shard>
+          {{- end }}
+        </{{ .Values.cluster.name }}>
+      </remote_servers>
+
+      <macros>
+        <cluster>{{ .Values.cluster.name }}</cluster>
+        <shard from_env="POD_SHARD"/>
+        <replica from_env="POD_REPLICA"/>
+      </macros>
+
+      {{- if .Values.keeper.enabled }}
+      <zookeeper>
+        {{- range $i, $_ := until (int .Values.keeper.replicas) }}
+        <node>
+          <host>{{ include "clickhouse.keeper.fullname" $ }}-{{ $i }}.{{ include "clickhouse.keeper.fullname" $ }}-headless.{{ $.Release.Namespace }}.svc.cluster.local</host>
+          <port>9181</port>
+        </node>
+        {{- end }}
+      </zookeeper>
+      {{- end }}
+
+      {{- if .Values.metrics.enabled }}
+      <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>{{ .Values.metrics.port }}</port>
+        <metrics>true</metrics>
+        <events>true</events>
+        <asynchronous_metrics>true</asynchronous_metrics>
+      </prometheus>
+      {{- end }}
+    </clickhouse>
+{{- end }}

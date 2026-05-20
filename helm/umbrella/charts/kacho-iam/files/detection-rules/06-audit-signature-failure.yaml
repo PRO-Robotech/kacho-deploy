@@ -1,0 +1,30 @@
+title: Audit Signature Failure
+id: kacho-audit-rule-06-audit-signature-failure
+description: |
+  Detects any audit_signing_batches row with verifier_status='verified_broken'.
+  Indicator of audit-log tamper attempt — potential APT or insider attack.
+  Phase 9 §2.10 rule #6. Severity Critical (P0). Wakes CISO.
+
+  Detection is LOCAL (not SIEM-side) — implemented in audit-verifier CronJob;
+  this rule descriptor used by Grafana dashboard + alert documentation.
+status: stable
+author: Kacho Cloud Security
+date: 2026-05-19
+tags:
+  - attack.defense_evasion
+  - attack.t1070  # Indicator Removal
+logsource:
+  product: kacho_iam
+  category: audit_integrity
+detection:
+  selection:
+    metric: kacho_audit_verifier_anomalies_found
+  condition: selection > 0
+fields:
+  - batch_id
+  - batch_seq
+  - anomaly_type  # broken_chain | signature_mismatch | merkle_root_mismatch
+level: critical
+response:
+  action: pagerduty_p0_audit_tamper
+  notification: ciso_sms+slack_security_critical+email_security@kacho

@@ -1,0 +1,72 @@
+# Cluster-specific overrides for prod-eu-west region.
+# Applied on top of values.yaml + values.prod.yaml at install time:
+#   helm upgrade kacho ./helm/umbrella \
+#     -f helm/umbrella/values.yaml \
+#     -f helm/umbrella/values.prod.yaml \
+#     -f clusters/prod-eu-west/overrides.yaml
+
+kacho:
+  domain: "api.kacho.cloud"
+  region: "prod-eu-west"
+  cluster: "prod-eu-west"
+
+multiRegion:
+  loadBalancer:
+    zone: "kacho.cloud"
+
+podLabels:
+  "kacho.cloud/region": "prod-eu-west"
+  "kacho.cloud/cluster": "prod-eu-west"
+  "kacho.cloud/canary": "false"
+  "app.kubernetes.io/part-of": "kacho-iam-platform"
+
+# Postgres clusters in eu-west are SYNC standby + DR replica of eu-central.
+postgresHa:
+  defaults:
+    backup:
+      s3:
+        bucket: "kacho-postgres-backups-eu-west-1-prod"
+        region: "eu-west-1"
+    replicationRole: "standby"             # streaming replication from eu-central
+    primaryConnInfo: "host=kacho-iam-postgres.prod-eu-central.kacho.svc.cluster.local port=5432 user=replicator sslmode=require"
+
+observability:
+  tempo:
+    storage:
+      s3:
+        bucket: "kacho-traces-eu-west-1-prod"
+        region: "eu-west-1"
+  mimir:
+    storage:
+      s3:
+        bucket: "kacho-metrics-eu-west-1-prod"
+        region: "eu-west-1"
+  loki:
+    storage:
+      s3:
+        bucket: "kacho-logs-eu-west-1-prod"
+        region: "eu-west-1"
+
+# OpenFGA in eu-west = read replica only; writes routed back to eu-central.
+openfga:
+  role: "read-replica"
+  writerEndpoint: "openfga.prod-eu-central.kacho.svc.cluster.local:8081"
+
+# Kafka MirrorMaker 2 consumer side.
+kafka:
+  mirrorMaker2:
+    enabled: true
+    role: "consumer"
+    sourceCluster: "prod-eu-central"
+    targetCluster: "prod-eu-west"
+    sourceBootstrapServers: "kafka.prod-eu-central.kacho.svc.cluster.local:9092"
+
+# Cilium — federated trust domain with eu-central.
+cilium:
+  spiffe:
+    trustDomain: "kacho.cloud"
+    federation:
+      enabled: true
+      remoteTrustDomains:
+        - name: "kacho.cloud"
+          endpoint: "https://spire.kacho.cloud:8443"

@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "argocd-cm"
+  namespace: {{ .Values.argoCd.namespace | quote }}
+  labels:
+    kacho.cloud/component: argocd-config
+    app.kubernetes.io/part-of: argocd
+data:
+  url: "https://argocd.{{ .Values.kacho.domain }}"
+  oidc.config: |
+    name: Hydra
+    issuer: {{ tpl .Values.argoCd.oidc.issuer . | quote }}
+    clientID: {{ .Values.argoCd.oidc.clientId | quote }}
+    clientSecret: $oidc.hydra.clientSecret
+    requestedScopes:
+      {{- range .Values.argoCd.oidc.requestedScopes }}
+      - {{ . | quote }}
+      {{- end }}
+    requestedIDTokenClaims:
+      groups:
+        essential: true
+  policy.default: {{ .Values.argoCd.oidc.rbac.defaultPolicy | quote }}
+  policy.matchMode: {{ .Values.argoCd.oidc.rbac.policyMatchMode | quote }}
+  policy.csv: |
+    {{- range .Values.argoCd.oidc.rbac.groups }}
+    g, {{ .name }}, {{ .role }}
+    {{- end }}
+  admin.enabled: "false"                   # disable local admin in prod — OIDC only
+  application.instanceLabelKey: "argocd.argoproj.io/instance"

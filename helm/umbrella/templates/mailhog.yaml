@@ -1,6 +1,6 @@
 {{- if .Values.mailhog.enabled }}
-# MailHog — SMTP catch-all в-cluster для Zitadel email-codes. Без SMTP Zitadel
-# не может отправить активационный код, user застрял в "Активация учётной записи".
+# MailHog — SMTP catch-all в-cluster для email-codes (Ory Kratos recovery /
+# verification flows). Без SMTP code-доставка не работает.
 # UI на :8025, SMTP на :1025.
 ---
 apiVersion: apps/v1
