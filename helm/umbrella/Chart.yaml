@@ -34,13 +34,14 @@ dependencies:
   # любой версии. Жёсткий pin (например `1.2.0`) ломает `helm dep update` в CI:
   # `can't get a valid version for "api-gateway"`. Локально и в проде версия всё
   # равно резолвится из самого Chart.yaml sibling-репо — pin тут только проверка.
-  # KAC-127: vpc / api-gateway sourced from the KAC-127 git-worktrees while the
-  # integration-debugging round is in flight (the main checkouts are pinned to
-  # other agents' KAC-122 branches; multi-agent branch isolation). Revert to
-  # `kacho-vpc/deploy` / `kacho-api-gateway/deploy` once KAC-127 is merged.
+  # Sibling sub-charts are resolved from sibling repo checkouts laid out next to
+  # kacho-deploy (CI checks them out into $GITHUB_WORKSPACE/kacho-<svc>; локально —
+  # kacho-workspace/project/kacho-<svc>). CI pins the sibling checkout to the
+  # KAC-127 branch while the epic is in flight (см. .github/workflows/ci.yaml) —
+  # the `file://` path itself is branch-agnostic and stays canonical.
   - name: vpc
     version: ">= 0.0.0"
-    repository: file://../../../kacho-vpc-KAC-127/deploy
+    repository: file://../../../kacho-vpc/deploy
   - name: compute
     version: ">= 0.0.0"
     repository: file://../../../kacho-compute/deploy
@@ -48,7 +49,7 @@ dependencies:
   # loadbalancer — frozen в 1.0 (proto verbatim YC, backend ещё не переписан)
   - name: api-gateway
     version: ">= 0.0.0"
-    repository: file://../../../kacho-api-gateway-KAC-127/deploy
+    repository: file://../../../kacho-api-gateway/deploy
   - name: ui
     version: ">= 0.0.0"
     repository: file://../../../kacho-ui/deploy
