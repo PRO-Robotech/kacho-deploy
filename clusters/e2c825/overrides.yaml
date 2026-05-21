@@ -1,42 +1,33 @@
 # Cluster e2c825-specific overrides (Beget hosting).
 # Use: helm install -f helm/umbrella/values.dev.yaml -f clusters/e2c825/overrides.yaml
 #
-# KAC-115: Zitadel + OpenFGA stack REPLACED by Ory Kratos + Hydra + Keto.
+# KAC-127 — authz-стек = OpenFGA (Phase 3 AuthorizeService + FGA model +
+# Conditions + OPA), как в helm/umbrella/values.dev.yaml. Прежний Keto-стек
+# (KAC-115/116) больше НЕ используется backend'ом kacho-iam main — binary
+# всегда wired OpenFGA client (config.yaml имеет только `extapi.openfga:`).
+# Поэтому overrides здесь НЕ переопределяет authz: вся OpenFGA-цепочка
+# (openfga subchart + pg-openfga + openfga-bootstrap-job + vpc/compute
+# write-side FGA + ListObjects + OPA sidecar + api-gateway authz) приходит
+# из values.dev.yaml без изменений. Этот файл несёт только НЕ-authz
+# e2c825-специфику: внешние URL (Beget LoadBalancer IP), ingress-режим.
+#
+# AuthN (Ory Kratos identity + Hydra OAuth2/OIDC) остаётся включённым —
+# values.dev.yaml уже ставит kratos/hydra/pg-kratos/pg-hydra enabled.
+# Keto-subchart (REBAC) — отключён (values.dev.yaml: keto.enabled / pg-keto
+# enabled: false); KAC-127 его не использует.
+#
+# Образы (kacho-vpc / kacho-compute / kacho-api-gateway / kacho-iam / kacho-ui)
+# задаются строкой `--set <svc>.image=docker.io/prorobotech/kacho-<svc>:main-<sha>`
+# при helm upgrade — НЕ хардкодятся здесь (CD-pipeline / helm-deploy подставляет
+# DockerHub-теги). global.imageRegistry также передаётся через --set.
 
-# KAC-124: resource-manager image override удалён — backend упразднён.
-
-# KAC-106 (E1): folder_id → project_id; peers switched to kacho-iam
-vpc:
-  image: ttl.sh/kac125-1779140193/kacho-vpc:24h
-  imagePullPolicy: Always
-  iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
-  # KAC-120: per-RPC Check через kacho-iam.InternalIAMService.Check (port 9091).
-  authz:
-    iamEndpoint: "kacho-iam-internal.kacho.svc.cluster.local:9091"
-    breakglass: false
-    checkTimeout: 2s
-    cacheTtl: 5s
-    denyRateLimitPerSec: 100
-
-compute:
-  image: ttl.sh/kac125-1779140195/kacho-compute:24h
-  imagePullPolicy: Always
-  iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
-  # KAC-120: env для Check-interceptor.
-  env:
-    KACHO_COMPUTE_AUTHZ_IAM_GRPC_ADDR: "kacho-iam-internal.kacho.svc.cluster.local:9091"
-    KACHO_COMPUTE_AUTHZ_IAM_TLS: "false"
-    KACHO_COMPUTE_AUTHZ_BREAKGLASS: "false"
-
+# ─── api-gateway — внешние URL под Beget LoadBalancer ────────────────────
 api-gateway:
-  # KAC-125: rebuilt с восстановленным InternalIAMService.Check + UserService.Invite stubs.
-  image: ttl.sh/kac125b-1779139142/kacho-api-gateway:24h
   imagePullPolicy: Always
-  authn:
-    mode: dev
-    devSecret: "kacho-dev-jwt-secret-2026"
-  # KAC-115/116: OIDC → Hydra (вместо Zitadel). Primary auth path —
-  # Kratos session cookie (см. KACHO_API_GATEWAY_KRATOS_PUBLIC_URL ниже).
+  # values.dev.yaml уже ставит authn.mode=dev + devSecret + authz.enabled=true
+  # (fail-closed). На e2c825 dev-secret тот же — authz-fixtures JWT-minter
+  # подписывает им же. Production-cluster overlay переопределит на mode=production.
+  # KAC-115/116: OIDC → Hydra; primary auth path — Kratos session cookie.
   oidc:
     enabled: true
     issuer: "http://kacho-umbrella-hydra-public:4444"
@@ -50,66 +41,86 @@ api-gateway:
     # KAC-116: Kratos session-based auth (cookie ory_kratos_session).
     KACHO_API_GATEWAY_KRATOS_PUBLIC_URL: "http://kacho-umbrella-kratos-public.kacho.svc.cluster.local:80"
 
-ui:
-  # KAC-125: AccessPage YC-style + Cascader + InviteModal.
-  image: ttl.sh/kac125d-1779140849/kacho-ui:24h
+compute:
   imagePullPolicy: Always
 
+vpc:
+  imagePullPolicy: Always
+
+ui:
+  imagePullPolicy: Always
+  # Beget LoadBalancer публикует UI на IP 5.35.93.58 (clusters/e2c825/loadbalancers.yaml).
+  ingress:
+    host: "5.35.93.58"
+
 kacho-iam:
-  # KAC-125: User per-Account + Invite RPC + UpsertFromIdentity rewrite.
   image:
-    repository: ttl.sh/kac125d-1779140845/kacho-iam
-    tag: "24h"
     pullPolicy: Always
   initContainer:
     waitForExtAuth:
       enabled: false
   env:
     KACHO_DEBUG_PRINCIPAL: "1"
-    # KAC-116: AuthZ backend → Keto (replaces OpenFGA).
-    KACHO_IAM_AUTHZ_BACKEND: "keto"
-    # Service expose'ит port 80 (Read API REST). 4466 — это headless container port.
-    KACHO_IAM_KETO_READ_URL: "http://kacho-umbrella-keto-read.kacho.svc.cluster.local:80"
-    KACHO_IAM_KETO_WRITE_URL: "http://kacho-umbrella-keto-write.kacho.svc.cluster.local:80"
-    # KAC-119: bootstrap admin matcher.
-    # Format: exact email (`admin@prorobotech.ru`) либо domain suffix
-    # начинается с `@` (`@prorobotech.ru` — любой user с этим domain → admin).
-    # Domain-based — для corporate setup (все сотрудники @prorobotech.ru — админы).
+    # KAC-127 #25: AuthorizeService.ListObjects — FGA-filtered List.
+    KACHO_AUTHZ_LISTOBJECTS: "on"
+    # KAC-119: bootstrap admin matcher. Format: exact email
+    # (`admin@prorobotech.ru`) либо domain-suffix начинается с `@`
+    # (`@prorobotech.ru` — любой user с этим domain → admin).
     KACHO_IAM_BOOTSTRAP_ADMIN_EMAIL: "@prorobotech.ru"
 
-# === Deprecated stack (KAC-115 migration): disabled ===
-zitadel:
-  enabled: false
-openfga:
-  enabled: false
-pg-zitadel:
-  enabled: false
-pg-openfga:
-  enabled: false
-openfgaBootstrap:
-  enabled: false
-zitadelOidcBootstrap:
-  enabled: false
-mailhog:
-  enabled: false
-
-# === Ory stack (KAC-115) ===
-pg-kratos:
-  enabled: true
-pg-hydra:
-  enabled: true
-pg-keto:
-  enabled: true
+# ─── Kratos / Hydra — внешние URL под Beget IP ───────────────────────────
+# values.dev.yaml держит URL на localhost:28080 (kind ingress host-port).
+# На e2c825 внешний доступ — через LoadBalancer-IP (UI на 5.35.93.58, путь
+# /.ory/* проксирует kacho-ui nginx → kratos/hydra public Services).
 kratos:
-  enabled: true
-hydra:
-  enabled: true
-keto:
-  enabled: true
-kratosSelfServiceUI:
-  enabled: true
+  kratos:
+    config:
+      serve:
+        public:
+          base_url: "http://5.35.93.58/.ory/kratos/public/"
+          cors:
+            enabled: true
+            allowed_origins: ["http://5.35.93.58"]
+      selfservice:
+        default_browser_return_url: "http://5.35.93.58/"
+        allowed_return_urls: ["http://5.35.93.58"]
+        flows:
+          registration:
+            ui_url: "http://5.35.93.58/registration"
+          login:
+            ui_url: "http://5.35.93.58/login"
+          settings:
+            ui_url: "http://5.35.93.58/settings"
+          recovery:
+            ui_url: "http://5.35.93.58/recovery"
+          error:
+            ui_url: "http://5.35.93.58/error"
 
-# Disable kind-style ingress-nginx (требует node-label `ingress-ready=true`).
-# Внешний доступ — через LoadBalancer Services (clusters/e2c825/loadbalancers.yaml).
+hydra:
+  hydra:
+    config:
+      serve:
+        public:
+          cors:
+            enabled: true
+            allowed_origins: ["http://5.35.93.58"]
+      urls:
+        self:
+          public: "http://5.35.93.58/.ory/hydra/public/"
+          issuer: "http://5.35.93.58/.ory/hydra/public/"
+        consent: "http://5.35.93.58/consent"
+        login: "http://5.35.93.58/login"
+        logout: "http://5.35.93.58/logout"
+        error: "http://5.35.93.58/error"
+        post_logout_redirect: "http://5.35.93.58/"
+
+kratosSelfServiceUI:
+  kratosBrowserUrl: "http://5.35.93.58/.ory/kratos/public"
+
+# ─── ingress-режим — e2c825 публикует через Beget LoadBalancer Services ──
+# (clusters/e2c825/loadbalancers.yaml). kind-style ingress-nginx требует
+# node-label `ingress-ready=true` — на e2c825 его нет, поэтому subchart
+# отключён (Chart.yaml: condition: ingress-nginx.enabled). Без отключения
+# controller-pod вечно Pending → helm --wait timeout.
 ingress-nginx:
   enabled: false

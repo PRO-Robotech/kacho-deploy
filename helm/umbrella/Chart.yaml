@@ -6,6 +6,12 @@ dependencies:
   - name: ingress-nginx
     version: 4.x
     repository: https://kubernetes.github.io/ingress-nginx
+    # condition-gated: clusters that expose via LoadBalancer Services (e.g.
+    # e2c825) disable the kind-style ingress-nginx via `ingress-nginx.enabled:
+    # false`. Без `condition:` сабчарт ставился безусловно и его controller
+    # вечно висел Pending (нет node-label `ingress-ready=true`) → `helm --wait`
+    # timeout.
+    condition: ingress-nginx.enabled
   # KAC-124: `pg-resource-manager` Postgres-инстанс удалён — backend kacho-resource-manager упразднён.
   - name: postgresql
     alias: pg-vpc
