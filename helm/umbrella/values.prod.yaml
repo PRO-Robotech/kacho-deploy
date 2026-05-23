@@ -295,6 +295,25 @@ compute:
 api-gateway:
   image: "docker.io/prorobotech/kacho-api-gateway:${KACHO_IMAGE_TAG}"
   imagePullPolicy: Always
+  # KAC-139 (W1.3): production must fail-closed on IAM-Check error / OpenFGA
+  # unreachable. Chart default `authz: {}` would render env-vars defaulted to
+  # `false` (see api-gateway/templates/deployment.yaml:95-112) — middleware
+  # mounts as no-op pass-through (silent disable). Make explicit.
+  authz:
+    enabled: true
+    failOpen: false
+  # KAC-139 (W1.3): production-strict authn mode — Bearer mandatory, anonymous
+  # path forbidden on the public surface. (Mode was documented in
+  # api-gateway/internal/config/config.go since KAC-127; never wired into prod
+  # overlay until now.)
+  authn:
+    mode: production-strict
+  # KAC-139 (W1.3): startup-validation in cmd/api-gateway/main.go refuses to
+  # boot in production when authz.enabled=false OR failOpen=true. The signal
+  # is KACHO_APP_ENV; emitted here via the chart's extraEnv escape-hatch
+  # (no chart bump needed).
+  extraEnv:
+    KACHO_APP_ENV: "prod"
 
 ui:
   image: "docker.io/prorobotech/kacho-ui:${KACHO_IMAGE_TAG}"
