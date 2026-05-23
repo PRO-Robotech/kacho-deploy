@@ -51,12 +51,14 @@ jobs:
       - uses: actions/checkout@v4
         with: { path: kacho-deploy }
 
-      # Resolve the ref for each sibling checkout. The default pin is KAC-127
-      # (epic integration branch). When this run was started by a
-      # `repository_dispatch` from an authz repo, `client_payload.repo` names
-      # that sibling and `client_payload.ref` is the branch under test — only
-      # THAT sibling is overridden, the rest stay on the KAC-127 pin so the
-      # PR is tested against the integration branch of every other component.
+      # Resolve the ref for each sibling checkout. Default pins are the latest
+      # fix branches per repo for cross-repo integration CI (KAC-132). When
+      # started by a `repository_dispatch` from an authz repo, `client_payload.repo`
+      # names that sibling and `client_payload.ref` is the branch under test —
+      # only THAT sibling is overridden; the rest stay on their fix-branch pin.
+      # kacho-proto→KAC-124, kacho-iam→KAC-130-integration,
+      # kacho-api-gateway→KAC-132, kacho-workspace→KAC-132.
+      # kacho-corelib/vpc/compute/ui stay at main. Revert after merge.
       - name: resolve sibling refs
         id: refs
         env:
@@ -65,12 +67,15 @@ jobs:
           DISPATCH_SOURCE: ${{ github.event.client_payload.source }}
         run: |
           set -euo pipefail
-          PIN=KAC-127
-          # default every sibling to the epic pin
-          for s in corelib proto vpc compute iam api-gateway workspace ui; do
-            key="REF_$(echo "$s" | tr 'a-z-' 'A-Z_')"
-            echo "${key}=${PIN}" >> "$GITHUB_ENV"
-          done
+          # Per-sibling default pins (KAC-132 cross-repo CI — revert after merge)
+          echo "REF_CORELIB=main"          >> "$GITHUB_ENV"
+          echo "REF_PROTO=KAC-124"         >> "$GITHUB_ENV"
+          echo "REF_VPC=main"              >> "$GITHUB_ENV"
+          echo "REF_COMPUTE=main"          >> "$GITHUB_ENV"
+          echo "REF_IAM=KAC-130-integration" >> "$GITHUB_ENV"
+          echo "REF_API_GATEWAY=KAC-132"   >> "$GITHUB_ENV"
+          echo "REF_WORKSPACE=KAC-132"     >> "$GITHUB_ENV"
+          echo "REF_UI=main"               >> "$GITHUB_ENV"
           if [ -n "${DISPATCH_REPO:-}" ] && [ -n "${DISPATCH_REF:-}" ]; then
             # client_payload.repo may arrive as "PRO-Robotech/kacho-vpc" or
             # bare "kacho-vpc" — normalise to the kacho-<name> short form.
@@ -86,15 +91,14 @@ jobs:
                 echo "::warning::unknown dispatch repo '${DISPATCH_REPO}' — ignoring override" ;;
             esac
           else
-            echo "no client_payload override — all siblings pinned to ${PIN}"
+            echo "no client_payload override — using per-sibling fix-branch pins"
           fi
 
       # Siblings are needed both as Go build context (Dockerfile COPY ../kacho-*)
       # and as helm sub-chart sources (umbrella Chart.yaml file:// deps). The
       # authz fixtures + newman suites also live in the sibling repos + the
-      # workspace repo. All are pinned to KAC-127 while the epic is in flight
-      # (see workspace CLAUDE.md «Кросс-репо зависимости»); revert to main
-      # after the epic merges. A `repository_dispatch` from an authz repo
+      # workspace repo. Pinned to latest fix branches per KAC-132 cross-repo CI;
+      # revert to main after merges. A `repository_dispatch` from an authz repo
       # overrides exactly one sibling ref (see "resolve sibling refs" above).
       - uses: actions/checkout@v4
         with: { repository: PRO-Robotech/kacho-corelib, ref: "${{ env.REF_CORELIB }}", path: kacho-corelib }
