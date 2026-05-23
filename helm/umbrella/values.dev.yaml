@@ -57,6 +57,12 @@ api-gateway:
 compute:
   image: kacho-compute:dev
   imagePullPolicy: IfNotPresent
+  # KAC-133: correct authzIam gRPC address — kacho-iam-internal service exposes
+  # port 9091 (InternalIAMService / AuthorizeService); chart default uses
+  # kacho-iam (external) which does not serve :9091.
+  authzIam:
+    grpcAddr: "kacho-iam-internal.kacho.svc.cluster.local:9091"
+    tls: false
 
 ui:
   image: kacho-ui:dev
