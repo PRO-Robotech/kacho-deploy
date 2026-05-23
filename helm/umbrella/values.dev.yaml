@@ -721,6 +721,14 @@ kacho-iam:
     # ListObjects to resolve the caller's allowed-id set; without this the RPC
     # returns Unimplemented and the handler-side scope-filter fails 503.
     KACHO_AUTHZ_LISTOBJECTS: "on"
+    # KAC-132: reduce compliance worker interval for newman e2e (default 10s → 1s)
+    KACHO_IAM_GOVERNANCE__COMPLIANCE_REPORT_WORKER_INTERVAL_SECONDS: "1"
+    # KAC-132: MinIO dev instance for compliance report S3 upload in newman e2e
+    KACHO_IAM_COMPLIANCE__S3__ENDPOINT: "http://minio-dev:9000"
+    KACHO_IAM_COMPLIANCE__S3__BUCKET: "kacho-compliance-reports"
+    KACHO_IAM_COMPLIANCE__S3__PATH_STYLE: "true"
+    KACHO_IAM_COMPLIANCE__S3__ACCESS_KEY: "minioadmin"
+    KACHO_IAM_COMPLIANCE__S3__SECRET_KEY: "minioadmin"
   # KAC-127 Phase 3: OPA sidecar config propagated from umbrella to sub-chart.
   # KAC-127 (deploy#39 fix): включён — kacho-iam отдаёт OPA-bundle по HTTP на
   # :9092; см. комментарий у top-level `opaSidecar` ниже.
@@ -744,6 +752,16 @@ kacho-iam:
         memory: 256Mi
   openfgaBootstrap:
     modelIdSecretName: openfga-model-id
+  # KAC-132: compliance report S3 config via config.yaml (env var binding for
+  # path-style bool is unreliable with viper key replacer hyphens; use YAML instead).
+  compliance:
+    s3:
+      endpoint: "http://minio-dev:9000"
+      region: "us-east-1"
+      bucket: "kacho-compliance-reports"
+      pathStyle: true
+      accessKey: "minioadmin"
+      secretKey: "minioadmin"
 
 # ─── KAC-127 Phase 3: OpenFGA bootstrap-job (KAC-105 extended) ──────────
 # post-install hook with full DSL v2 + idempotent + model-id Secret patch +

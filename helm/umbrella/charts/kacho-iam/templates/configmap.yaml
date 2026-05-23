@@ -131,3 +131,15 @@ data:
       dpop-replay:
         cache-ttl-seconds: {{ .Values.kacho.iam.dpopReplay.cacheTTLSeconds | int }}
         cache-size: {{ .Values.kacho.iam.dpopReplay.cacheSize | int }}
+
+    {{- if .Values.compliance }}
+    # ─── KAC-132 — ComplianceReport S3 + signer (dev/e2e) ─────────────────
+    compliance:
+      s3:
+        endpoint: {{ .Values.compliance.s3.endpoint | default "" | quote }}
+        region: {{ .Values.compliance.s3.region | default "us-east-1" | quote }}
+        bucket: {{ .Values.compliance.s3.bucket | default "kacho-compliance-reports" | quote }}
+        path-style: {{ .Values.compliance.s3.pathStyle | default true }}
+        access-key: {{ .Values.compliance.s3.accessKey | default "" | quote }}
+        secret-key: {{ .Values.compliance.s3.secretKey | default "" | quote }}
+    {{- end }}
