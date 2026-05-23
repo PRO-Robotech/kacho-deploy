@@ -357,30 +357,54 @@ jobs:
             kacho-workspace/tests/authz-fixtures/out/authz-fixtures.json
           if-no-files-found: ignore
 
-      # Fail the job if any suite recorded a failed assertion (summary.txt
-      # column FAILED). Both authz suites must be 0-failed.
-      - name: assert authz suites green
+      # KAC-135 W0.3 — dynamic gate over EVERY generated collection.
+      # Replaces the prior 2-suite hardcoded gate (authz-deny +
+      # authz-sa-apitoken) that ignored 10/12 generated suites. Fails CI if
+      # ANY suite has assertions.failed > 0 OR requests.failed > 0.
+      - name: assert all newman suites green
         if: always()
+        working-directory: kacho-iam/tests/newman
         run: |
-          set -euo pipefail
-          f="kacho-iam/tests/newman/out/summary.txt"
-          if [ ! -f "$f" ]; then
-            echo "no summary.txt — newman did not run"; exit 1
+          set -e
+          shopt -s nullglob
+          collections=(collections/*.postman_collection.json)
+          if [ "${#collections[@]}" -eq 0 ]; then
+            echo "FAIL: no collections generated under collections/"
+            exit 1
           fi
-          echo "=== newman summary ==="
-          cat "$f"
-          # summary.txt columns: RESOURCE ASSERT FAILED REQUESTS (header on NR==1).
-          rc=0
-          seen=0
-          while read -r res assert failed requests; do
-            seen=$((seen+1))
-            if [ "${failed:-0}" -gt 0 ] 2>/dev/null; then
-              echo "$res: $failed FAILED assertions"; rc=1
-            else
-              echo "$res: OK ($assert assertions)"
+          failed_suites=()
+          for col in "${collections[@]}"; do
+            name=$(basename "$col" .postman_collection.json)
+            report="out/${name}.json"
+            if [ ! -f "$report" ]; then
+              echo "WARN: no report for $name (newman didn't run for this suite)"
+              failed_suites+=("$name(no-report)")
+              continue
             fi
-          done < <(awk 'NR>1 && NF>=4' "$f")
-          if [ "$seen" -lt 2 ]; then
-            echo "expected 2 authz suites (authz-deny + authz-sa-apitoken), saw $seen"; rc=1
+            fails=$(jq -r '.run.stats.assertions.failed // 0' "$report")
+            errors=$(jq -r '.run.stats.requests.failed // 0' "$report")
+            echo "$name: $fails failed assertions, $errors failed requests"
+            if [ "$fails" -gt 0 ] || [ "$errors" -gt 0 ]; then
+              failed_suites+=("$name")
+            fi
+          done
+          if [ "${#failed_suites[@]}" -gt 0 ]; then
+            echo "FAIL: suites with failures: ${failed_suites[*]}"
+            exit 1
           fi
-          exit $rc
+          echo "All ${#collections[@]} suites GREEN."
+
+      # KAC-135 W0.3 — proto RPC → newman case-id coverage gate.
+      # W0 baseline ≈49% (Stream D in W2 drives this to 100%); enforced floor
+      # is COVERAGE_MIN=30 so the gate fails when coverage regresses below
+      # baseline without preventing incremental work below W0 measurement.
+      - name: coverage gate
+        if: always()
+        working-directory: kacho-iam/tests/newman
+        env:
+          COVERAGE_MIN: "30"
+        run: |
+          python3 scripts/coverage.py \
+            --proto-glob '../../../kacho-proto/proto/kacho/cloud/iam/v1/*.proto' \
+            --collections-glob 'collections/*.postman_collection.json' \
+            --min "$COVERAGE_MIN"
