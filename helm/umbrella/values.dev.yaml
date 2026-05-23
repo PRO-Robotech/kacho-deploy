@@ -616,8 +616,19 @@ kratosSelfServiceUI:
 
 # OpenFGA — REBAC engine для kacho-iam (Phase 3). Condition-gated через
 # `openfga.enabled` / `openfgaBootstrap.enabled` (default false на E0/E1).
+#
+# KAC-135 W0.4 (HA-mini): replicaCount=2 на dev (kind). Upstream chart default —
+# 3 replicas (production HA), но для kind dev-стенда это перебор по RAM/CPU и
+# blocked by 2-node kind config. 2 replicas достаточно для verify-survives-pod-restart
+# смоук-теста (одна нода drain'ится — вторая остаётся, drainer/cache-invalidation
+# тесты W1 не падают). Postgres backend (engine=postgres ниже) → state shared
+# между replicas, безопасно для concurrent bootstrap-Job (он сам идемпотентен
+# через sha256 DSL-compare). Upstream формула: `replicas: ternary 1 replicaCount
+# (eq datastore.engine "memory")` — engine=memory принудительно заходит в 1 rep;
+# с postgres работает заявленный replicaCount.
 openfga:
   enabled: true
+  replicaCount: 2
   datastore:
     engine: postgres
     uri: postgres://openfga:dev-openfga-password@kacho-umbrella-pg-openfga:5432/openfga?sslmode=disable
