@@ -52,13 +52,7 @@ jobs:
         with: { path: kacho-deploy }
 
       # Resolve the ref for each sibling checkout. Default pins are the latest
-      # fix branches per repo for cross-repo integration CI (KAC-132). When
-      # started by a `repository_dispatch` from an authz repo, `client_payload.repo`
-      # names that sibling and `client_payload.ref` is the branch under test —
-      # only THAT sibling is overridden; the rest stay on their fix-branch pin.
-      # kacho-proto→KAC-124, kacho-iam→KAC-130-integration,
-      # kacho-api-gateway→KAC-132, kacho-workspace→KAC-132.
-      # kacho-corelib/vpc/compute/ui stay at main. Revert after merge.
+      # KAC-135: all sibling pins reverted to main after KAC-124/KAC-130/KAC-132 merges.
       - name: resolve sibling refs
         id: refs
         env:
@@ -67,14 +61,14 @@ jobs:
           DISPATCH_SOURCE: ${{ github.event.client_payload.source }}
         run: |
           set -euo pipefail
-          # Per-sibling default pins (KAC-132 cross-repo CI — revert after merge)
+          # KAC-135: all sibling pins reverted to main.
           echo "REF_CORELIB=main"          >> "$GITHUB_ENV"
-          echo "REF_PROTO=KAC-124"         >> "$GITHUB_ENV"
+          echo "REF_PROTO=main"            >> "$GITHUB_ENV"
           echo "REF_VPC=main"              >> "$GITHUB_ENV"
           echo "REF_COMPUTE=main"          >> "$GITHUB_ENV"
-          echo "REF_IAM=KAC-130-integration" >> "$GITHUB_ENV"
-          echo "REF_API_GATEWAY=KAC-132"   >> "$GITHUB_ENV"
-          echo "REF_WORKSPACE=KAC-132"     >> "$GITHUB_ENV"
+          echo "REF_IAM=main"              >> "$GITHUB_ENV"
+          echo "REF_API_GATEWAY=main"      >> "$GITHUB_ENV"
+          echo "REF_WORKSPACE=main"        >> "$GITHUB_ENV"
           echo "REF_UI=main"               >> "$GITHUB_ENV"
           if [ -n "${DISPATCH_REPO:-}" ] && [ -n "${DISPATCH_REF:-}" ]; then
             # client_payload.repo may arrive as "PRO-Robotech/kacho-vpc" or
