@@ -63,6 +63,17 @@ compute:
   authzIam:
     grpcAddr: "kacho-iam-internal.kacho.svc.cluster.local:9091"
     tls: false
+  # KAC-133: write-side OpenFGA — publish compute_<type>:<id>#project tuples
+  # after each resource Create. Without these tuples per-resource Get/Update/Delete
+  # Check has no path to the project role-binding → authz.no_path DENY.
+  fgaTupleWrite:
+    enabled: true
+    openfgaEndpoint: kacho-umbrella-openfga:8080
+    storeIdSecretName: kacho-iam-openfga-store
+    storeIdSecretKey: store_id
+    modelIdSecretName: openfga-model-id
+    modelIdSecretKey: current
+    timeoutMs: 2000
 
 ui:
   image: kacho-ui:dev
