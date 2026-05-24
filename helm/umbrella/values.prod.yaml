@@ -228,6 +228,22 @@ pg-keto:
       requests: { cpu: 300m, memory: 512Mi }
       limits:   { cpu: 2, memory: 2Gi }
 
+# KAC-NLB — production backing Postgres for kacho-nlb. Same persistence /
+# resource shape as pg-vpc; CD-pipeline supplies storageClass per cluster.
+# Real password injected via external-secrets-operator before helm upgrade —
+# bitnami's `auth.existingSecret` is the override hook (omitted here so the
+# dev `auth.password` default is the visible fallback; CD overlay sets it).
+pg-nlb:
+  enabled: true
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+      storageClass: ""
+    resources:
+      requests: { cpu: 500m, memory: 1Gi }
+      limits:   { cpu: 4, memory: 4Gi }
+
 # ─── kacho-iam production block ────────────────────────────────────────
 kacho-iam:
   replicas: 3
@@ -314,6 +330,20 @@ api-gateway:
   # (no chart bump needed).
   extraEnv:
     KACHO_APP_ENV: "prod"
+  # KAC-NLB: production backends map — adds nlb / nlbInternal alongside the
+  # existing vpc / compute / iam entries. The api-gateway sub-chart
+  # deployment template renders KACHO_API_GATEWAY_NLB_GRPC /
+  # KACHO_API_GATEWAY_NLB_INTERNAL_GRPC conditionally on these keys (see
+  # comment in values.dev.yaml api-gateway.backends).
+  backends:
+    vpc: vpc.kacho.svc.cluster.local:9090
+    vpcInternal: vpc.kacho.svc.cluster.local:9091
+    compute: compute.kacho.svc.cluster.local:9090
+    computeInternal: compute.kacho.svc.cluster.local:9091
+    iam: kacho-iam.kacho.svc.cluster.local:9090
+    iamInternal: kacho-iam-internal.kacho.svc.cluster.local:9091
+    nlb: kacho-nlb.kacho.svc.cluster.local:9090
+    nlbInternal: kacho-nlb-internal.kacho.svc.cluster.local:9091
 
 ui:
   image: "docker.io/prorobotech/kacho-ui:${KACHO_IMAGE_TAG}"
@@ -893,6 +923,102 @@ observability:
         enabled: true
     sloth:
       enabled: true
+
+# ─── KAC-NLB: kacho-nlb production block ────────────────────────────────
+#
+# Multi-region HA — 3 replicas; image from DockerHub, tag injected by CD
+# pipeline (${KACHO_IMAGE_TAG}). `config.mode=production` activates the
+# strict config-validation in kacho-nlb (forbids breakglass=true, requires
+# listenInvalidator.iamDsn when enabled, etc.). networkPolicy enabled to
+# match vpc/compute prod posture. FGA endpoint pre-populated for the same
+# OpenFGA store the rest of the stack writes into; storeId / modelId are
+# loaded by the openfga-bootstrap-job into the `openfga-model-id` Secret
+# (Phase 3 contract — kacho-nlb consumes them via env-substitution).
+kacho-nlb:
+  enabled: true
+  replicas: 3
+  image:
+    repository: docker.io/prorobotech/kacho-nlb
+    tag: "${KACHO_IMAGE_TAG}"
+    pullPolicy: Always
+  db:
+    host: kacho-umbrella-pg-nlb
+    port: 5432
+    user: kacho_nlb
+    name: kacho_nlb
+    sslmode: require
+    # CD-pipeline supplies the externally-managed Secret name (external-secrets
+    # -operator → vault path `secret/kacho/prod/pg-nlb/credentials`). bitnami
+    # pg-nlb defaults its own Secret to `<release>-pg-nlb`; keep the same name
+    # so the chart's `existingSecret` short-circuits the internal Secret render
+    # (helm/umbrella/charts/kacho-nlb/templates/secret.yaml has
+    # `{{- if not .Values.db.existingSecret -}}` guard).
+    existingSecret: kacho-umbrella-pg-nlb
+    existingSecretKey: password
+  peers:
+    iam:
+      addr: ""
+      internalAddr: kacho-iam-internal.kacho.svc.cluster.local:9091
+      tls: false
+      dialDuration: 10s
+    vpc:
+      addr: vpc.kacho.svc.cluster.local:9090
+      internalAddr: vpc.kacho.svc.cluster.local:9091
+      tls: false
+      dialDuration: 10s
+    compute:
+      addr: compute.kacho.svc.cluster.local:9090
+      internalAddr: ""
+      tls: false
+      dialDuration: 10s
+  authz:
+    iam:
+      addr: kacho-iam-internal.kacho.svc.cluster.local:9091
+      dialDeadline: 3s
+      requestTimeout: 500ms
+  config:
+    mode: production
+    logger:
+      level: INFO
+    apiServer:
+      gracefulShutdown: 10s
+      grpcGwEnable: false
+    authn:
+      type: none
+    authz:
+      cache:
+        enable: true
+        ttl: 5s
+        size: 10000
+      listenInvalidator:
+        enable: true
+        channel: kacho_iam_subjects
+        # CD-pipeline overrides per cluster via --set or external-secrets.
+        iamDsn: ""
+      breakglass: false
+    fga:
+      endpoint: kacho-umbrella-openfga:8080
+      storeId: ""
+      modelId: ""
+      tupleWrite:
+        timeout: 2s
+        maxRetries: 3
+    jobs:
+      targetDrain:
+        interval: 10s
+  migrator:
+    enable: true
+  networkPolicy:
+    enable: true
+  serviceMonitor:
+    enable: true
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 4000m
+      memory: 2Gi
 
 # Phase 11: Postgres HA via CloudNativePG / Patroni.
 postgres-ha:

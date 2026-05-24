@@ -33,6 +33,16 @@ dependencies:
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
     condition: pg-openfga.enabled
+  # KAC-NLB: kacho-nlb owns its own Postgres instance (database-per-service,
+  # workspace CLAUDE.md "Запреты" #8). Schema `kacho_nlb`, owned by the
+  # `kacho-nlb` init-container migrator (goose). Condition-gated so clusters
+  # that do not yet need NLB (e.g. early-phase dev) can stay lean — flip
+  # `pg-nlb.enabled=true` in values.dev.yaml / values.prod.yaml.
+  - name: postgresql
+    alias: pg-nlb
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: pg-nlb.enabled
   # KAC-124: resource-manager sub-chart удалён — backend заменён на kacho-iam
   # (Account/Project — см. ниже).
   # KAC-125: sibling sub-chart версии оставляем без жёсткого pin (`>= 0.0.0`),
@@ -53,6 +63,14 @@ dependencies:
     repository: file://../../../kacho-compute/deploy
   # vpc-controllers упразднён: IPAM/default-SG встроены в kacho-vpc inline (Phase 2).
   # loadbalancer — frozen в 1.0 (proto verbatim YC, backend ещё не переписан)
+  # KAC-NLB: kacho-nlb L4 NLB control-plane (NetworkLoadBalancer / Listener /
+  # TargetGroup, flat resources + Operations LRO). Sibling sub-chart, same
+  # convention as vpc/compute. Condition-gated (`kacho-nlb.enabled=true`) so
+  # clusters without NLB skip the deploy entirely.
+  - name: kacho-nlb
+    version: ">= 0.0.0"
+    repository: file://../../../kacho-nlb/deploy
+    condition: kacho-nlb.enabled
   - name: api-gateway
     version: ">= 0.0.0"
     repository: file://../../../kacho-api-gateway/deploy

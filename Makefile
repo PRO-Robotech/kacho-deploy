@@ -1,6 +1,7 @@
 .PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint seed-ipam \
         loadtest-address-allocate loadtest-address-allocate-clean \
-        reload-svc-iam psql-iam logs-iam fga-bootstrap build-ui openfga-model-json
+        reload-svc-iam psql-iam logs-iam fga-bootstrap build-ui openfga-model-json \
+        reload-svc-nlb psql-nlb logs-nlb seed-nlb
 
 CLUSTER_NAME := kacho
 
@@ -60,12 +61,13 @@ reload-svc:
 ifndef SVC
 	$(error SVC variable is required, e.g. make reload-svc SVC=compute)
 endif
-	@if [ "$(SVC)" != "vpc" ] && [ "$(SVC)" != "compute" ] && [ "$(SVC)" != "loadbalancer" ] && [ "$(SVC)" != "api-gateway" ] && [ "$(SVC)" != "iam" ] && [ "$(SVC)" != "ui" ]; then \
+	@if [ "$(SVC)" != "vpc" ] && [ "$(SVC)" != "compute" ] && [ "$(SVC)" != "loadbalancer" ] && [ "$(SVC)" != "api-gateway" ] && [ "$(SVC)" != "iam" ] && [ "$(SVC)" != "ui" ] && [ "$(SVC)" != "nlb" ]; then \
 		echo "ERROR: unknown service '$(SVC)'"; exit 1; \
 	fi; \
 	DEPLOY_NAME=$(SVC); \
 	if [ "$(SVC)" = "iam" ]; then DEPLOY_NAME=kacho-iam; fi; \
 	if [ "$(SVC)" = "ui" ]; then DEPLOY_NAME=ui; fi; \
+	if [ "$(SVC)" = "nlb" ]; then DEPLOY_NAME=kacho-nlb; fi; \
 	if ! kubectl -n kacho get deploy $$DEPLOY_NAME >/dev/null 2>&1; then \
 		echo "WARN: service '$(SVC)' (deployment '$$DEPLOY_NAME') is not deployed yet (planned for sub-phase 0.X — see roadmap)"; \
 		exit 0; \
@@ -229,3 +231,36 @@ spire-lint:
 	helm lint ./helm/umbrella/charts/cosign-policy-controller
 	helm lint ./helm/umbrella/charts/spiffe-csi-driver
 	@echo "✓ All Phase 10 charts lint clean"
+
+# ─── KAC-NLB: kacho-nlb (L4 NLB control-plane) ─────────────────────────
+#
+# Sub-chart at project/kacho-nlb/deploy/ — wired into umbrella via
+# `file://../../../kacho-nlb/deploy` (helm/umbrella/Chart.yaml). Deployment
+# name `kacho-nlb`, Postgres StatefulSet `kacho-umbrella-pg-nlb`.
+
+# alias для reload-svc SVC=nlb — пересобрать и перезагрузить kacho-nlb.
+reload-svc-nlb:
+	@$(MAKE) reload-svc SVC=nlb
+
+# psql прямо в kacho_nlb-БД. Bitnami pg-nlb StatefulSet exposes
+# `kacho-umbrella-pg-nlb` Service; user / db = `kacho_nlb` (see
+# helm/umbrella/values.dev.yaml pg-nlb.auth).
+psql-nlb:
+	kubectl exec -it -n kacho statefulset/kacho-umbrella-pg-nlb -- \
+	    env PGPASSWORD=dev-nlb-password psql -U kacho_nlb -d kacho_nlb
+
+# Логи kacho-nlb deployment (main container — no migrator init-container
+# logs unless the pod is failing; `kubectl logs … -c migrate` for that).
+logs-nlb:
+	kubectl logs -n kacho -f deploy/kacho-nlb
+
+# Seed kacho-nlb test fixtures (subnet/instance/nic/external-address) into
+# the running dev stack. Idempotent — re-runs reuse existing resources by
+# name. Output: writes .seeded-ids.env at repo root for downstream newman.
+#
+# Requires: dev-up complete, api-gateway reachable at $$BASE_URL (default
+# http://localhost:28080 for kind port-forward; CI uses
+# http://api.kacho.local:28080).
+seed-nlb:
+	@BASE_URL="$${BASE_URL:-http://localhost:28080}" \
+	 bash ./scripts/seed-nlb-fixtures.sh
