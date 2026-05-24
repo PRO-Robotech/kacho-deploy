@@ -42,6 +42,14 @@ jobs:
           repository: PRO-Robotech/kacho-api-gateway
           ref: main
           path: kacho-api-gateway
+      # KAC-NLB: kacho-nlb sub-chart is referenced from umbrella via
+      # `file://../../../kacho-nlb/deploy` — checkout required for helm dep
+      # resolution. Default ref `main` (mirrors vpc/compute pin policy).
+      - uses: actions/checkout@v4
+        with:
+          repository: PRO-Robotech/kacho-nlb
+          ref: main
+          path: kacho-nlb
       # kacho-ui is a private repo; the default GITHUB_TOKEN cannot access it
       # (Not Found - https://docs.github.com/rest/repos/repos#get-a-repository).
       # Best-effort checkout: continue on failure and create a stub chart below so
@@ -82,6 +90,9 @@ jobs:
         with: { repository: PRO-Robotech/kacho-compute, ref: main, path: kacho-compute }
       - uses: actions/checkout@v4
         with: { repository: PRO-Robotech/kacho-api-gateway, ref: main, path: kacho-api-gateway }
+      # KAC-NLB: same checkout pattern as helm-lint job above.
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-nlb, ref: main, path: kacho-nlb }
       # kacho-ui is a private repo; best-effort checkout (see helm-lint job).
       - uses: actions/checkout@v4
         continue-on-error: true
