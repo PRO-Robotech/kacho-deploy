@@ -689,6 +689,19 @@ litmus-chaos:
     kacho:
       domain: api.kacho.cloud
 
+# ─── KAC-NLB: kacho-nlb default disable in base values ──────────────────
+#
+# Both the kacho-nlb sub-chart and its backing Postgres are condition-gated
+# (`kacho-nlb.enabled` / `pg-nlb.enabled` in Chart.yaml). Base values keep
+# them OFF so existing clusters that build from this file (without an
+# overlay) do not implicitly start a new Deployment + StatefulSet on the
+# next `helm upgrade`. dev / prod overlays flip both to `true` (see
+# values.dev.yaml / values.prod.yaml).
+kacho-nlb:
+  enabled: false
+pg-nlb:
+  enabled: false
+
 # security.txt (RFC 9116) — served at /.well-known/security.txt via api-gateway
 # ingress; runtime-configurable per cluster.
 security:

@@ -24,6 +24,24 @@ api-gateway:
   advertisedEndpoint: localhost:18443
   image: kacho-api-gateway:dev
   imagePullPolicy: IfNotPresent
+  # KAC-NLB: pre-wire kacho-nlb public + internal endpoints so that when the
+  # api-gateway proxy un-freezes the loadbalancer domain (see
+  # kacho-api-gateway/internal/allowlist/list.go — `loadbalancer заморожен`),
+  # `kacho-nlb.kacho.svc.cluster.local:9090` / `kacho-nlb-internal:9091` are
+  # already resolvable through the chart's `backends.*` map (template:
+  # kacho-api-gateway/deploy/templates/deployment.yaml emits env vars
+  # conditionally — these become `KACHO_API_GATEWAY_NLB_GRPC` /
+  # `KACHO_API_GATEWAY_NLB_INTERNAL_GRPC` once the sub-chart adds the
+  # corresponding `{{- if .Values.backends.nlb }}` block).
+  backends:
+    vpc: vpc.kacho.svc.cluster.local:9090
+    vpcInternal: vpc.kacho.svc.cluster.local:9091
+    compute: compute.kacho.svc.cluster.local:9090
+    computeInternal: compute.kacho.svc.cluster.local:9091
+    iam: kacho-iam.kacho.svc.cluster.local:9090
+    iamInternal: kacho-iam-internal.kacho.svc.cluster.local:9091
+    nlb: kacho-nlb.kacho.svc.cluster.local:9090
+    nlbInternal: kacho-nlb-internal.kacho.svc.cluster.local:9091
   # KAC-127 (#40): dev-mode auth-interceptor HS256 secret. Without it every
   # Bearer JWT is ignored and all principals collapse to system:bootstrap —
   # anonymous / bootstrap / per-user tokens become indistinguishable, which
@@ -233,6 +251,38 @@ pg-openfga:
       limits:
         cpu: 1000m
         memory: 1Gi
+  image:
+    repository: bitnamilegacy/postgresql
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell
+
+# KAC-NLB — backing Postgres for kacho-nlb (database-per-service, запрет #8).
+# Schema `kacho_nlb`, owned by user `kacho_nlb`. Migrator (goose) runs as an
+# init-container of the kacho-nlb Deployment; this StatefulSet exposes the
+# `kacho-umbrella-pg-nlb` Service that kacho-nlb dials at startup.
+pg-nlb:
+  enabled: true
+  auth:
+    username: kacho_nlb
+    password: dev-nlb-password
+    database: kacho_nlb
+  primary:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1500m
+        memory: 1Gi
+    extendedConfiguration: |
+      synchronous_commit = local
+      max_connections = 200
+      shared_buffers = 128MB
+      work_mem = 8MB
+      effective_cache_size = 512MB
   image:
     repository: bitnamilegacy/postgresql
   volumePermissions:
@@ -855,4 +905,115 @@ opaSidecar:
 # are propagated to kacho-iam sub-chart via the kacho-iam.opaSidecar / .openfgaBootstrap
 # blocks above (inside the kacho-iam: top-level mapping). Duplicate top-level
 # `kacho-iam:` block would last-wins-overwrite — see KAC-127 PR review.
+
+# ─── KAC-NLB: kacho-nlb L4 NLB control-plane (sub-phase 4.0) ─────────────
+#
+# Sub-chart lives in `project/kacho-nlb/deploy/` and is wired into the umbrella
+# via `file://../../../kacho-nlb/deploy` (Chart.yaml dep above). Schema /
+# resources / RPC contract — see `kacho-nlb/docs/specs/sub-phase-4.0-nlb-acceptance.md`.
+#
+# Wiring rules:
+#   - `pg-nlb` (above) is the backing Postgres; kacho-nlb dials it via
+#     `kacho-umbrella-pg-nlb:5432` (bitnami pg-* sub-charts expose a Service
+#     named `<release>-<alias>`).
+#   - `db.existingSecret` binds the bitnami-managed Secret directly so the
+#     chart's own `secret.yaml` short-circuits (`{{- if not .Values.db.existingSecret -}}`),
+#     i.e. we never commit a duplicate password Secret. The bitnami Secret name
+#     follows `<release>-<alias>`; key `password`.
+#   - Peers point at the cluster-internal Kubernetes Services of the dependent
+#     domains (vpc public 9090 + internal 9091, compute public 9090, iam
+#     internal 9091 — kacho-nlb resolves ProjectService through the iam
+#     internal listener because it ALSO carries InternalIAMService.Check used
+#     by the per-RPC authz interceptor; same dual-purpose port as in kacho-iam
+#     values block above).
+#   - `config.mode=dev` relaxes the production-only config validation rules
+#     (breakglass=false guard, listenInvalidator.iamDsn required, ...). Prod
+#     overrides to `production` in values.prod.yaml.
+#   - networkPolicy disabled in dev for parity with kacho-iam / kacho-vpc dev
+#     overrides (port-forward / kubectl exec convenience).
+kacho-nlb:
+  enabled: true
+  name: kacho-nlb
+  replicas: 1
+  image:
+    repository: kacho-nlb
+    tag: dev
+    pullPolicy: IfNotPresent
+  ports:
+    grpc: 9090
+    internalGrpc: 9091
+    metrics: 9101
+  serviceAccount:
+    create: true
+  db:
+    host: kacho-umbrella-pg-nlb
+    port: 5432
+    user: kacho_nlb
+    name: kacho_nlb
+    sslmode: disable
+    existingSecret: kacho-umbrella-pg-nlb
+    existingSecretKey: password
+  peers:
+    iam:
+      addr: ""
+      internalAddr: kacho-iam-internal.kacho.svc.cluster.local:9091
+      tls: false
+      dialDuration: 10s
+    vpc:
+      addr: vpc.kacho.svc.cluster.local:9090
+      internalAddr: vpc.kacho.svc.cluster.local:9091
+      tls: false
+      dialDuration: 10s
+    compute:
+      addr: compute.kacho.svc.cluster.local:9090
+      internalAddr: ""
+      tls: false
+      dialDuration: 10s
+  authz:
+    iam:
+      addr: kacho-iam-internal.kacho.svc.cluster.local:9091
+      dialDeadline: 3s
+      requestTimeout: 500ms
+  config:
+    mode: dev
+    logger:
+      level: INFO
+    apiServer:
+      gracefulShutdown: 10s
+      grpcGwEnable: false
+    authn:
+      type: none
+    authz:
+      cache:
+        enable: true
+        ttl: 5s
+        size: 10000
+      listenInvalidator:
+        enable: false
+        channel: kacho_iam_subjects
+        iamDsn: ""
+      breakglass: false
+    fga:
+      endpoint: ""
+      storeId: ""
+      modelId: ""
+      tupleWrite:
+        timeout: 2s
+        maxRetries: 3
+    jobs:
+      targetDrain:
+        interval: 10s
+  migrator:
+    enable: true
+  networkPolicy:
+    enable: false
+  serviceMonitor:
+    enable: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
 
