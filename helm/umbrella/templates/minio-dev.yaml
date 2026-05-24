@@ -131,7 +131,9 @@ metadata:
 spec:
   backoffLimit: 5
   ttlSecondsAfterFinished: 300
-  activeDeadlineSeconds: 300
+  # 600s (was 300s) — kind CI VMs are slow; first MinIO startup + 60×2s wait
+  # loop + retries can exceed 5 min. 10 min covers worst-case with margin.
+  activeDeadlineSeconds: 600
   template:
     metadata:
       labels:
@@ -143,8 +145,12 @@ spec:
           image: "{{ .Values.minioDev.mcImage.repository }}:{{ .Values.minioDev.mcImage.tag }}"
           imagePullPolicy: IfNotPresent
           env:
-            - name: MC_HOST_minio
-              value: "http://$(MINIO_ROOT_USER):$(MINIO_ROOT_PASSWORD)@minio-dev:9000"
+            # KAC-187: order matters — MINIO_ROOT_{USER,PASSWORD} must be
+            # defined BEFORE MC_HOST_minio if we relied on K8s $(VAR) expansion
+            # in `value:`. We use shell-side expansion below instead for
+            # robustness (the K8s forward-ref expansion behaviour varies by
+            # version and is fragile). MC_HOST_minio is constructed in the
+            # command script with proper `${VAR}` shell expansion.
             - name: MINIO_ROOT_USER
               value: {{ .Values.minioDev.rootUser | quote }}
             - name: MINIO_ROOT_PASSWORD
@@ -156,6 +162,13 @@ spec:
             - -c
             - |
               set -eu
+              # Shell-side expansion of MC_HOST_minio — guaranteed to see env
+              # vars defined above. Replaces the K8s `$(VAR)` value-expansion
+              # which previously left literal `$(MINIO_ROOT_USER)` text in
+              # the URL when forward-ref expansion failed (KAC-187 root cause:
+              # mc auth failed → wait loop timed out → Job DeadlineExceeded).
+              export MC_HOST_minio="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio-dev:9000"
+
               echo "[minio-init] waiting for minio-dev:9000 to be ready"
               i=0
               while [ $i -lt 60 ]; do
@@ -167,7 +180,9 @@ spec:
                 i=$((i+1))
               done
               if [ $i -ge 60 ]; then
-                echo "[minio-init] TIMEOUT waiting for minio-dev"
+                echo "[minio-init] TIMEOUT waiting for minio-dev (URL=http://***:***@minio-dev:9000)"
+                # Diagnostic: try once more with verbose to surface the actual error
+                mc --debug ls minio || true
                 exit 1
               fi
 
