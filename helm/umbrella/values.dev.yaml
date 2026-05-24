@@ -373,15 +373,34 @@ kratos:
       dsn: "postgres://kratos:dev-kratos-password@kacho-umbrella-pg-kratos:5432/kratos?sslmode=disable"
       serve:
         public:
-          base_url: "http://localhost:28080/.ory/kratos/public/"
+          # Relative base_url — генерируемые links резолвятся к текущему origin
+          # клиента (на каком бы port-forward порту он ни был — :9091, :18888,
+          # :28080). Cookies остаются same-origin → пользователь должен
+          # использовать ОДИН port в течение session, но любой работает.
+          base_url: "/.ory/kratos/public/"
           cors:
             enabled: true
-            allowed_origins: ["http://localhost:28080"]
+            # Dev: allow any localhost / 127.0.0.1 port (любое port-forward).
+            allowed_origins: ["*"]
         admin:
           base_url: "http://kacho-umbrella-kratos-admin:80/"
       selfservice:
-        default_browser_return_url: "http://localhost:28080/"
-        allowed_return_urls: ["http://localhost:28080"]
+        # Все browser-redirect URLs — relative. Браузер сам резолвит к текущему origin.
+        default_browser_return_url: "/"
+        # Whitelist для return_to query — relative (`/`, `/dashboard`, ...) + любой
+        # localhost-port (для programmatic redirect через ?return_to=...).
+        # Kratos schema допускает relative URI в этом списке (uri-reference format).
+        allowed_return_urls:
+          - "/"
+          - "/dashboard"
+          - "http://localhost:9091/"
+          - "http://localhost:18888/"
+          - "http://localhost:28080/"
+          - "http://localhost:8080/"
+          - "http://127.0.0.1:9091/"
+          - "http://127.0.0.1:18888/"
+          - "http://127.0.0.1:28080/"
+          - "http://console.kacho.local/"
         methods:
           password: { enabled: true }
           oidc: { enabled: false }
@@ -389,20 +408,20 @@ kratos:
         flows:
           registration:
             enabled: true
-            ui_url: "http://localhost:28080/registration"
+            ui_url: "/registration"
             after:
               password: { hooks: [{ hook: "session" }] }
           login:
-            ui_url: "http://localhost:28080/login"
+            ui_url: "/login"
           settings:
-            ui_url: "http://localhost:28080/settings"
+            ui_url: "/settings"
           recovery:
             enabled: true
-            ui_url: "http://localhost:28080/recovery"
+            ui_url: "/recovery"
           verification:
             enabled: false
           error:
-            ui_url: "http://localhost:28080/error"
+            ui_url: "/error"
       log:
         level: info
         format: json
@@ -483,18 +502,25 @@ hydra:
         public:
           cors:
             enabled: true
-            allowed_origins: ["http://localhost:28080"]
+            # Dev: любой localhost port.
+            allowed_origins: ["*"]
       urls:
-        # Dev URLs — kacho-deploy историчный IP (kind ingress port-forward).
-        # В prod values.prod.yaml override'ит через `https://hydra.{{ .Values.kacho.domain }}`.
+        # Dev: browser-redirect URLs (consent/login/logout/error/post_logout) — relative
+        # paths, резолвятся к текущему origin клиента (любой port-forward работает без
+        # пересоздания config). В prod values.prod.yaml override'ит на полные https URLs.
         self:
+          # `self.public` + `self.issuer` ОБЯЗАНЫ быть full URI (Hydra schema validation).
+          # Они идут в JWT `iss` claim — identity-string, browser туда НЕ ходит.
+          # Любой stable URL подойдёт (api-gateway validation должна совпасть). Для
+          # dev оставляем :28080-prefix — это просто identity, не navigation
+          # endpoint. Все NAVIGATION URLs ниже — relative (port-portable).
           public: "http://localhost:28080/.ory/hydra/public/"
           issuer: "http://localhost:28080/.ory/hydra/public/"
-        consent: "http://localhost:28080/consent"
-        login: "http://localhost:28080/login"
-        logout: "http://localhost:28080/logout"
-        error: "http://localhost:28080/error"
-        post_logout_redirect: "http://localhost:28080/"
+        consent: "/consent"
+        login: "/login"
+        logout: "/logout"
+        error: "/error"
+        post_logout_redirect: "/"
         # KAC-127 (deploy#37): `urls.identity_provider.publicly_writable` удалён —
         # ключ не существует в Hydra v26.2.0 config-schema (`urls.identity_provider`
         # принимает только `url` / `publicUrl` / `headers`). Динамическая

@@ -1,0 +1,51 @@
+# values.prorobotech.yaml — override для деплоя стенда из public docker.io/prorobotech/* образов
+# собранных из master веток (KAC-deploy + feedback-deploy-images-dockerhub-prorobotech).
+#
+# Использование:
+#   helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho \
+#     -f ./helm/umbrella/values.dev.yaml \
+#     -f ./helm/umbrella/values.prorobotech.yaml \
+#     --wait --timeout 15m
+#
+# Tags pinned на конкретные master commit-SHA, актуальны на 2026-05-24 (probed via Docker Hub API):
+#   kacho-vpc          main-faf67154
+#   kacho-iam          main-1cde55bc
+#   kacho-compute      main-47c0f476
+#   kacho-api-gateway  main-0de5ba99
+#   kacho-nlb          main-fde3bbf1
+#   kacho-ui           main-d02cd803
+#
+# Image-shape для top-level (apiGateway/compute/ui/vpc) — flat string (per values.yaml convention).
+# Image-shape для sub-chart (kacho-iam/kacho-nlb) — map {repository, tag, pullPolicy}
+# (sub-chart templates вытаскивают `.Values.image.repository` + `.Values.image.tag`).
+
+global:
+  imageRegistry: ""
+
+apiGateway:
+  image: docker.io/prorobotech/kacho-api-gateway:main-0de5ba99
+  imagePullPolicy: IfNotPresent
+
+compute:
+  image: docker.io/prorobotech/kacho-compute:main-47c0f476
+  imagePullPolicy: IfNotPresent
+
+ui:
+  image: docker.io/prorobotech/kacho-ui:main-d02cd803
+  imagePullPolicy: IfNotPresent
+
+vpc:
+  image: docker.io/prorobotech/kacho-vpc:main-faf67154
+  imagePullPolicy: IfNotPresent
+
+kacho-iam:
+  image:
+    repository: docker.io/prorobotech/kacho-iam
+    tag: main-1cde55bc
+    pullPolicy: IfNotPresent
+
+kacho-nlb:
+  image:
+    repository: docker.io/prorobotech/kacho-nlb
+    tag: main-fde3bbf1
+    pullPolicy: IfNotPresent
