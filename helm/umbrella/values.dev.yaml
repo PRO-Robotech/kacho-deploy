@@ -381,7 +381,7 @@ kratos:
           cors:
             enabled: true
             # Dev: allow any localhost / 127.0.0.1 port (любое port-forward).
-            allowed_origins: ["http://localhost:*", "http://127.0.0.1:*", "http://console.kacho.local"]
+            allowed_origins: ["*"]
         admin:
           base_url: "http://kacho-umbrella-kratos-admin:80/"
       selfservice:
@@ -499,18 +499,19 @@ hydra:
           cors:
             enabled: true
             # Dev: любой localhost port.
-            allowed_origins: ["http://localhost:*", "http://127.0.0.1:*", "http://console.kacho.local"]
+            allowed_origins: ["*"]
       urls:
         # Dev: browser-redirect URLs (consent/login/logout/error/post_logout) — relative
         # paths, резолвятся к текущему origin клиента (любой port-forward работает без
         # пересоздания config). В prod values.prod.yaml override'ит на полные https URLs.
         self:
-          # `self.public` и `self.issuer` нужны как FULL URL — они идут в JWT `iss`
-          # claim, и validation на api-gateway сравнивает с ожидаемым. Для dev
-          # используем stable cluster-relative URL — clients достучатся через
-          # UI nginx proxy `/.ory/hydra/public/` на тот же origin.
-          public: "/.ory/hydra/public/"
-          issuer: "/.ory/hydra/public/"
+          # `self.public` + `self.issuer` ОБЯЗАНЫ быть full URI (Hydra schema validation).
+          # Они идут в JWT `iss` claim — identity-string, browser туда НЕ ходит.
+          # Любой stable URL подойдёт (api-gateway validation должна совпасть). Для
+          # dev оставляем :28080-prefix — это просто identity, не navigation
+          # endpoint. Все NAVIGATION URLs ниже — relative (port-portable).
+          public: "http://localhost:28080/.ory/hydra/public/"
+          issuer: "http://localhost:28080/.ory/hydra/public/"
         consent: "/consent"
         login: "/login"
         logout: "/logout"
