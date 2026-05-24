@@ -316,11 +316,11 @@ minioDev:
   # Must match `kacho-iam.compliance.s3.bucket` below — init Job creates it.
   bucket: kacho-compliance-reports
   image:
-    repository: minio/minio
+    repository: quay.io/minio/minio
     # Pinned to a stable RELEASE tag (not :latest) for reproducible CI.
     tag: "RELEASE.2024-12-18T13-15-44Z"
   mcImage:
-    repository: minio/mc
+    repository: quay.io/minio/mc
     # Stable mc client release — pinned to match server release semantics.
     tag: "RELEASE.2024-11-21T17-21-54Z"
 
