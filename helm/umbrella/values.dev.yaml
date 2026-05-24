@@ -1016,7 +1016,8 @@ kacho-nlb:
     existingSecretKey: password
   peers:
     iam:
-      addr: ""
+      # KAC-178 §2: ProjectService на PUBLIC (9090); InternalIAMService на INTERNAL (9091).
+      addr: kacho-iam.kacho.svc.cluster.local:9090
       internalAddr: kacho-iam-internal.kacho.svc.cluster.local:9091
       tls: false
       dialDuration: 10s
