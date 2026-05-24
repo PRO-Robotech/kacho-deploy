@@ -352,6 +352,12 @@ ui:
 # ─── Dev-only компоненты — disabled в prod ─────────────────────────────
 mailhog:
   enabled: false
+# KAC-183: in-cluster MinIO is dev/CI-only. Prod uses an external managed
+# S3 / MinIO endpoint with credentials sourced from Vault / SealedSecret
+# (see kacho-iam.compliance.s3.* configuration block, which is overridden
+# in this file to point at the production bucket).
+minioDev:
+  enabled: false
 # KAC-127: zitadel chart удалён из umbrella — auth-tier на Ory Kratos + Hydra.
 
 # ─── KAC-127 Phase 3: AuthZ core (OpenFGA + OPA) — required on prod ────
