@@ -75,6 +75,16 @@ api-gateway:
 compute:
   image: kacho-compute:dev
   imagePullPolicy: IfNotPresent
+  # KAC-178 follow-up: compute authzIam.grpcAddr дефолт `kacho-iam:9091` в
+  # kacho-compute/deploy/values.yaml неверный — Service `kacho-iam`
+  # экспонирует только port 9090 (public AuthorizeService);
+  # `InternalIAMService.Check` живёт на `kacho-iam-internal:9091`. Без этого
+  # override compute per-RPC authz interceptor бил в closed port → i/o
+  # timeout → "authorization service unavailable" на каждом list/get RPC
+  # (instances/disks/images/snapshots, и т.п.).
+  authzIam:
+    grpcAddr: kacho-iam-internal.kacho.svc.cluster.local:9091
+    tls: false
 
 ui:
   image: kacho-ui:dev
