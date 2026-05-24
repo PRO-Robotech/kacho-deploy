@@ -387,16 +387,20 @@ kratos:
       selfservice:
         # Все browser-redirect URLs — relative. Браузер сам резолвит к текущему origin.
         default_browser_return_url: "/"
-        # Whitelist для return_to query — dev wildcard на любой localhost-port.
+        # Whitelist для return_to query — relative (`/`, `/dashboard`, ...) + любой
+        # localhost-port (для programmatic redirect через ?return_to=...).
+        # Kratos schema допускает relative URI в этом списке (uri-reference format).
         allowed_return_urls:
-          - "http://localhost:9091"
-          - "http://localhost:18888"
-          - "http://localhost:28080"
-          - "http://localhost:8080"
-          - "http://127.0.0.1:9091"
-          - "http://127.0.0.1:18888"
-          - "http://127.0.0.1:28080"
-          - "http://console.kacho.local"
+          - "/"
+          - "/dashboard"
+          - "http://localhost:9091/"
+          - "http://localhost:18888/"
+          - "http://localhost:28080/"
+          - "http://localhost:8080/"
+          - "http://127.0.0.1:9091/"
+          - "http://127.0.0.1:18888/"
+          - "http://127.0.0.1:28080/"
+          - "http://console.kacho.local/"
         methods:
           password: { enabled: true }
           oidc: { enabled: false }
