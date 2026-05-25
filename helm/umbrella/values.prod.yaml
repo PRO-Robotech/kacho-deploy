@@ -97,10 +97,13 @@ hydra:
         # PKCE через `oauth2.pkce`, auth_code-TTL через `ttl.auth_code`.
         grant:
           jwt:
+            # Hydra v26.2.0: `scope_claim` removed — schema rejects it as
+            # `additionalProperties not allowed` and crashes on boot.
+            # Per-issuer scope is set via admin-API trust-grant `scope`
+            # array (see docs/components/21-federation-in.md).
             iat_optional: false
             jti_optional: false
             max_ttl: 720h
-            scope_claim: scope
           # Refresh rotation в v26.2.0 всегда вкл.; настраивается grace-window.
           refresh_token:
             rotation_grace_period: 1s
