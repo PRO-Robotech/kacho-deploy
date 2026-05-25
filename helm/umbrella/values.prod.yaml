@@ -100,6 +100,7 @@ hydra:
             iat_optional: false
             jti_optional: false
             max_ttl: 720h
+            scope_claim: scope
           # Refresh rotation в v26.2.0 всегда вкл.; настраивается grace-window.
           refresh_token:
             rotation_grace_period: 1s
@@ -259,6 +260,10 @@ pg-nlb:
 
 # ─── kacho-iam production block ────────────────────────────────────────
 kacho-iam:
+  # Phase 3b — Federation IN baseline (per-tenant issuers via CD pipeline)
+  federationIn:
+    enabled: false  # opt-in per cluster
+    trustedIssuers: []
   replicas: 3
   # KAC-127 — production образ из DockerHub (multi-arch, собран docker-build.yml).
   # CD-pipeline инжектит конкретный тег `<branch>-<sha8>` через ${KACHO_IMAGE_TAG}
