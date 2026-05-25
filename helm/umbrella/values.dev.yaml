@@ -589,9 +589,11 @@ hydra:
         # auth_code-TTL — через `ttl.auth_code` (1m, см. блок ttl выше).
         grant:
           jwt:
-            iat_optional: false
-            jti_optional: false
-            max_ttl: 720h
+            # Phase 3b (Federation IN, RFC 7521/7523): assertion handling
+            iat_optional: false      # assertion MUST carry `iat`
+            jti_optional: false      # assertion MUST carry `jti` (anti-replay)
+            max_ttl: 720h            # assertion `exp - iat` upper bound
+            scope_claim: scope       # Phase 3b: claim for assertion scope
           # Refresh-token rotation (OAuth 2.1 §6.1) — в v26.2.0 rotation ВСЕГДА
           # включён (старый toggle `oauth2.refresh_token_rotation` упразднён);
           # настраивается только grace-window. `rotation_grace_period: 1s` —
@@ -896,6 +898,32 @@ kacho-iam:
       pathStyle: true
       accessKey: "minioadmin"
       secretKey: "minioadmin"
+  # ─── Phase 3b — Federation IN (external IdP → kacho via Hydra jwt-bearer) ──
+  # Hydra v26.2.0 does NOT load trusted issuers from `hydra.config.*` — they
+  # are registered at runtime via the admin trust-grant API
+  # (`POST /admin/trust/grants/jwt-bearer/issuers`). The list below is consumed
+  # by the `hydra-trust-grant-bootstrap` Job (templates/hydra-trust-grants-job.yaml)
+  # which POSTs each entry on chart install/upgrade. Idempotent — on conflict
+  # falls back to PATCH/Delete-Recreate to converge.
+  #
+  # For dev: pre-register GitHub Actions, GitLab CI, and in-cluster k8s SA
+  # tokens. Customer-specific IdPs (Okta/Azure/etc) are registered per-tenant
+  # via admin tooling — NOT here in shared helm values.
+  federationIn:
+    enabled: true
+    trustedIssuers:
+      - issuer: "https://token.actions.githubusercontent.com"
+        jwksUrl: "https://token.actions.githubusercontent.com/.well-known/jwks"
+        allowedSubjects:
+          - "^repo:.+:ref:refs/heads/main$"
+      - issuer: "https://gitlab.com"
+        jwksUrl: "https://gitlab.com/oauth/discovery/keys"
+        allowedSubjects:
+          - "^project_path:.+:ref_type:branch:ref:main$"
+      - issuer: "https://kubernetes.default.svc.cluster.local"
+        jwksUrl: "https://kubernetes.default.svc.cluster.local/openid/v1/jwks"
+        allowedSubjects:
+          - "^system:serviceaccount:kacho-.+:.+$"
 
 # ─── KAC-127 Phase 3: OpenFGA bootstrap-job (KAC-105 extended) ──────────
 # post-install hook with full DSL v2 + idempotent + model-id Secret patch +
