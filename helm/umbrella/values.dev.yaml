@@ -671,6 +671,35 @@ hydra:
           otlp:
             server_url: otel-collector.observability.svc.cluster.local:4317
             insecure: true
+  # Phase 3c — Federation OUT: public Hydra ingress for external IdP federation
+  # (AWS STS AssumeRoleWithWebIdentity / GCP Workload Identity Federation /
+  # Azure AD federated credentials). Production uses cert-manager + Let's
+  # Encrypt — see values.prod.yaml. Dev defaults below are DISABLED — local
+  # smoke runs via host-port 28080 + relative URLs (current `urls.self.issuer`
+  # http://localhost:28080/.ory/hydra/public/). Enable when you need to
+  # exercise the federation-OUT path locally with a fake DNS entry pointing
+  # `auth.kacho.local` at the kind ingress.
+  ingress:
+    public:
+      enabled: false
+      className: nginx
+      annotations:
+        cert-manager.io/cluster-issuer: kacho-selfsigned
+        nginx.ingress.kubernetes.io/proxy-body-size: "8k"
+      hosts:
+        - host: auth.kacho.local
+          paths:
+            - path: /
+              pathType: Prefix
+      tls:
+        - hosts:
+            - auth.kacho.local
+          secretName: hydra-public-tls
+    admin:
+      # Admin endpoint MUST stay cluster-internal — no external ingress, ever
+      # (it has unauthenticated `/admin/clients` write surface). Explicitly
+      # disabled here as a guardrail; enabling this is a security incident.
+      enabled: false
 
 keto:
   enabled: false
@@ -910,8 +939,18 @@ kacho-iam:
   # tokens. Customer-specific IdPs (Okta/Azure/etc) are registered per-tenant
   # via admin tooling — NOT here in shared helm values.
   federationIn:
-    enabled: true
+    # Default OFF in dev too. The Phase 3b bootstrap Job needs REAL JWKs for
+    # each trusted issuer (Hydra v26 rejects the placeholder JWK template),
+    # and CI runners cannot reach external IdP JWKS endpoints reliably (rate
+    # limits, network policies). Operators enable + replace the JWK template
+    # with real fetched keys per docs/components/21-federation-in.md
+    # §«Хранение IdP JWKS keys». The Go-side federation IN code-path is
+    # covered by integration tests in kacho-iam regardless of this flag.
+    enabled: false
     trustedIssuers:
+      # Reference template — operators copy + replace `jwksUrl` results into
+      # the bootstrap Job's JWK array before enabling. Kept here as
+      # operator-discoverable documentation of the expected shape.
       - issuer: "https://token.actions.githubusercontent.com"
         jwksUrl: "https://token.actions.githubusercontent.com/.well-known/jwks"
         allowedSubjects:

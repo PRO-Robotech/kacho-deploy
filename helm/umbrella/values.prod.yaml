@@ -159,6 +159,38 @@ hydra:
           otlp:
             server_url: otel-collector.observability.svc.cluster.local:4317
             insecure: false
+  # Phase 3c — Federation OUT: public Hydra ingress backing the OIDC issuer
+  # `hydra.api.kacho.cloud` (matches `hydra.hydra.config.urls.self.issuer`
+  # above). External IdPs (AWS STS, GCP Workload Identity Federation, Azure
+  # AD, etc.) fetch `/.well-known/openid-configuration` + `/jwks.json` from
+  # this host to verify kacho-minted tokens. Cert via cert-manager letsencrypt
+  # ClusterIssuer (see argoCd.tls section). DO NOT change the host post-rollout
+  # without a coordinated re-trust on every external IdP — issuer URL is a
+  # stable trust-anchor identifier (docs/components/22-federation-out.md
+  # §«Stable iss»).
+  ingress:
+    public:
+      enabled: true
+      className: nginx
+      annotations:
+        cert-manager.io/cluster-issuer: letsencrypt-prod
+        nginx.ingress.kubernetes.io/proxy-body-size: "8k"
+        nginx.ingress.kubernetes.io/limit-rps: "200"
+      hosts:
+        - host: hydra.api.kacho.cloud
+          paths:
+            - path: /
+              pathType: Prefix
+      tls:
+        - hosts:
+            - hydra.api.kacho.cloud
+          secretName: hydra-public-tls
+    admin:
+      # SECURITY-CRITICAL: admin endpoint must NEVER be exposed externally —
+      # /admin/clients is an unauthenticated OAuth2 client write API. Forced
+      # off as a defense-in-depth guardrail; enabling this is a production
+      # security incident (workspace CLAUDE.md §«Запреты» #6 spirit).
+      enabled: false
 
 # ─── Kratos production block ───────────────────────────────────────────
 # Включаем Kratos в prod. Config-source — standalone ConfigMap
