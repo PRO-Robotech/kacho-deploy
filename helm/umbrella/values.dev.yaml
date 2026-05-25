@@ -589,11 +589,17 @@ hydra:
         # auth_code-TTL — через `ttl.auth_code` (1m, см. блок ttl выше).
         grant:
           jwt:
-            # Phase 3b (Federation IN, RFC 7521/7523): assertion handling
+            # Phase 3b (Federation IN, RFC 7521/7523): assertion handling.
+            # Hydra v26.2.0 schema for `oauth2.grant.jwt`: only iat_optional,
+            # jti_optional, jwks_uri, max_ttl. The previously-added
+            # `scope_claim: scope` is REJECTED by the schema validator and
+            # crashes Hydra on boot ("additionalProperties scope_claim not
+            # allowed"). Per-issuer scope handling is governed by the
+            # admin-API trust-grant `scope` array, not by a global claim
+            # mapping — see docs/components/21-federation-in.md.
             iat_optional: false      # assertion MUST carry `iat`
             jti_optional: false      # assertion MUST carry `jti` (anti-replay)
             max_ttl: 720h            # assertion `exp - iat` upper bound
-            scope_claim: scope       # Phase 3b: claim for assertion scope
           # Refresh-token rotation (OAuth 2.1 §6.1) — в v26.2.0 rotation ВСЕГДА
           # включён (старый toggle `oauth2.refresh_token_rotation` упразднён);
           # настраивается только grace-window. `rotation_grace_period: 1s` —
