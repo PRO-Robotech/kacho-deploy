@@ -855,7 +855,7 @@ kacho-iam:
   # KAC-127 (deploy#39 fix): включён — kacho-iam отдаёт OPA-bundle по HTTP на
   # :9092; см. комментарий у top-level `opaSidecar` ниже.
   opaSidecar:
-    enabled: true
+    enabled: false
     # KAC-127: `1.0.0-rootless` тег не существует. Нужен ИМЕННО opa-envoy
     # вариант — kacho-iam Deployment передаёт OPA-сайдкару флаг
     # `--set=plugins.envoy_ext_authz_grpc.enabled=false`; плагин
@@ -926,7 +926,7 @@ opaSidecar:
   # Fix: kacho-iam теперь отдаёт bundle через HTTP на :9092 (тот же listener,
   # что Hydra-hooks — `OPABundleHTTPHandler`, route `/opa/v1/bundle.tar.gz`);
   # порт :9092 экспонирован в Service kacho-iam-internal как `http-hooks`.
-  enabled: true
+  enabled: false
   # KAC-127: opa-envoy-сборка обязательна (envoy_ext_authz_grpc плагин);
   # `-static`-суффикс = rootless static-build. См. opaSidecar выше.
   image: openpolicyagent/opa:1.0.0-envoy-static
