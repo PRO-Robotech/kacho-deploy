@@ -184,6 +184,12 @@ spec:
               value: {{ .Values.kacho.domain | quote }}
             - name: KACHO_IAM_HYDRA_ISSUER
               value: {{ printf "https://%s.%s" .Values.kacho.subdomains.hydra .Values.kacho.domain | quote }}
+            # In-cluster admin URL override — the public `https://hydra-admin.<domain>`
+            # is not resolvable from inside the pod; point at the umbrella-deployed
+            # Hydra admin Service directly. Falls back to derive-from-issuer
+            # when unset (production/external-Hydra deploys).
+            - name: KACHO_IAM_AUTHN__HYDRA_ADMIN_URL
+              value: "http://kacho-umbrella-hydra-admin:4445"
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
