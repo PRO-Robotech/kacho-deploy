@@ -231,6 +231,28 @@ spec:
                   }]}
                 }" >/dev/null 2>&1 || echo "[bootstrap] singleton tuple already exists (OK)"
 
+              # ─── Step H.2: universal viewer (KAC-178 §3) — any authenticated
+              # user/SA gets `viewer` on the cluster object so global reference
+              # data (compute.Region, compute.Zone, …) is readable without an
+              # explicit per-resource binding. catalog scope_extractor
+              # `{object_type: cluster, from_request_field: '*'}` resolves these
+              # routes (AccessBindingService/ListBySubject, vpc.*.List, …).
+              # Without this tuple the wildcard-userset definition is dormant
+              # → every authenticated caller gets 403 / cascade 503.
+              for U in "user:*" "service_account:*"; do
+                echo "[bootstrap] writing universal viewer tuple $U#viewer@cluster:${CLUSTER_SINGLETON_ID}"
+                curl -sf -XPOST "${OPENFGA_URL}/stores/${STORE_ID}/write" \
+                  -H 'content-type: application/json' \
+                  -d "{
+                    \"authorization_model_id\":\"${MODEL_ID}\",
+                    \"writes\":{\"tuple_keys\":[{
+                      \"user\":\"$U\",
+                      \"relation\":\"viewer\",
+                      \"object\":\"cluster:${CLUSTER_SINGLETON_ID}\"
+                    }]}
+                  }" >/dev/null 2>&1 || echo "[bootstrap] $U viewer tuple already exists (OK)"
+              done
+
               echo "[bootstrap] OK"
           env:
             - name: OPENFGA_URL
