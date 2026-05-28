@@ -29,7 +29,7 @@ fields:
   - target_role_scope
   - actor_max_role_scope
 falsepositives:
-  - Bootstrap SA initial-grant scenario (Phase 1 — only allowed via break-glass)
+  - Bootstrap SA initial-grant scenario (Phase 1 — only allowed via admin path)
 level: critical
 response:
   action: auto_revoke_binding
