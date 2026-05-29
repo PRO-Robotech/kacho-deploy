@@ -2,7 +2,7 @@
 
 > Acceptance: `docs/specs/sub-phase-3.9-iam-audit-pipeline-acceptance.md` §4.3 +
 > P9-D14.
-> Severity tiers: **P0** (audit-tamper — wake CISO), **P1** (HSM/break-glass —
+> Severity tiers: **P0** (audit-tamper — wake CISO), **P1** (HSM —
 > page on-call), **P2** (Kafka/CH lag — alert team), **P3** (SIEM backpressure
 > — notify tenant).
 

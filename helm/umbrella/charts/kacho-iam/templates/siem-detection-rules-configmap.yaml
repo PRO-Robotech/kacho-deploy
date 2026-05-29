@@ -13,7 +13,7 @@ Elastic Watcher).
   4. out_of_hours_admin     — admin action outside business hours
   5. privilege_escalation_sa — SA created binding with role.scope > actor.scope
   6. audit_signature_failure — verified_broken batch (local detection only)
-  7. break_glass_usage      — actor.acr=4 or event_type startswith break_glass
+  (break_glass_usage rule removed in KAC-214)
   8. fga_tuple_drift        — reconciliation found split-brain Postgres vs FGA
 
 Файлы загружаются из files/detection-rules/. Каждый файл = 1 rule.
