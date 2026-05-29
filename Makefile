@@ -1,6 +1,6 @@
 .PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint seed-ipam \
         loadtest-address-allocate loadtest-address-allocate-clean \
-        reload-svc-iam psql-iam logs-iam fga-bootstrap build-ui openfga-model-json \
+        reload-svc-iam psql-iam logs-iam fga-bootstrap build-ui build-services openfga-model-json \
         reload-svc-nlb psql-nlb logs-nlb seed-nlb
 
 CLUSTER_NAME := kacho
@@ -14,6 +14,20 @@ build-ui:
 	@echo "=== build kacho-ui:dev ==="
 	docker build -t kacho-ui:dev ../kacho-ui
 	kind load docker-image kacho-ui:dev --name $(CLUSTER_NAME)
+
+# KAC-228: build + kind-load all backend service images. The dev deployments
+# reference local `kacho-<svc>:dev` images (values.dev.yaml), which kind cannot
+# pull from a registry → they MUST be built locally before helm install, else
+# pods sit in ImagePullBackOff and `helm --wait` times out (which also skips the
+# openfga-bootstrap RBAC, breaking fga-bootstrap). Build context = parent dir
+# (Dockerfiles COPY ../kacho-corelib + ../kacho-proto).
+SERVICES := iam vpc compute api-gateway nlb
+build-services:
+	@for svc in $(SERVICES); do \
+	  echo "=== build kacho-$$svc:dev ==="; \
+	  ( cd .. && docker build -f kacho-$$svc/Dockerfile -t kacho-$$svc:dev . ) || exit 1; \
+	  kind load docker-image kacho-$$svc:dev --name $(CLUSTER_NAME) || exit 1; \
+	done
 
 # KAC-127: CI docker-compose stack (ci-images / ci-up / ci-seed / ci-down /
 # ci-logs) удалён — он был построен на упразднённом kacho-resource-manager
@@ -35,6 +49,7 @@ dev-up: preflight
 	kubectl config use-context kind-$(CLUSTER_NAME); \
 	kubectl create namespace kacho --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
 	$(MAKE) build-ui; \
+	$(MAKE) build-services; \
 	./scripts/gen-tls-cert.sh; \
 	cd helm/umbrella && helm dep update >/dev/null && cd ../..; \
 	echo "=== helm install (KAC-127: single-stage — Zitadel pre-install hooks удалены) ==="; \
@@ -43,6 +58,12 @@ dev-up: preflight
 	  --wait --timeout 10m; \
 	echo "Waiting for ingress-nginx admission webhook..."; \
 	kubectl -n kacho wait --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=60s; \
+	echo "=== fga-bootstrap (KAC-228: provision OpenFGA store + model + cluster viewer:* seed) ==="; \
+	echo "    NB: must run before any user signs up — else account/project FGA tuples"; \
+	echo "    are written best-effort against a missing store and lost (→ 503 on List)."; \
+	$(MAKE) fga-bootstrap; \
+	kubectl -n kacho rollout status deploy/kacho-iam --timeout=180s || true; \
+	kubectl -n kacho rollout status deploy/api-gateway --timeout=180s || true; \
 	end=$$(date +%s); \
 	echo "dev-up complete in $$((end-start))s"; \
 	echo; \
