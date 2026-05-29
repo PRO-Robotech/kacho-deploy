@@ -105,10 +105,6 @@ config:
     level: INFO
   apiServer:
     gracefulShutdown: 10s
-  metrics:
-    enable: true
-  healthcheck:
-    enable: true
   repository:
     postgres:
       maxConns: 100
@@ -116,25 +112,20 @@ config:
   authn:
     mode: dev
   extapi:
-    # KAC-127: zitadel config удалён — identity/OIDC tier на Ory Kratos + Hydra.
+    # Only the OpenFGA store-id secret reference survives here — it is consumed
+    # by deployment.yaml (KACHO_IAM_OPENFGA_STORE_ID env). The OpenFGA endpoint /
+    # model-id / timeouts are read from KACHO_IAM_OPENFGA_* env by the service;
+    # the dead enabled/endpoint/timeout/authz config knobs were removed in KAC-223.
     openfga:
-      endpoint: openfga:8081
       storeIdSecretName: kacho-iam-openfga-store
       storeIdSecretKey: store_id
-      # KAC-127 Phase 3 — Check timing budgets (acceptance §4.4):
-      checkTimeoutMs: 200          # FGA Check hard ceiling
-      listObjectsTimeoutMs: 1000   # ListObjects (Phase 4) hard ceiling
-      checkCacheTtlSeconds: 5      # subject-level Check cache TTL (LISTEN-invalidated)
-  # KAC-127 Phase 3 — authz core (Conditions context + OPA sidecar contract).
-  authz:
-    conditions:
-      contextCacheTtlSeconds: 60   # short-lived per-Principal Conditions context cache
-    opaSidecar:
-      url: http://localhost:8181
-      timeoutMs: 100
-      # read-fail-open=false → fail-closed even for read RPCs (production-safe).
-      # Set to true ONLY for read-only emergencies (logged WARN + Critical alert).
-      readFailOpen: false
+
+# KAC-223: subject_change push-drainer → api-gateway internal gRPC (:9091).
+# addr empty ⇒ deployment.yaml defaults to
+# api-gateway-internal.<namespace>.svc.cluster.local:9091.
+gatewayInternal:
+  addr: ""
+  tlsInsecure: false
 
 initContainer:
   migrator:

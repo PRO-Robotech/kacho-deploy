@@ -124,15 +124,16 @@ spec:
                   name: {{ .Values.db.passwordSecretName }}
                   key: {{ .Values.db.passwordSecretKey }}
             # OpenFGA store-id создаётся bootstrap-job'ом, см. umbrella/templates/openfga-bootstrap-job.yaml.
-            # На E0 secret может ещё не существовать к моменту первого старта;
-            # `optional: true` позволяет pod'у стартовать без него (kacho-iam
-            # начнёт использовать OpenFGA только в E3, до этого — no-op).
+            # REQUIRED (KAC-223): kacho-iam fails fast at startup without it
+            # (no stub fallback). `optional: false` — kubelet holds the pod in
+            # CreateContainerConfigError until openfga-bootstrap-job writes the
+            # secret, then it boots. OpenFGA is mandatory for the authz path.
             - name: KACHO_IAM_OPENFGA_STORE_ID
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.config.extapi.openfga.storeIdSecretName }}
                   key: {{ .Values.config.extapi.openfga.storeIdSecretKey }}
-                  optional: true
+                  optional: false
             # ─── KAC-127 Phase 3 — authz core env vars ──────────────────
             # acceptance §5.2 / P3-D2: pinned authorization_model_id (versioned + immutable).
             # Источник — Secret openfga-model-id, key `current`, patch'ит openfga-bootstrap-job.
@@ -184,6 +185,15 @@ spec:
               value: {{ .Values.kacho.domain | quote }}
             - name: KACHO_IAM_HYDRA_ISSUER
               value: {{ printf "https://%s.%s" .Values.kacho.subdomains.hydra .Values.kacho.domain | quote }}
+            # ─── KAC-223 — subject_change push-drainer → api-gateway internal ───
+            # REQUIRED: the drainer fails fast at startup without this address.
+            # Points at the api-gateway internal gRPC listener (InternalAuthzCache
+            # Service, port 9091 — service api-gateway-internal, NOT the public
+            # cmux service). TLS by default; dev/kind sets tls-insecure=true.
+            - name: KACHO_IAM_GATEWAY_INTERNAL_ADDR
+              value: {{ .Values.gatewayInternal.addr | default (printf "api-gateway-internal.%s.svc.cluster.local:9091" .Release.Namespace) | quote }}
+            - name: KACHO_IAM_GATEWAY_INTERNAL_TLS_INSECURE
+              value: {{ .Values.gatewayInternal.tlsInsecure | default false | quote }}
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
