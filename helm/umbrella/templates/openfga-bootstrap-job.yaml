@@ -231,6 +231,25 @@ spec:
                   }]}
                 }" >/dev/null 2>&1 || echo "[bootstrap] singleton tuple already exists (OK)"
 
+              # ─── Step H2 (KAC-228): cluster viewer for ALL authenticated users ──
+              # FGA model: cluster.viewer = [user, user:*, service_account] ...
+              # Без этого tuple любой cluster-scoped reference-RPC
+              # (compute.Region/Zone/DiskType .list/.get, required_relation=viewer
+              # on cluster:cluster_kacho_root) возвращал 403 для любого юзера —
+              # UI dashboard / NLB region-picker падали. user:* делает справочные
+              # данные читаемыми любым authenticated subject'ом (tenant-facing).
+              echo "[bootstrap] writing tuple cluster:${CLUSTER_SINGLETON_ID}#viewer@user:*"
+              curl -sf -XPOST "${OPENFGA_URL}/stores/${STORE_ID}/write" \
+                -H 'content-type: application/json' \
+                -d "{
+                  \"authorization_model_id\":\"${MODEL_ID}\",
+                  \"writes\":{\"tuple_keys\":[{
+                    \"user\":\"user:*\",
+                    \"relation\":\"viewer\",
+                    \"object\":\"cluster:${CLUSTER_SINGLETON_ID}\"
+                  }]}
+                }" >/dev/null 2>&1 || echo "[bootstrap] cluster viewer:* tuple already exists (OK)"
+
               echo "[bootstrap] OK"
           env:
             - name: OPENFGA_URL
