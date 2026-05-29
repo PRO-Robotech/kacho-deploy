@@ -123,9 +123,13 @@ config:
 # KAC-223: subject_change push-drainer → api-gateway internal gRPC (:9091).
 # addr empty ⇒ deployment.yaml defaults to
 # api-gateway-internal.<namespace>.svc.cluster.local:9091.
+# tlsInsecure: true — the cluster-internal :9091 mesh is plaintext gRPC
+# (NetworkPolicy-protected, запрет #6); the api-gateway internal listener has
+# no TLS variant. A TLS dial here would never connect. mTLS across the whole
+# internal mesh (SPIRE) is a separate future epic.
 gatewayInternal:
   addr: ""
-  tlsInsecure: false
+  tlsInsecure: true
 
 initContainer:
   migrator:
