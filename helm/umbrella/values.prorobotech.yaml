@@ -13,7 +13,7 @@
 #   kacho-compute      main-47c0f476
 #   kacho-api-gateway  main-0de5ba99
 #   kacho-nlb          main-fde3bbf1
-#   kacho-ui           main-1b9f9b95
+#   kacho-ui           main-113064bb
 #
 # Image-shape для top-level (apiGateway/compute/ui/vpc) — flat string (per values.yaml convention).
 # Image-shape для sub-chart (kacho-iam/kacho-nlb) — map {repository, tag, pullPolicy}
@@ -31,7 +31,7 @@ compute:
   imagePullPolicy: IfNotPresent
 
 ui:
-  image: docker.io/prorobotech/kacho-ui:main-1b9f9b95
+  image: docker.io/prorobotech/kacho-ui:main-113064bb
   imagePullPolicy: IfNotPresent
 
 vpc:
