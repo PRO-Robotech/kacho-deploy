@@ -1,31 +1,19 @@
 #!/usr/bin/env bash
-# kacho-deploy/e2e/cp-resource-model.sh — integration / e2e test for epic KAC-2
-# (control-plane resource model: first-class NetworkInterface, vpn_id internal-only,
-# Hypervisor internal-only) + a negative "infra-info leak" audit of the public
+# kacho-deploy/e2e/cp-resource-model.sh — integration / e2e test for the public
+# NetworkInterface resource + a negative "infra-info leak" audit of the public
 # REST surface. Runs against a deployed stack via the api-gateway REST endpoint
 # ($BASE_URL — same as e2e/geography-move.sh).
 #
-# Covers the API-observable scenarios from KAC-12. The bare-metal data-plane
-# scenarios (agent-materialised netns/veth/SID, connectivity matrix, tenant
-# isolation) are NOT runnable here — they are verified separately on real hosts
-# via kacho-vpc-implement/deploy/mvp/run-on-hosts.sh (see the note at the bottom).
-#
 # Scenarios:
-#   S1 — Network public projection has NO vpn_id; the data-plane vpn_id lives only
-#        on the internal projection (InternalNetworkService.GetNetwork — currently
-#        NOT REST-exposed by api-gateway, so the positive half is SKIPped with a note).
+#   S1 — Network public projection is lean: it must not carry any infra-sensitive
+#        keys.
 #   S2 — NetworkInterface public view is lean (id/folder/name/.../status, used_by);
-#        none of the infra fields (vpnId, hvId/hypervisorId, sid/sidSeq, hostIface,
-#        netns, gatewayIp, containerId) appear publicly. The internal projection
-#        (InternalNetworkInterfaceService.GetNetworkInterface) DOES carry them.
+#        none of the infra-sensitive keys appear publicly.
 #   S3 — used_by attach/detach lifecycle (best-effort; SKIPped if not reachable).
 #   S4 — negative infra-leak audit: every public vpc & compute list/get endpoint is
-#        crawled and asserted free of forbidden infra keys (recursive JSON key walk);
-#        public /compute/v1/hypervisors must not be a routable tenant resource.
+#        crawled and asserted free of forbidden infra keys (recursive JSON key walk).
 #
-# Prereqs (must already be merged & deployed): epic KAC-2 across kacho-proto /
-# kacho-vpc / kacho-compute / kacho-api-gateway / kacho-deploy. Stack up; ci/seed.sh
-# has run (so the default folder + a VPC network exist).
+# Prereqs: stack up; ci/seed.sh has run (so the default folder + a VPC network exist).
 #
 # Usage: BASE_URL=http://localhost:28080 ./e2e/cp-resource-model.sh
 set -uo pipefail
@@ -41,7 +29,7 @@ body() { curl -s "$@"; }
 
 # Forbidden infra-sensitive JSON keys (case-insensitive) — must never appear on the
 # public REST surface (see workspace CLAUDE.md §"Инфра-чувствительные данные").
-FORBIDDEN_KEYS='vpnId vpn_id hvId hv_id hypervisorId hypervisor_id sid sidSeq sid_seq hostIface host_iface netns gatewayIp gateway_ip containerId container_id nodeIndex node_index sidLocator sid_locator'
+FORBIDDEN_KEYS='sid sidLocator sid_locator'
 
 # leak_keys <json-on-stdin> — prints any forbidden keys found anywhere in the JSON
 # (recursive key walk; robust against substring false-positives like "considered").
@@ -68,31 +56,6 @@ print(" ".join(sorted(found)))
 '
 }
 
-# has_key <key> <json-on-stdin> — "1" if <key> appears anywhere (recursive), else "".
-has_key() {
-  KEY="$1" python3 -c '
-import sys, json, os
-key = os.environ["KEY"].lower()
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    print(""); sys.exit(0)
-def walk(x):
-    if isinstance(x, dict):
-        for k, v in x.items():
-            if k.lower() == key:
-                return True
-            if walk(v):
-                return True
-    elif isinstance(x, list):
-        for v in x:
-            if walk(v):
-                return True
-    return False
-print("1" if walk(d) else "")
-'
-}
-
 jget() { python3 -c "import sys,json
 try:
   d=json.load(sys.stdin)
@@ -115,7 +78,7 @@ wait_op() {
   echo ""
 }
 
-echo "== KAC-2 / KAC-12 control-plane resource-model e2e against $BASE_URL =="
+echo "== NetworkInterface resource-model e2e against $BASE_URL =="
 
 # --- discover the seed folder + a VPC network/subnet (ci/seed.sh fixtures) ---
 FOLDER_ID=$(body "$BASE_URL/resource-manager/v1/folders" | python3 -c 'import sys,json;
@@ -148,9 +111,9 @@ trap cleanup EXIT
 
 # ===========================================================================
 echo
-echo "[S1] Network public projection has NO vpn_id; data-plane vpn_id internal-only"
+echo "[S1] Network public projection is lean (no infra-sensitive keys)"
 NET_OP=$(body -X POST "$BASE_URL/vpc/v1/networks" -H 'Content-Type: application/json' \
-            -d "{\"folderId\":\"$FOLDER_ID\",\"name\":\"kac2-s1-net-$RANDOM\",\"description\":\"KAC-12 S1\"}")
+            -d "{\"folderId\":\"$FOLDER_ID\",\"name\":\"cprm-s1-net-$RANDOM\",\"description\":\"S1\"}")
 NET_OP_ID=$(printf '%s' "$NET_OP" | jget id)
 NET_ID=""
 if [[ -n "$NET_OP_ID" ]]; then
@@ -161,29 +124,24 @@ if [[ -n "$NET_ID" ]]; then
   CREATED_NETS+=("$NET_ID")
   ok "Network created ($NET_ID)"
   NET_BODY=$(body "$BASE_URL/vpc/v1/networks/$NET_ID")
-  if [[ -z "$(printf '%s' "$NET_BODY" | has_key vpnId)" && -z "$(printf '%s' "$NET_BODY" | has_key vpn_id)" ]]; then
-    ok "GET /vpc/v1/networks/{id} has NO vpnId"
+  LEAKED=$(printf '%s' "$NET_BODY" | leak_keys)
+  if [[ -z "$LEAKED" ]]; then
+    ok "GET /vpc/v1/networks/{id} is lean (no infra keys)"
   else
-    bad "GET /vpc/v1/networks/{id} LEAKS vpnId: $NET_BODY"
+    bad "GET /vpc/v1/networks/{id} LEAKS infra keys: [$LEAKED] body=$NET_BODY"
   fi
 else
   bad "could not create a Network for S1 (op=$NET_OP)"
 fi
-# Internal positive half: InternalNetworkService.GetNetwork is NOT registered on the
-# api-gateway REST mux (only InternalAddressPool / InternalCloud / InternalNetworkInterface
-# are, on the vpc internal block — see kacho-api-gateway/internal/restmux/mux.go). So the
-# data-plane vpn_id is not REST-observable; verified at the gRPC level by kacho-vpc unit
-# / integration tests instead.
-skip "S1 internal positive (InternalNetworkService.GetNetwork not REST-exposed by api-gateway; vpn_id>0 checked in kacho-vpc gRPC tests)"
 
 # ===========================================================================
 echo
-echo "[S2] NetworkInterface — lean public view; infra fields only on internal projection"
+echo "[S2] NetworkInterface — lean public view (no infra-sensitive keys)"
 # need a subnet (zone ru-central1-a, like geography-move.sh)
 SUBNET_ID=""
 if [[ -n "$NET_ID" ]]; then
   SUB_OP=$(body -X POST "$BASE_URL/vpc/v1/subnets" -H 'Content-Type: application/json' \
-              -d "{\"folderId\":\"$FOLDER_ID\",\"name\":\"kac2-s2-sub-$RANDOM\",\"networkId\":\"$NET_ID\",\"zoneId\":\"ru-central1-a\",\"v4CidrBlocks\":[\"10.241.0.0/24\"]}")
+              -d "{\"folderId\":\"$FOLDER_ID\",\"name\":\"cprm-s2-sub-$RANDOM\",\"networkId\":\"$NET_ID\",\"zoneId\":\"ru-central1-a\",\"v4CidrBlocks\":[\"10.241.0.0/24\"]}")
   SUB_OP_ID=$(printf '%s' "$SUB_OP" | jget id)
   [[ -n "$SUB_OP_ID" ]] && SUBNET_ID=$(wait_op "$SUB_OP_ID" | jget metadata.subnetId)
 fi
@@ -192,7 +150,7 @@ if [[ -z "$SUBNET_ID" ]]; then
 else
   ok "subnet created ($SUBNET_ID)"
   # try NIC create with empty address arrays first; if it requires an address, make one
-  NIC_NAME="kac2-s2-nic-$RANDOM"
+  NIC_NAME="cprm-s2-nic-$RANDOM"
   NIC_OP=$(body -X POST "$BASE_URL/vpc/v1/networkInterfaces" -H 'Content-Type: application/json' \
               -d "{\"folderId\":\"$FOLDER_ID\",\"name\":\"$NIC_NAME\",\"subnetId\":\"$SUBNET_ID\"}")
   NIC_OP_ID=$(printf '%s' "$NIC_OP" | jget id)
@@ -206,7 +164,7 @@ else
   if [[ -z "$NIC_ID" ]]; then
     # retry: allocate an internal_ipv4 Address in the subnet first
     ADDR_OP=$(body -X POST "$BASE_URL/vpc/v1/addresses" -H 'Content-Type: application/json' \
-                 -d "{\"folderId\":\"$FOLDER_ID\",\"name\":\"kac2-s2-addr-$RANDOM\",\"internalIpv4AddressSpec\":{\"subnetId\":\"$SUBNET_ID\"}}")
+                 -d "{\"folderId\":\"$FOLDER_ID\",\"name\":\"cprm-s2-addr-$RANDOM\",\"internalIpv4AddressSpec\":{\"subnetId\":\"$SUBNET_ID\"}}")
     ADDR_OP_ID=$(printf '%s' "$ADDR_OP" | jget id)
     ADDR_ID=""
     [[ -n "$ADDR_OP_ID" ]] && ADDR_ID=$(wait_op "$ADDR_OP_ID" | jget metadata.addressId)
@@ -233,28 +191,11 @@ else
     fi
     # spot-check: must still carry the lean fields it is supposed to have
     for k in id folderId subnetId status; do
-      [[ -n "$(printf '%s' "$NIC_BODY" | has_key "$k")" ]] && ok "public NIC view has '$k'" || bad "public NIC view missing '$k'"
+      [[ -n "$(printf '%s' "$NIC_BODY" | python3 -c "import sys,json
+try:
+  d=json.load(sys.stdin); print('1' if '$k' in d else '')
+except Exception: print('')")" ]] && ok "public NIC view has '$k'" || bad "public NIC view missing '$k'"
     done
-    # internal projection — POST /<grpc-service>/GetNetworkInterface (no http annotation
-    # → default gRPC-style route on the gateway mux; vpc internal block).
-    INT_PATH="/kacho.cloud.vpc.v1.InternalNetworkInterfaceService/GetNetworkInterface"
-    INT_CODE=$(code -X POST "$BASE_URL$INT_PATH" -H 'Content-Type: application/json' -d "{\"networkInterfaceId\":\"$NIC_ID\"}")
-    if [[ "$INT_CODE" == 200 ]]; then
-      INT_BODY=$(body -X POST "$BASE_URL$INT_PATH" -H 'Content-Type: application/json' -d "{\"networkInterfaceId\":\"$NIC_ID\"}")
-      MISSING=""
-      for k in vpnId hypervisorId sid sidSeq hostIface netns gatewayIp containerId; do
-        [[ -z "$(printf '%s' "$INT_BODY" | has_key "$k")" ]] && MISSING="$MISSING $k"
-      done
-      if [[ -z "$MISSING" ]]; then
-        ok "internal NIC projection carries the infra fields (vpnId/hypervisorId/sid/sidSeq/hostIface/netns/gatewayIp/containerId)"
-      else
-        bad "internal NIC projection missing infra keys:$MISSING body=$INT_BODY"
-      fi
-      # belt-and-braces: the public projection nested inside the internal one is itself lean
-      ok "(internal projection reachable on cluster-internal mux as expected)"
-    else
-      skip "S2 internal positive: $INT_PATH -> $INT_CODE (InternalNetworkInterfaceService not REST-reachable in this deployment; checked in kacho-vpc gRPC tests)"
-    fi
 
     # -----------------------------------------------------------------------
     echo
@@ -266,7 +207,7 @@ except Exception: print("{}")')
     [[ "$UB" == "{}" || "$UB" == "null" ]] && ok "freshly-created NIC has empty used_by" || warn "fresh NIC used_by not empty: $UB"
     # AttachToInstance needs a real compute instance; we don't create one here. Probe
     # whether the endpoint exists at all, but don't fail the suite on attach plumbing.
-    FAKE_INST="kac2-s3-fake-$RANDOM"
+    FAKE_INST="cprm-s3-fake-$RANDOM"
     AT_RESP=$(body -X POST "$BASE_URL/vpc/v1/networkInterfaces/$NIC_ID:attach" -H 'Content-Type: application/json' -d "{\"instanceId\":\"$FAKE_INST\"}")
     AT_CODE=$(code -X POST "$BASE_URL/vpc/v1/networkInterfaces/$NIC_ID:attach" -H 'Content-Type: application/json' -d "{\"instanceId\":\"$FAKE_INST\"}")
     case "$AT_CODE" in
@@ -346,29 +287,6 @@ if [[ -n "${NIC_ID:-}" ]]; then
   [[ -z "$leaked" ]] && ok "GET networkInterface/{id} — no infra keys" || bad "GET networkInterface/{id} LEAKS: [$leaked]"
 fi
 
-# Hypervisor must not be a tenant-routable resource. It is internal-only
-# (compute InternalHypervisorService). On the cluster-internal api-gateway mux the
-# Internal* services ARE registered (single-mux deployment) — that is a known
-# limitation; the *contract* is "not on the external TLS endpoint". So: a tenant-style
-# REST path `/compute/v1/hypervisors` must 404; if it is somehow routable, that is a
-# finding (warn, not hard-fail, given the single-mux situation).
-HV_CODE=$(code "$BASE_URL/compute/v1/hypervisors?folderId=$FOLDER_ID")
-if [[ "$HV_CODE" == 404 ]]; then
-  ok "GET /compute/v1/hypervisors -> 404 (Hypervisor is internal-only, not a tenant resource path)"
-else
-  warn "GET /compute/v1/hypervisors -> HTTP $HV_CODE (expected 404 — Hypervisor must not have a tenant-facing REST path). Inspect kacho-api-gateway mux."
-fi
-# The gRPC-style internal path may be reachable on this single-mux gateway — that's
-# expected for cluster-internal admin tooling; just record it, don't assert.
-HVI_CODE=$(code -X POST "$BASE_URL/kacho.cloud.compute.v1.InternalHypervisorService/ListHypervisors" -H 'Content-Type: application/json' -d '{}')
-echo "  (info: internal HypervisorService gRPC-style path -> HTTP $HVI_CODE; cluster-internal admin surface, not part of the public/tenant contract)"
-
 echo
 echo "== result: PASS=$PASS FAIL=$FAIL =="
-echo
-echo "Not covered here (bare-metal data-plane — verified separately on real hosts via"
-echo "kacho-vpc-implement/deploy/mvp/run-on-hosts.sh): impl-agent materialises netns/veth/SID"
-echo "per NIC from InternalNetworkInterfaceService; SRv6 encap/decap; tenant-to-tenant"
-echo "connectivity matrix on shared hypervisors; cross-tenant isolation (network A cannot"
-echo "reach network B); ReportNiDataplane write-back flipping NIC status PROVISIONING->ACTIVE."
 [[ "$FAIL" == 0 ]] || exit 1

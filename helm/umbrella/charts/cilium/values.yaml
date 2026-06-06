@@ -116,13 +116,10 @@ networkPolicies:
         - compute
         - loadbalancer
         - api-gateway
-        - vpc-implement
       egressTo:
         - iam
         - compute
-      l7Rules:
-        - pathRegex: "^/v1/internal/networkInterfaces/.*/reportDataplane"
-          allowedPeers: [vpc-implement]
+      l7Rules: []
     kacho-compute:
       enabled: true
       ingressFrom:
@@ -132,9 +129,7 @@ networkPolicies:
       egressTo:
         - iam
         - vpc
-      l7Rules:
-        - pathRegex: "^/v1/internal/hypervisors/.*"
-          allowedPeers: [vpc-implement]
+      l7Rules: []
     kacho-loadbalancer:
       enabled: true
       ingressFrom:
