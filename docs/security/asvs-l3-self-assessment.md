@@ -299,7 +299,7 @@
 | V11.1.1 | Logic processes single user request | PASS | gRPC per-request handler model |
 | V11.1.2 | Logic in sequence | PASS | Operations LRO model (acceptance §1.0 contract) |
 | V11.1.3 | Logic limits to user-specific data | PASS | Per-RPC FGA Check + tenant interceptor |
-| V11.1.4 | Logic enforces business rules | PASS | Domain validations (e.g. Project.Move atomic CAS) |
+| V11.1.4 | Logic enforces business rules | PASS | Domain validations (e.g. Disk.Relocate atomic CAS) |
 | V11.1.5 | Logic anti-automation | PASS | api-gateway rate-limit + sliding-window + CAPTCHA in selfservice |
 | V11.1.6 | Logic measures progress | PASS | Operations metrics per resource type |
 | V11.1.7 | Logic detects out-of-order requests | PASS | Operations sequencing + DB optimistic concurrency (xmin OCC) |
