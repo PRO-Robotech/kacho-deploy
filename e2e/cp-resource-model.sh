@@ -313,7 +313,6 @@ PUBLIC_ENDPOINTS=(
   "/vpc/v1/securityGroups?folderId=$FOLDER_ID"
   "/vpc/v1/routeTables?folderId=$FOLDER_ID"
   "/vpc/v1/gateways?folderId=$FOLDER_ID"
-  "/vpc/v1/privateEndpoints?folderId=$FOLDER_ID"
   "/compute/v1/instances?folderId=$FOLDER_ID"
   "/compute/v1/disks?folderId=$FOLDER_ID"
   "/compute/v1/images?folderId=$FOLDER_ID"
