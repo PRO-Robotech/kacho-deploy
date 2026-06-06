@@ -25,15 +25,11 @@ Bash-сценарии против поднятого стенда через RE
 
 - `e2e/geography-move.sh` — Geography (Region/Zone) переехала в kacho-compute
   (`/compute/v1/regions`,`/compute/v1/zones`), kacho-vpc больше зон не отдаёт.
-- `e2e/cp-resource-model.sh` — e2e control-plane resource model (эпик `KAC-2`):
-  у `Network` публично **нет** `vpnId`; NIC — lean публичная проекция
-  (`id/folder/name/subnet_id/primary_v4_address/security_group_ids/used_by/status`)
-  vs `GET /vpc/v1/networkInterfaces/{id}/internal` с инфра-полями; `used_by`
-  attach/detach. **Плюс негативный infra-leak audit**: краулит все публичные
+- `e2e/cp-resource-model.sh` — e2e публичной NetworkInterface-модели: NIC — lean
+  публичная проекция (`id/folder/name/subnet_id/primary_v4_address/security_group_ids/used_by/status`),
+  `used_by` attach/detach. **Плюс негативный infra-leak audit**: краулит все публичные
   vpc & compute list/get endpoints и проверяет, что ни один не отдаёт
-  `vpnId`/`hvId`/`hypervisorId`/`sid`/`sidSeq`/`hostIface`/`netns`/`gatewayIp`/
-  `containerId`/`nodeIndex`; `GET /compute/v1/hypervisors` → 404. (Bare-metal
-  data-plane-сценарии — отдельно, `kacho-vpc-implement/deploy/mvp/run-on-hosts.sh`.)
+  инфра-чувствительных ключей (`sid`/`sidLocator`).
 
 Оба запускаются в nightly CI-job `e2e-on-kind` (`.github/workflows/ci.yaml`,
 `cron: 0 3 * * *`). Newman-suite kacho-vpc ускорена (`tests/newman/scripts/run.sh`
