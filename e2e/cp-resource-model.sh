@@ -9,7 +9,8 @@
 #        keys.
 #   S2 — NetworkInterface public view is lean (id/folder/name/.../status, used_by);
 #        none of the infra-sensitive keys appear publicly.
-#   S3 — used_by attach/detach lifecycle (best-effort; SKIPped if not reachable).
+#   S3 — freshly-created NIC has empty used_by (public projection). NIC
+#        attach/detach RPCs were removed in KAC-266, so no attach lifecycle here.
 #   S4 — negative infra-leak audit: every public vpc & compute list/get endpoint is
 #        crawled and asserted free of forbidden infra keys (recursive JSON key walk).
 #
@@ -87,13 +88,8 @@ except Exception: print("")')
 echo "[setup] folder=$FOLDER_ID"
 [[ -n "$FOLDER_ID" ]] || { echo "FATAL: no folder (run ci/seed.sh)"; exit 1; }
 
-CREATED_NETS=() CREATED_NICS=() CREATED_ADDRS=() ATTACHED_NICS=()
+CREATED_NETS=() CREATED_NICS=() CREATED_ADDRS=()
 cleanup() {
-  for n in "${ATTACHED_NICS[@]:-}"; do
-    [[ -n "$n" ]] || continue
-    op=$(curl -s -X POST "$BASE_URL/vpc/v1/networkInterfaces/$n:detach" -d '{}' || true)
-    op_id=$(printf '%s' "$op" | jget id); [[ -n "$op_id" ]] && wait_op "$op_id" >/dev/null
-  done
   for n in "${CREATED_NICS[@]:-}"; do
     [[ -n "$n" ]] || continue
     op=$(curl -s -X DELETE "$BASE_URL/vpc/v1/networkInterfaces/$n" || true)
@@ -199,47 +195,15 @@ except Exception: print('')")" ]] && ok "public NIC view has '$k'" || bad "publi
 
     # -----------------------------------------------------------------------
     echo
-    echo "[S3] used_by attach/detach lifecycle (best-effort)"
+    echo "[S3] freshly-created NIC has empty used_by (public projection)"
+    # NIC attach/detach RPCs were removed in KAC-266 (NetworkInterface no longer
+    # exposes :attach/:detach; instances are created without auto-NICs). We only
+    # assert the public used_by projection on a freshly-created, unattached NIC.
     UB=$(printf '%s' "$NIC_BODY" | python3 -c 'import sys,json;
 try:
   d=json.load(sys.stdin); print(json.dumps(d.get("usedBy") or {}))
 except Exception: print("{}")')
     [[ "$UB" == "{}" || "$UB" == "null" ]] && ok "freshly-created NIC has empty used_by" || warn "fresh NIC used_by not empty: $UB"
-    # AttachToInstance needs a real compute instance; we don't create one here. Probe
-    # whether the endpoint exists at all, but don't fail the suite on attach plumbing.
-    FAKE_INST="cprm-s3-fake-$RANDOM"
-    AT_RESP=$(body -X POST "$BASE_URL/vpc/v1/networkInterfaces/$NIC_ID:attach" -H 'Content-Type: application/json' -d "{\"instanceId\":\"$FAKE_INST\"}")
-    AT_CODE=$(code -X POST "$BASE_URL/vpc/v1/networkInterfaces/$NIC_ID:attach" -H 'Content-Type: application/json' -d "{\"instanceId\":\"$FAKE_INST\"}")
-    case "$AT_CODE" in
-      200)
-        ATTACHED_NICS+=("$NIC_ID")
-        op_id=$(printf '%s' "$AT_RESP" | jget id); [[ -n "$op_id" ]] && wait_op "$op_id" >/dev/null
-        UB2=$(body "$BASE_URL/vpc/v1/networkInterfaces/$NIC_ID" | python3 -c 'import sys,json;
-try:
-  d=json.load(sys.stdin); print(json.dumps(d.get("usedBy") or {}))
-except Exception: print("{}")')
-        if [[ "$UB2" != "{}" && "$UB2" != "null" ]]; then
-          ok "after attach: NIC used_by is populated ($UB2)"
-        else
-          warn "after attach (HTTP 200): NIC used_by still empty — $UB2"
-        fi
-        DET_RESP=$(body -X POST "$BASE_URL/vpc/v1/networkInterfaces/$NIC_ID:detach" -d '{}')
-        op_id=$(printf '%s' "$DET_RESP" | jget id); [[ -n "$op_id" ]] && wait_op "$op_id" >/dev/null
-        # detached now; drop from ATTACHED_NICS so cleanup doesn't double-detach
-        ATTACHED_NICS=()
-        UB3=$(body "$BASE_URL/vpc/v1/networkInterfaces/$NIC_ID" | python3 -c 'import sys,json;
-try:
-  d=json.load(sys.stdin); print(json.dumps(d.get("usedBy") or {}))
-except Exception: print("{}")')
-        if [[ "$UB3" == "{}" || "$UB3" == "null" ]]; then
-          ok "after detach: NIC used_by cleared"
-        else
-          warn "after detach: NIC used_by still set — $UB3"
-        fi
-        ;;
-      400|404|412|409) skip "S3: attach rejected (HTTP $AT_CODE) — needs a real instance; used_by lifecycle covered by kacho-vpc tests";;
-      *)   skip "S3: attach -> HTTP $AT_CODE; not exercising used_by lifecycle here";;
-    esac
   fi
 fi
 

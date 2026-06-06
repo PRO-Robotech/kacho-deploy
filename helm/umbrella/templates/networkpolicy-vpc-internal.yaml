@@ -8,7 +8,7 @@ ingress для всего namespace.
   - InternalWatchService.Watch(from=0)  → mass exfiltration outbox
   - InternalAddressService.AllocateInternalIP/AllocateExternalIP → IPAM privileges
   - InternalAddressPoolService.{Create,Delete} → admin IPAM privileges
-  - InternalCloudService.SetPoolSelector → переписать routing для cloud
+  - InternalAddressPoolService.BindAsNetworkDefault → переписать IPAM default для network
 
 Включается через umbrella values:
   vpc:
