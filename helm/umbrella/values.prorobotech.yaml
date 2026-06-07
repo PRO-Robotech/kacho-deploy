@@ -8,12 +8,12 @@
 #     --wait --timeout 15m
 #
 # Tags pinned на конкретные master commit-SHA, актуальны на 2026-05-24 (probed via Docker Hub API):
-#   kacho-vpc          main-faf67154
-#   kacho-iam          main-1cde55bc
-#   kacho-compute      main-47c0f476
-#   kacho-api-gateway  main-0de5ba99
-#   kacho-nlb          main-fde3bbf1
-#   kacho-ui           main-113064bb
+#   kacho-vpc          main-97ffcaf0
+#   kacho-iam          main-1339eee3
+#   kacho-compute      main-79eaa6ed
+#   kacho-api-gateway  main-c860bfba
+#   kacho-nlb          main-8d37bc06
+#   kacho-ui           main-43a0ba4d
 #
 # Image-shape для top-level (apiGateway/compute/ui/vpc) — flat string (per values.yaml convention).
 # Image-shape для sub-chart (kacho-iam/kacho-nlb) — map {repository, tag, pullPolicy}
@@ -23,29 +23,29 @@ global:
   imageRegistry: ""
 
 apiGateway:
-  image: docker.io/prorobotech/kacho-api-gateway:main-0de5ba99
+  image: docker.io/prorobotech/kacho-api-gateway:main-c860bfba
   imagePullPolicy: IfNotPresent
 
 compute:
-  image: docker.io/prorobotech/kacho-compute:main-47c0f476
+  image: docker.io/prorobotech/kacho-compute:main-79eaa6ed
   imagePullPolicy: IfNotPresent
 
 ui:
-  image: docker.io/prorobotech/kacho-ui:main-113064bb
+  image: docker.io/prorobotech/kacho-ui:main-43a0ba4d
   imagePullPolicy: IfNotPresent
 
 vpc:
-  image: docker.io/prorobotech/kacho-vpc:main-faf67154
+  image: docker.io/prorobotech/kacho-vpc:main-97ffcaf0
   imagePullPolicy: IfNotPresent
 
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    tag: main-1cde55bc
+    tag: main-1339eee3
     pullPolicy: IfNotPresent
 
 kacho-nlb:
   image:
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-fde3bbf1
+    tag: main-8d37bc06
     pullPolicy: IfNotPresent
