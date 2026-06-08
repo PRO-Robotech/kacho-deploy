@@ -140,7 +140,10 @@ pg-vpc:
     database: kacho_vpc
   primary:
     persistence:
-      enabled: false
+      # kind: дефолтный StorageClass `standard` (local-path) — данные переживают
+      # рестарт/redeploy пода (но не `kind delete cluster`).
+      enabled: true
+      size: 5Gi
     resources:
       requests:
         cpu: 500m
@@ -170,7 +173,8 @@ pg-compute:
     database: kacho_compute
   primary:
     persistence:
-      enabled: false
+      enabled: true
+      size: 5Gi
     resources:
       requests:
         cpu: 200m
@@ -237,7 +241,8 @@ pg-iam:
     database: kacho_iam
   primary:
     persistence:
-      enabled: false
+      enabled: true
+      size: 2Gi
     resources:
       requests:
         cpu: 200m
@@ -266,7 +271,8 @@ pg-openfga:
     database: openfga
   primary:
     persistence:
-      enabled: false
+      enabled: true
+      size: 2Gi
     resources:
       requests:
         cpu: 200m
@@ -292,7 +298,8 @@ pg-nlb:
     database: kacho_nlb
   primary:
     persistence:
-      enabled: false
+      enabled: true
+      size: 2Gi
     resources:
       requests:
         cpu: 200m
@@ -363,7 +370,7 @@ pg-kratos:
     password: dev-kratos-password
     database: kratos
   primary:
-    persistence: { enabled: false }
+    persistence: { enabled: true, size: 1Gi }
     resources:
       requests: { cpu: 100m, memory: 256Mi }
       limits:   { cpu: 1, memory: 1Gi }
@@ -381,7 +388,7 @@ pg-hydra:
     password: dev-hydra-password
     database: hydra
   primary:
-    persistence: { enabled: false }
+    persistence: { enabled: true, size: 1Gi }
     resources:
       requests: { cpu: 100m, memory: 256Mi }
       limits:   { cpu: 1, memory: 1Gi }
