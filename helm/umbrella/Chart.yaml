@@ -77,6 +77,12 @@ dependencies:
   - name: ui
     version: ">= 0.0.0"
     repository: file://../../../kacho-ui/deploy
+  # Experimental next-gen UI. Kept as a separate chart so it can run next to
+  # the legacy `ui` Service and be port-forwarded independently.
+  - name: ui-future
+    version: ">= 0.0.0"
+    repository: file://./charts/ui-future
+    condition: ui-future.enabled
   # KAC-105 (sub-phase 2.0 IAM, E0 skeleton). Sub-chart живёт в umbrella/charts/kacho-iam/
   # (file:// относительно Chart.yaml). На E0 image скорее всего ещё не существует —
   # см. values.dev.yaml `kacho-iam.image.repository` / `tag` для конкретики.

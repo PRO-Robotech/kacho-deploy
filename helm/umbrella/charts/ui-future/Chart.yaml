@@ -1,0 +1,5 @@
+apiVersion: v2
+name: ui-future
+version: 2.0.0
+appVersion: 0.1.0
+description: Kacho federated console - host plus dashboard remote

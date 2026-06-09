@@ -107,6 +107,32 @@ ui:
   ingress:
     host: localhost
 
+ui-future:
+  enabled: true
+  name: ui-future
+  image: kacho-ui-future-host:dev
+  imagePullPolicy: IfNotPresent
+  autoscaling:
+    enabled: false
+  ingress:
+    enabled: true
+    className: nginx
+    # Optional ingress access with Host header:
+    #   curl -H 'Host: future.localhost' http://localhost:28080/
+    # For day-to-day local use, port-forward svc/ui-future instead.
+    host: future.localhost
+  host:
+    upstreams:
+      apiGateway: api-gateway.kacho.svc.cluster.local:8080
+      kratosPublic: kacho-umbrella-kratos-public.kacho.svc.cluster.local:80
+      hydraPublic: kacho-umbrella-hydra-public.kacho.svc.cluster.local:4444
+      kratosUi: kratos-selfservice-ui.kacho.svc.cluster.local:3000
+      dashboard: ui-future-dashboard.kacho.svc.cluster.local:8080
+  dashboard:
+    name: ui-future-dashboard
+    image: kacho-ui-future-dashboard:dev
+    imagePullPolicy: IfNotPresent
+
 ingress-nginx:
   controller:
     # Standard kind+ingress-nginx pattern: hostPort на kind-ноде,
@@ -1183,4 +1209,3 @@ kacho-nlb:
     limits:
       cpu: 1000m
       memory: 512Mi
-
