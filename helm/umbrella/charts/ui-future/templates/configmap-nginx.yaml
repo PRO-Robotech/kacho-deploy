@@ -1,0 +1,183 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ui.hostName" . }}-nginx
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ui.labels" . | nindent 4 }}
+data:
+  default.conf.template: |
+    server {
+        listen {{ include "ui.hostPort" . }};
+        server_name _;
+
+        resolver ${KUBE_DNS_SERVER} valid=10s ipv6=off;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        location ^~ /dashboard/ {
+            set $dashboard_upstream "${KACHO_UI_DASHBOARD_UPSTREAM}";
+            rewrite ^/dashboard/(.*)$ /$1 break;
+            proxy_pass http://$dashboard_upstream;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+        }
+
+        location ~ ^/(vpc|compute|nlb|operations)/ {
+            set $api_gw_upstream "${KACHO_UI_API_GATEWAY_UPSTREAM}";
+            proxy_pass http://$api_gw_upstream;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Request-ID $http_x_request_id;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+        }
+
+        location ~ ^/iam/v1/ {
+            set $api_gw_upstream "${KACHO_UI_API_GATEWAY_UPSTREAM}";
+            proxy_pass http://$api_gw_upstream;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Request-ID $http_x_request_id;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+        }
+
+        location /.ory/kratos/public/ {
+            set $kratos_public "${KACHO_UI_KRATOS_PUBLIC_UPSTREAM}";
+            rewrite ^/\.ory/kratos/public/(.*)$ /$1 break;
+            proxy_pass http://$kratos_public;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+        }
+
+        location /.ory/hydra/public/ {
+            set $hydra_public "${KACHO_UI_HYDRA_PUBLIC_UPSTREAM}";
+            rewrite ^/\.ory/hydra/public/(.*)$ /$1 break;
+            proxy_pass http://$hydra_public;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+        }
+
+        location ~ ^/(login|registration|recovery|verification|settings|error|consent|logout)(/|$) {
+            set $kratos_ui "${KACHO_UI_KRATOS_UI_UPSTREAM}";
+            proxy_pass http://$kratos_ui;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+        }
+
+        location = /healthz {
+            access_log off;
+            add_header Content-Type text/plain;
+            return 200 "ok\n";
+        }
+
+        location = /index.html {
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+
+        location ^~ /assets/ {
+            try_files $uri @kratos_ui_assets_fallback;
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+
+        location ~* \.(js|css|svg|png|jpg|jpeg|gif|ico|woff2?|ttf|eot|otf)$ {
+            try_files $uri @kratos_ui_assets_fallback;
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+
+        location @kratos_ui_assets_fallback {
+            set $kratos_ui_fallback "${KACHO_UI_KRATOS_UI_UPSTREAM}";
+            proxy_pass http://$kratos_ui_fallback;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 10s;
+        }
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        gzip on;
+        gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+        gzip_min_length 1024;
+    }
+  resolver-from-resolvconf.envsh: |
+    ns="$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf)"
+    if [ -z "$ns" ]; then
+      echo "[05-resolver] FATAL: no nameserver in /etc/resolv.conf" >&2
+      exit 1
+    fi
+    export KUBE_DNS_SERVER="$ns"
+    echo "[05-resolver] nameserver $KUBE_DNS_SERVER exported for nginx template envsubst"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ui.dashboardName" . }}-nginx
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ui.labels" . | nindent 4 }}
+data:
+  default.conf.template: |
+    server {
+        listen {{ .Values.dashboard.port }};
+        server_name _;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        location = /healthz {
+            access_log off;
+            add_header Content-Type text/plain;
+            return 200 "ok\n";
+        }
+
+        location = /index.html {
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+
+        location ~* \.(?:js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+            try_files $uri =404;
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        gzip on;
+        gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+        gzip_min_length 1024;
+    }

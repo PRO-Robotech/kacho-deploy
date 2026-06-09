@@ -595,6 +595,9 @@ ui:
   image: docker.io/prorobotech/kacho-ui:latest
   imagePullPolicy: IfNotPresent
 
+ui-future:
+  enabled: false
+
 # ─── KAC-127 Phase 11 — Production deploy + Observability (defaults: OFF) ─
 # All Phase 11 sub-charts are condition-gated. Enable selectively via:
 #   helm install ... -f values.prod.yaml          # all on

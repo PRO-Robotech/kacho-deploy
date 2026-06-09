@@ -1,0 +1,62 @@
+# Compatibility surface for kacho-deploy's existing umbrella values.
+name: ui
+replicas: 1
+image: kacho-ui-future-host:dev
+imagePullPolicy: IfNotPresent
+port: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  host: console.kacho.local
+  annotations: {}
+  tls: []
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+
+host:
+  name: ""
+  replicas: null
+  image: ""
+  imagePullPolicy: ""
+  port: null
+  resources: {}
+  upstreams:
+    apiGateway: api-gateway.kacho.svc.cluster.local:8080
+    kratosPublic: kacho-umbrella-kratos-public.kacho.svc.cluster.local:80
+    hydraPublic: kacho-umbrella-hydra-public.kacho.svc.cluster.local:4444
+    kratosUi: kratos-selfservice-ui.kacho.svc.cluster.local:3000
+    dashboard: ui-dashboard.kacho.svc.cluster.local:8080
+
+dashboard:
+  name: ui-dashboard
+  replicas: 1
+  # When empty, the chart derives this from the host image by replacing "host"
+  # with "dashboard", e.g. kacho-ui-future-host:dev -> kacho-ui-future-dashboard:dev.
+  image: ""
+  imagePullPolicy: ""
+  port: 8080
+  resources:
+    requests:
+      cpu: 30m
+      memory: 48Mi
+    limits:
+      cpu: 150m
+      memory: 192Mi
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
