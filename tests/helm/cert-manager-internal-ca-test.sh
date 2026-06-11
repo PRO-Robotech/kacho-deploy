@@ -143,10 +143,11 @@ for svc in api-gateway kacho-iam kacho-vpc kacho-compute kacho-nlb; do
   ok
 done
 
-# Distinct spiffe ids per service (personal identity, requirement #4).
+# Distinct spiffe ids per service (personal identity, requirement #4). SEC-G adds
+# a 6th client identity — the kacho-vpc-operator (client-only, separate ns/SAN).
 client_ids="$(rendered 'select(.kind=="Certificate" and (.metadata.name | test("-client-tls$"))) | .spec.uris[0]' "$ON" | grep '^spiffe://' | sort -u)"
 distinct="$(printf '%s\n' "$client_ids" | sed '/^$/d' | wc -l | tr -d ' ')"
-[ "$distinct" = "5" ] || fail "SEC-F-04: expected 5 distinct client spiffe ids, got $distinct"
+[ "$distinct" = "6" ] || fail "SEC-F/G-04: expected 6 distinct client spiffe ids (5 core + vpc-operator), got $distinct"
 ok
 
 # ── SEC-F-14: external letsencrypt + wildcard untouched, additive ─────────────

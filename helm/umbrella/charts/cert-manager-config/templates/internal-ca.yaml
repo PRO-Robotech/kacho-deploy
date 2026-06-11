@@ -81,15 +81,26 @@ spec:
                 handshake. Empty/absent → fall back to [$svc] (back-compat).
 */}}
 {{- $saName := default (ternary $svc (printf "kacho-%s" $svc) (hasPrefix "kacho-" $svc)) $cfg.saName }}
-{{- $spiffeId := default (printf "spiffe://%s/ns/%s/sa/%s" $trust $podNs $saName) $cfg.spiffeId }}
+{{/*
+SEC-G — per-service overrides (default to the global values for back-compat):
+  $svcNs       — namespace the cert/secret live in (a client-only component such
+                 as the operator consumes its secret in its OWN namespace).
+  $spiffeNs    — the SAN ns-segment; MUST equal the pod's actual namespace so the
+                 identity matches the SPIRE entry + IAM cert→SA mapping (§4.1.4).
+  $clientOnly  — emit only the client-cert leaf (no inbound server-cert).
+*/}}
+{{- $svcNs := default $ns $cfg.namespace }}
+{{- $spiffeNs := default $podNs $cfg.spiffeNamespace }}
+{{- $spiffeId := default (printf "spiffe://%s/ns/%s/sa/%s" $trust $spiffeNs $saName) $cfg.spiffeId }}
 {{- $serverHosts := $cfg.serverHosts | default (list $svc) }}
+{{- if not $cfg.clientOnly }}
 ---
 # ─── leaf: {{ $svc }} server cert (SAN = service DNS) ─────────────────────────
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ printf "%s-server-tls" $svc | quote }}
-  namespace: {{ $ns | quote }}
+  namespace: {{ $svcNs | quote }}
   labels:
     kacho.cloud/component: cert-manager-internal-ca
     app.kubernetes.io/name: {{ $svc | quote }}
@@ -115,13 +126,14 @@ spec:
   usages:
     - server auth
     - client auth                          # backstop for the listen side
+{{- end }}
 ---
 # ─── leaf: {{ $svc }} client cert (URI-SAN = SPIRE-format identity) ───────────
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ printf "%s-client-tls" $svc | quote }}
-  namespace: {{ $ns | quote }}
+  namespace: {{ $svcNs | quote }}
   labels:
     kacho.cloud/component: cert-manager-internal-ca
     app.kubernetes.io/name: {{ $svc | quote }}

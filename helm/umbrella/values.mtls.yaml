@@ -27,6 +27,13 @@ mtls:
     vpc_to_iam: true
     compute_to_iam: true
     nlb_to_iam: true
+    # SEC-G — operator edges. The operator is a sibling (its own config/ kustomize,
+    # outside the umbrella subcharts), so these flags are documentary INTENT here;
+    # the operator pod-spec is wired in kacho-vpc-operator/config/dev/operator-mtls.yaml
+    # (per-edge KACHO_VPCOPERATOR_{VPC,IAM}_MTLS_* env + client-cert mount). The
+    # operator's CLIENT cert is rendered by cert-manager-config (vpc-operator entry).
+    operator_to_vpc: true
+    operator_to_iam: true
 
 # Internal-CA PKI: enable the cert-manager-config subchart + its internal CA.
 cert-manager-config:

@@ -98,6 +98,19 @@ certManager:
       # cluster-internal Service `kacho-nlb-internal` (9091).
       kacho-nlb:
         serverHosts: ["kacho-nlb", "kacho-nlb-internal"]
+      # SEC-G — kacho-vpc-operator is a CLIENT only: it DIALS kacho-vpc/kacho-iam
+      # over mTLS but exposes no inbound gRPC server (its admission webhook is a
+      # SEPARATE channel — kube-apiserver→webhook — with its own server-cert, #5).
+      #   * clientOnly  → emit ONLY the client-cert leaf (no server-cert).
+      #   * namespace   → the cert/secret live in the operator's OWN namespace
+      #                   (it consumes the secret there), NOT the core cert ns.
+      #   * spiffeNamespace → the SAN ns-segment MUST be the operator's actual
+      #                   namespace (§4.1.4) so identity matches the SPIRE entry
+      #                   and the IAM cert→SA mapping resolves `vpc-operator`.
+      vpc-operator:
+        clientOnly: true
+        namespace: "kacho-vpc-operator"
+        spiffeNamespace: "kacho-vpc-operator"
 
   # Wildcard certificates issued per domain.
   certificates:

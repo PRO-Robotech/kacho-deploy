@@ -135,4 +135,19 @@ dev_off="$(yq '.vpc.mtls.enable // "absent"' "$U/values.dev.yaml")"
 [ "$dev_off" = "false" ] || [ "$dev_off" = "absent" ] || fail "SEC-F-05: values.dev.yaml must not enable vpc.mtls (got $dev_off)"
 ok
 
+# ── SEC-G — operator edges present in the mTLS overlay (operator→{vpc,iam}) ────
+# The operator is a sibling (its own config/), so these are documentary INTENT
+# flags in the overlay; the operator pod-spec env/mount live in
+# kacho-vpc-operator/config. The full-stack profile turns both edges on.
+for edge in operator_to_vpc operator_to_iam; do
+  [ "$(yq ".mtls.edges.${edge}" "$OVL")" = "true" ] \
+    || fail "SEC-G: values.mtls.yaml must enable edge ${edge}"
+done
+# Base values.yaml must NOT carry operator edges on (zero dev regression).
+for edge in operator_to_vpc operator_to_iam; do
+  b="$(yq ".mtls.edges.${edge} // \"absent\"" "$U/values.yaml")"
+  [ "$b" = "false" ] || [ "$b" = "absent" ] || fail "SEC-G: values.yaml ${edge} must default off (got $b)"
+done
+ok
+
 echo "PASS: $SCRIPT ($N assertions)"
