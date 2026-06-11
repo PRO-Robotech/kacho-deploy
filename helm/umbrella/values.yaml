@@ -418,6 +418,34 @@ spiffe:
   trustDomain: kacho.cloud
   # Cluster name (used by k8s_psat attestor audience).
   clusterName: kacho
+  # SEC-F — single-source namespace where service pods run. Used by:
+  #   - cert-manager internal-CA client-cert URI-SANs (spiffe://…/ns/<namespace>/sa/<svc>)
+  #   - IAM cert→SA mapping (SEC-C)
+  #   - spire-registration entries
+  # Snaps the `kacho` (stand) vs `kacho-system` (legacy SPIFFE-id) collision —
+  # one value, consumed everywhere (SEC-F §«Разрешение SPIFFE-коллизии»).
+  namespace: kacho
+
+# ─── SEC-F — cluster-internal mTLS profile (opt-in, per-edge) ─────────────────
+# Default OFF: dev stand stays insecure service→service (zero regression). The
+# `values.mtls.yaml` overlay (or prod profile) flips `enabled` + all `edges.*`
+# on and turns on the internal-CA PKI + openfga NetworkPolicy. Services consume
+# these flags via their per-edge TLS env (KACHO_<DOMAIN>_TLS_SERVER_*/CLIENT_*,
+# corelib LoadPrefixed, SEC-B) — wired in the sibling service charts.
+mtls:
+  enabled: false
+  # Per-edge feature flags (decision I7, §6.5) — each edge toggles independently
+  # so an edge can be rolled out / rolled back in isolation. An asymmetric edge
+  # (one side mTLS, other insecure) fails closed → Unavailable (SEC-F-13).
+  edges:
+    gateway_to_vpc: false
+    gateway_to_compute: false
+    gateway_to_iam: false
+    gateway_to_nlb: false
+    vpc_to_iam: false
+    compute_to_iam: false
+    nlb_to_iam: false
+    # vpc↔compute filled in by SEC-D; operator→vpc by SEC-G.
 
 pg-spire:
   enabled: false
@@ -446,49 +474,53 @@ spire-server:
       host: "spire.kacho.cloud"
   # Registration entries — per-service SPIFFE-IDs from acceptance §2.3.
   # Parent ID per env: spire-agent SPIFFE-ID under spire-system ns.
+  # SEC-F §«коллизия»: namespace aligned to the single-source spiffe.namespace
+  # (kacho) so SPIRE-issued and cert-manager-issued SPIFFE-ids agree — the
+  # client-cert URI-SAN and these entries are interchangeable identities. NLB
+  # entry renamed kacho-loadbalancer → kacho-nlb (§4.1.6).
   registrations:
     enabled: true
     entries:
-      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-iam"
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho/sa/kacho-iam"
         parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
         selectors:
-          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "ns:kacho"}
           - {type: "k8s", value: "sa:kacho-iam"}
         ttl: 3600
-      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-vpc"
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho/sa/kacho-vpc"
         parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
         selectors:
-          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "ns:kacho"}
           - {type: "k8s", value: "sa:kacho-vpc"}
         ttl: 3600
-      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-compute"
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho/sa/kacho-compute"
         parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
         selectors:
-          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "ns:kacho"}
           - {type: "k8s", value: "sa:kacho-compute"}
         ttl: 3600
-      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-loadbalancer"
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho/sa/kacho-nlb"
         parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
         selectors:
-          - {type: "k8s", value: "ns:kacho-system"}
-          - {type: "k8s", value: "sa:kacho-loadbalancer"}
+          - {type: "k8s", value: "ns:kacho"}
+          - {type: "k8s", value: "sa:kacho-nlb"}
         ttl: 3600
-      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-api-gateway"
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho/sa/kacho-api-gateway"
         parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
         selectors:
-          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "ns:kacho"}
           - {type: "k8s", value: "sa:kacho-api-gateway"}
         ttl: 3600
-      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-ui-admin"
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho/sa/kacho-ui-admin"
         parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
         selectors:
-          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "ns:kacho"}
           - {type: "k8s", value: "sa:kacho-ui-admin"}
         ttl: 3600
-      - spiffeId: "spiffe://kacho.cloud/ns/kacho-system/sa/kacho-vpc-implement"
+      - spiffeId: "spiffe://kacho.cloud/ns/kacho/sa/kacho-vpc-implement"
         parentId: "spiffe://kacho.cloud/ns/spire-system/sa/spire-agent"
         selectors:
-          - {type: "k8s", value: "ns:kacho-system"}
+          - {type: "k8s", value: "ns:kacho"}
           - {type: "k8s", value: "sa:kacho-vpc-implement"}
         ttl: 3600
 
@@ -630,6 +662,11 @@ cert-manager-config:
   enabled: false
   kacho:
     domain: "api.kacho.local"
+  # SEC-F — pass-through single-source SPIFFE identity (trustDomain + namespace)
+  # so internal-CA client-cert URI-SANs match spire-registration + IAM SA-map.
+  spiffe:
+    trustDomain: kacho.cloud
+    namespace: kacho
   certManager:
     acmeEmail: "platform@kacho.cloud"
     issuers:
@@ -637,6 +674,37 @@ cert-manager-config:
         enabled: true
       staging:
         enabled: true
+    # SEC-F internal CA — OFF by default (dev = insecure). Enabled by the
+    # values.mtls.yaml overlay / prod mTLS profile. `services` lists the 5
+    # canonical internal components (kacho-nlb, NOT legacy kacho-loadbalancer;
+    # vpc-operator → SEC-G) — each gets a server + client leaf cert.
+    internalCA:
+      enabled: false
+      # SEC-F КРИТ#1 — `serverHosts` lists the ACTUAL Service DNS hosts a peer
+      # dials to reach each server (single source of the server-cert DNS-SAN).
+      # The map KEY names the cert/secret/client-SA; the dialed Service may
+      # differ (kacho-vpc's Service is `vpc`) and a service may answer on both a
+      # public and a cluster-internal Service (`kacho-iam` + `kacho-iam-internal`).
+      # Kept in sync with api-gateway `backends.*` + each service's `peers.*`.
+      services:
+        # api-gateway pod SA is kacho-api-gateway; Service DNS = api-gateway.
+        api-gateway:
+          saName: "kacho-api-gateway"
+          serverHosts: ["api-gateway"]
+        # iam answers on public `kacho-iam` (9090) + internal `kacho-iam-internal`
+        # (9091). Every *→iam edge dials the internal Service.
+        kacho-iam:
+          serverHosts: ["kacho-iam", "kacho-iam-internal"]
+        # kacho-vpc deployment's Service is literally `vpc` (9090 + 9091).
+        kacho-vpc:
+          serverHosts: ["vpc"]
+        # kacho-compute deployment's Service is literally `compute`.
+        kacho-compute:
+          serverHosts: ["compute"]
+        # nlb answers on public `kacho-nlb` (9090) + internal `kacho-nlb-internal`
+        # (9091).
+        kacho-nlb:
+          serverHosts: ["kacho-nlb", "kacho-nlb-internal"]
 
 argo-cd:
   enabled: false

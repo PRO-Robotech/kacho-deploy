@@ -1,0 +1,29 @@
+# `tests/helm/` — Helm manifest-assertion harness (SEC-F)
+
+**NEW test infrastructure** (acceptance SEC-F §«Тест-харнессы»; there is *no*
+"precedent S7.1" — manifest tests are built from scratch here). These are
+offline, deterministic black-box assertions over `helm template` output —
+they need neither a kind cluster nor the sibling service-chart checkouts
+(`file://../../../kacho-*/deploy`). They render the **`cert-manager-config`
+subchart standalone** and the **umbrella openfga-NetworkPolicy template in
+isolation**, then assert structure with `yq`/`grep`.
+
+## What is covered (TDD RED→GREEN, SEC-F)
+
+| Script | Scenario(s) | Asserts |
+|---|---|---|
+| `cert-manager-internal-ca-test.sh` | SEC-F-01/02/03/04/14 | internal-CA issuer chain (selfSigned `kacho-selfsigned` root → CA-root `Certificate` → `kacho-internal-ca` CA-issuer), per-svc `Certificate` ×2 in separate secrets, server-cert DNS-SAN, client-cert SPIRE URI-SAN, exactly-one selfSigned issuer, external `letsencrypt-*` unchanged, `internalCA.enabled=false` → none rendered |
+| `openfga-networkpolicy-test.sh` | SEC-F-12/14 | openfga ingress-from-iam-only `NetworkPolicy` with `app.kubernetes.io/name` selectors; absent when flag off |
+| `mtls-values-profile-test.sh` | SEC-F-05/06/07/14 | `mtls.enabled`/`mtls.edges.*` shape, `values.mtls.yaml` overlay flips on, `spiffe.namespace` single-source, NLB spire-registration aligned `kacho-nlb` |
+
+## Running
+
+```sh
+make helm-manifest-test          # all three
+bash tests/helm/cert-manager-internal-ca-test.sh
+```
+
+Each script is self-contained: it shells `helm template` against the in-repo
+chart, pipes through `yq`/`grep`, and exits non-zero on the first failed
+assertion (printing `FAIL: <reason>`). A green run prints `PASS: <script> (<n> assertions)`.
+No `TODO`/`SKIP`/commented-out asserts (ban #11/#13).

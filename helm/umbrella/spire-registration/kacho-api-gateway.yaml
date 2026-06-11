@@ -7,11 +7,12 @@ metadata:
     kacho.cloud/component: spiffe-registration
     kacho.cloud/phase: "10"
 spec:
-  spiffeId: "spiffe://{{ trustDomain }}/ns/kacho-system/sa/kacho-api-gateway"
+  # SEC-F §«коллизия»: ns aligned to single-source spiffe.namespace (kacho).
+  spiffeId: "spiffe://{{ trustDomain }}/ns/kacho/sa/kacho-api-gateway"
   parentId: "spiffe://{{ trustDomain }}/ns/spire-system/sa/spire-agent"
   selectors:
     - type: k8s
-      value: "ns:kacho-system"
+      value: "ns:kacho"
     - type: k8s
       value: "sa:kacho-api-gateway"
     - type: cosign
@@ -19,4 +20,5 @@ spec:
   ttl: 3600
   dnsNames:
     - "api.{{ kachoDomain }}"
-    - "kacho-api-gateway.kacho-system.svc"
+    - "kacho-api-gateway.kacho.svc"
+    - "kacho-api-gateway.kacho.svc.cluster.local"

@@ -7,11 +7,12 @@ metadata:
     kacho.cloud/component: spiffe-registration
     kacho.cloud/phase: "10"
 spec:
-  spiffeId: "spiffe://{{ trustDomain }}/ns/kacho-system/sa/kacho-iam"
+  # SEC-F §«коллизия»: ns aligned to single-source spiffe.namespace (kacho).
+  spiffeId: "spiffe://{{ trustDomain }}/ns/kacho/sa/kacho-iam"
   parentId: "spiffe://{{ trustDomain }}/ns/spire-system/sa/spire-agent"
   selectors:
     - type: k8s
-      value: "ns:kacho-system"
+      value: "ns:kacho"
     - type: k8s
       value: "sa:kacho-iam"
     # cosign selector — обязательная supply-chain проверка (P10-D9).
@@ -20,5 +21,5 @@ spec:
       value: "image-signature:{{ cosignFingerprint }}"
   ttl: 3600
   dnsNames:
-    - "kacho-iam.kacho-system.svc"
-    - "kacho-iam.kacho-system.svc.cluster.local"
+    - "kacho-iam.kacho.svc"
+    - "kacho-iam.kacho.svc.cluster.local"
