@@ -144,6 +144,12 @@ spec:
                   name: {{ .Values.openfgaBootstrap.modelIdSecretName | default "openfga-model-id" }}
                   key: current
                   optional: true
+            # subject-change push-drainer (W1.2): IAM нотифицирует api-gateway
+            # InternalAuthzCacheService об изменениях subject → инвалидация authz-кэша.
+            # REQUIRED в коде (cmd/kacho-iam/subject_change_wiring.go) — без него pod
+            # падает на старте. api-gateway internal gRPC = cmux-порт 8080 (cluster-internal).
+            - name: KACHO_IAM_GATEWAY_INTERNAL_ADDR
+              value: {{ .Values.gatewayInternalAddr | default "api-gateway.kacho.svc.cluster.local:8080" | quote }}
             # OPA bundle server — список knobs для build-side bundle generation
             # (kacho-iam serves bundle.tar.gz). См. opa-bundle-server-configmap.yaml.
             {{- if .Values.opaSidecar.enabled }}
