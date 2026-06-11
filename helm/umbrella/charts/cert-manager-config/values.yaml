@@ -27,6 +27,50 @@ certManager:
   dnsZones:
     - "{{ .Values.kacho.domain }}"
 
+  # ─── SEC-F: internal CA PKI for cluster-internal mTLS ────────────────────
+  # Separate from the public ACME (letsencrypt-*) issuers above: a CA-type
+  # ClusterIssuer for service→service mTLS. Bootstrap chain:
+  #   selfSigned root ClusterIssuer (kacho-selfsigned, REUSED — already
+  #   referenced by values.dev.yaml but previously undefined; SEC-F §4.1.6
+  #   closes that gap, does NOT breed a second overlapping self-signed issuer)
+  #     → CA-root Certificate (isCA:true) in a secret
+  #       → CA-type ClusterIssuer (kacho-internal-ca) that signs per-service
+  #         server + client leaf certs.
+  # Disabled by default (dev = insecure service→service, zero regression).
+  # Enabled by the values.mtls.yaml overlay / prod mTLS profile.
+  internalCA:
+    enabled: false
+    # Reused bootstrap self-signed root (SEC-F-01) — must be exactly one.
+    rootIssuerName: "kacho-selfsigned"
+    # Target CA-type issuer that signs all internal leaf certs.
+    clusterIssuerName: "kacho-internal-ca"
+    # Secret holding the self-signed CA root cert+key (consumed by the CA issuer).
+    caSecretName: "kacho-internal-ca-root"
+    # CA root cert lifetime.
+    caDuration: "87600h"                   # 10y root
+    caRenewBefore: "720h"                  # 30d
+    # Leaf (per-service) cert lifetime — short, rotation-friendly.
+    leafDuration: "2160h"                  # 90d
+    leafRenewBefore: "720h"                # 30d
+    leafPrivateKey:
+      algorithm: "ECDSA"
+      size: 256
+    # Internal components issued a server+client cert pair. Canonical service
+    # names (kacho-nlb, NOT legacy kacho-loadbalancer; vpc-operator → SEC-G).
+    # `spiffeId` is the single source of truth (also consumed by IAM cert→SA
+    # mapping SEC-C and spire-registration) — SPIRE format
+    # `spiffe://<trustDomain>/ns/<spiffe.namespace>/sa/<svc>`; templated from
+    # `.Values.spiffe.{trustDomain,namespace}` so it is never hardcoded.
+    services:
+      # api-gateway's pod SA is `kacho-api-gateway` (server DNS is the service
+      # name `api-gateway`; client identity is the SA) — matches spire-registration.
+      api-gateway:
+        saName: "kacho-api-gateway"
+      kacho-iam: {}
+      kacho-vpc: {}
+      kacho-compute: {}
+      kacho-nlb: {}
+
   # Wildcard certificates issued per domain.
   certificates:
     - name: "kacho-wildcard-tls"
@@ -54,3 +98,12 @@ kacho:
 global:
   kacho:
     domain: ""
+
+# SEC-F: SPIFFE identity contract — single source of truth for internal-CA
+# client-cert URI-SANs (must match spire-registration + IAM cert→SA mapping).
+# Propagated from the umbrella top-level `spiffe.*` via explicit pass-through.
+spiffe:
+  trustDomain: "kacho.cloud"
+  # Namespace where service pods actually run (single-source — snaps the
+  # `kacho` vs `kacho-system` collision, SEC-F §«Разрешение SPIFFE-коллизии»).
+  namespace: "kacho"

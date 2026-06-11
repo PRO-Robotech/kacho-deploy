@@ -5,6 +5,17 @@
 
 CLUSTER_NAME := kacho
 
+# SEC-F — `make dev-up MTLS=on` layers the cluster-internal mTLS overlay
+# (values.mtls.yaml: internal-CA PKI + per-edge mTLS + openfga NetworkPolicy)
+# on top of the dev profile. Default (unset / MTLS=off) keeps the stand insecure
+# service→service — zero regression.
+MTLS ?= off
+ifeq ($(MTLS),on)
+MTLS_FLAGS := -f ./helm/umbrella/values.mtls.yaml
+else
+MTLS_FLAGS :=
+endif
+
 # KAC-127: build + kind-load kacho-ui:dev.
 # kacho-ui — standalone Vite+nginx multi-stage build (контекст — сам kacho-ui/,
 # без COPY sibling-репо). В отличие от Go-сервисов, чьи `:dev`-образы собираются
@@ -55,6 +66,7 @@ dev-up: preflight
 	echo "=== helm install (KAC-127: single-stage — Zitadel pre-install hooks удалены) ==="; \
 	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho --create-namespace \
 	  -f ./helm/umbrella/values.dev.yaml \
+	  $(MTLS_FLAGS) \
 	  --wait --timeout 10m; \
 	echo "Waiting for ingress-nginx admission webhook..."; \
 	kubectl -n kacho wait --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=60s; \
@@ -77,6 +89,24 @@ dev-down:
 
 helm-lint:
 	cd helm/umbrella && helm dep update >/dev/null && helm lint -f values.dev.yaml
+
+# SEC-F — offline helm manifest-assertion suite (tests/helm/). Renders the
+# cert-manager-config + kacho-iam subcharts standalone (no kind cluster, no
+# sibling-chart checkout) and asserts the internal-CA PKI chain, per-service
+# Certificate pairs (SANs), the openfga NetworkPolicy and the mTLS values
+# profile + spire-registration alignment. NEW manifest-test infra.
+helm-manifest-test:
+	@for t in tests/helm/*-test.sh; do \
+		echo "=== $$t ==="; \
+		bash "$$t" || exit 1; \
+	done
+	@echo "helm-manifest-test: all green"
+
+# Lint the SEC-F internal-CA + openfga-NetworkPolicy subcharts standalone
+# (they render without sibling-chart checkouts), in addition to umbrella lint.
+helm-lint-internal-ca:
+	helm lint ./helm/umbrella/charts/cert-manager-config
+	helm lint ./helm/umbrella/charts/kacho-iam
 
 reload-svc:
 ifndef SVC

@@ -299,6 +299,18 @@ audit:
     # HSM endpoint CIDRs (whitelisted egress from signer + verifier pods).
     # PROD: AWS CloudHSM ENI CIDR; GCP/Azure — VPN/PrivateLink endpoints.
     hsmEndpoints: []
+    # SEC-F-12 — OpenFGA ingress allowlist: only kacho-iam may dial OpenFGA.
+    # Safe to enable ONLY after SEC-D (vpc/compute/nlb stopped dialing FGA
+    # directly and go through InternalIAMService.RegisterResource) — else it
+    # creates a failure window. Disabled by default; flipped by the
+    # values.mtls.yaml overlay / prod profile once SEC-D is green.
+    openfgaIngressFromIamOnly:
+      enabled: false
+      # OpenFGA pod label (matches the upstream openfga helm chart's
+      # app.kubernetes.io/name) and the FGA gRPC + HTTP ports.
+      openfgaName: openfga
+      grpcPort: 8081
+      httpPort: 8080
     # Пример:
     #   - cidr: "10.100.0.0/24"
     #     port: 2223

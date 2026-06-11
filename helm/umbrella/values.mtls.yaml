@@ -1,0 +1,40 @@
+# ─── SEC-F — cluster-internal mTLS overlay ───────────────────────────────────
+# Apply ON TOP of values.dev.yaml to bring the stand up fully on mTLS:
+#
+#   helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho \
+#     -f ./helm/umbrella/values.dev.yaml -f ./helm/umbrella/values.mtls.yaml
+#
+# (Makefile: `make dev-up MTLS=on`.) Flips the global mTLS flag + every per-edge
+# flag on, turns on the internal-CA PKI (server+client leaf certs per service),
+# and the OpenFGA "ingress-from-iam-only" NetworkPolicy.
+#
+# Pre-reqs (acceptance §«Зависимости-гейты»): SEC-C/D/E in main; cert-manager
+# controller installed; NetworkPolicy openfga only after SEC-D is green.
+# Base profile (values.dev.yaml) keeps mTLS off → zero regression by default.
+
+# Global mTLS opt-in + per-edge flags (all edges on for the full-stack profile).
+mtls:
+  enabled: true
+  edges:
+    gateway_to_vpc: true
+    gateway_to_compute: true
+    gateway_to_iam: true
+    gateway_to_nlb: true
+    vpc_to_iam: true
+    compute_to_iam: true
+    nlb_to_iam: true
+
+# Internal-CA PKI: enable the cert-manager-config subchart + its internal CA.
+cert-manager-config:
+  enabled: true
+  certManager:
+    internalCA:
+      enabled: true
+
+# OpenFGA ingress allowlist (only kacho-iam may dial FGA). Gated on SEC-D being
+# green — vpc/compute/nlb no longer dial FGA directly.
+kacho-iam:
+  audit:
+    networkPolicy:
+      openfgaIngressFromIamOnly:
+        enabled: true

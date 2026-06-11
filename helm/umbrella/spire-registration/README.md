@@ -10,7 +10,8 @@ entries are applied via post-install Job in `spire-server` Helm chart; in Phase
 - `kacho-iam.yaml` — kacho-iam service SPIFFE-ID + selectors
 - `kacho-vpc.yaml` — kacho-vpc service
 - `kacho-compute.yaml` — kacho-compute service
-- `kacho-loadbalancer.yaml` — kacho-loadbalancer service
+- `kacho-nlb.yaml` — kacho-nlb service (SEC-F §4.1.6: renamed from
+  `kacho-loadbalancer.yaml` to the canonical name)
 - `kacho-api-gateway.yaml` — kacho-api-gateway service
 - `kacho-ui-admin.yaml` — UI admin pod
 - `kacho-vpc-implement.yaml` — data-plane controller
@@ -26,11 +27,14 @@ kind: SpiffeRegistration
 metadata:
   name: kacho-<svc>
 spec:
-  spiffeId: spiffe://{{ trustDomain }}/ns/kacho-system/sa/kacho-<svc>
+  # SEC-F §«коллизия»: ns aligned to the single-source spiffe.namespace (kacho)
+  # so SPIRE-issued and cert-manager-issued SPIFFE-ids agree (no identity
+  # migration when SPIRE is later enabled).
+  spiffeId: spiffe://{{ trustDomain }}/ns/kacho/sa/kacho-<svc>
   parentId: spiffe://{{ trustDomain }}/ns/spire-system/sa/spire-agent
   selectors:
     - type: k8s
-      value: ns:kacho-system
+      value: ns:kacho
     - type: k8s
       value: sa:kacho-<svc>
     - type: cosign
