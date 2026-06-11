@@ -93,4 +93,46 @@ case "$reg_ids" in
 esac
 ok
 
+# ── КРИТ#1: server-cert serverHosts = REAL Service dial-hosts (not cert key) ──
+# The dialed Service differs from the cert key for vpc/compute, and iam/nlb
+# answer on a public + a cluster-internal Service. Assert the single-source
+# serverHosts in values.yaml covers every real dial-host (∈ api-gateway
+# backends.* + each svc peers.*). Renders are exercised by
+# cert-manager-internal-ca-test.sh; here we lock the values contract.
+ica='.["cert-manager-config"].certManager.internalCA.services'
+host_has() { # host_has <svc-key> <host>
+  yq "${ica}.[\"$1\"].serverHosts[]" "$U/values.yaml" | grep -qx "$2"; }
+host_has kacho-vpc vpc          || fail "КРИТ#1: kacho-vpc serverHosts must include real dial-host 'vpc'"
+host_has kacho-compute compute  || fail "КРИТ#1: kacho-compute serverHosts must include real dial-host 'compute'"
+host_has kacho-iam kacho-iam            || fail "КРИТ#1: kacho-iam serverHosts must include 'kacho-iam'"
+host_has kacho-iam kacho-iam-internal   || fail "КРИТ#1: kacho-iam serverHosts must include 'kacho-iam-internal' (every *→iam edge dials it)"
+host_has kacho-nlb kacho-nlb            || fail "КРИТ#1: kacho-nlb serverHosts must include 'kacho-nlb'"
+host_has kacho-nlb kacho-nlb-internal   || fail "КРИТ#1: kacho-nlb serverHosts must include 'kacho-nlb-internal'"
+# vpc/compute keys must NOT carry the cert-key host (would be the pre-fix bug).
+if yq "${ica}.[\"kacho-vpc\"].serverHosts[]" "$U/values.yaml" | grep -qx "kacho-vpc"; then
+  fail "КРИТ#1: kacho-vpc serverHosts must NOT contain the cert key 'kacho-vpc' (Service is 'vpc')"; fi
+ok
+
+# ── КРИТ#3: values.mtls.yaml maps the umbrella intent into each subchart ──────
+# Each subchart consumes its own mtls.* block; the overlay is the single place
+# that materialises umbrella mtls.edges.* → subchart flags (КРИТ#2 renders them).
+[ "$(yq '.["api-gateway"].mtls.enable' "$OVL")" = "true" ]        || fail "КРИТ#3: values.mtls.yaml must set api-gateway.mtls.enable"
+[ "$(yq '.["api-gateway"].mtls.edges.iam' "$OVL")" = "true" ]     || fail "КРИТ#3: values.mtls.yaml must set api-gateway.mtls.edges.iam"
+[ "$(yq '.["api-gateway"].mtls.edges.vpc' "$OVL")" = "true" ]     || fail "КРИТ#3: values.mtls.yaml must set api-gateway.mtls.edges.vpc"
+[ "$(yq '.vpc.mtls.enable' "$OVL")" = "true" ]                    || fail "КРИТ#3: values.mtls.yaml must set vpc.mtls.enable (server)"
+[ "$(yq '.vpc.mtls.edges.iamRegister' "$OVL")" = "true" ]         || fail "КРИТ#3: values.mtls.yaml must set vpc.mtls.edges.iamRegister (vpc_to_iam)"
+[ "$(yq '.compute.mtls.enable' "$OVL")" = "true" ]               || fail "КРИТ#3: values.mtls.yaml must set compute.mtls.enable"
+[ "$(yq '.compute.mtls.edges.iamRegister' "$OVL")" = "true" ]    || fail "КРИТ#3: values.mtls.yaml must set compute.mtls.edges.iamRegister"
+[ "$(yq '.["kacho-nlb"].mtls.enable' "$OVL")" = "true" ]          || fail "КРИТ#3: values.mtls.yaml must set kacho-nlb.mtls.enable"
+[ "$(yq '.["kacho-nlb"].mtls.edges.iamRegister' "$OVL")" = "true" ] || fail "КРИТ#3: values.mtls.yaml must set kacho-nlb.mtls.edges.iamRegister (nlb_to_iam)"
+ok
+# Base values.yaml keeps each subchart mtls OFF / absent (zero dev regression).
+for sub in vpc compute api-gateway kacho-nlb; do
+  base="$(yq ".[\"$sub\"].mtls.enable // \"absent\"" "$U/values.yaml")"
+  [ "$base" = "false" ] || [ "$base" = "absent" ] || fail "SEC-F-05: values.yaml $sub.mtls.enable must default off (got $base)"
+done
+dev_off="$(yq '.vpc.mtls.enable // "absent"' "$U/values.dev.yaml")"
+[ "$dev_off" = "false" ] || [ "$dev_off" = "absent" ] || fail "SEC-F-05: values.dev.yaml must not enable vpc.mtls (got $dev_off)"
+ok
+
 echo "PASS: $SCRIPT ($N assertions)"

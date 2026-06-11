@@ -680,15 +680,31 @@ cert-manager-config:
     # vpc-operator → SEC-G) — each gets a server + client leaf cert.
     internalCA:
       enabled: false
+      # SEC-F КРИТ#1 — `serverHosts` lists the ACTUAL Service DNS hosts a peer
+      # dials to reach each server (single source of the server-cert DNS-SAN).
+      # The map KEY names the cert/secret/client-SA; the dialed Service may
+      # differ (kacho-vpc's Service is `vpc`) and a service may answer on both a
+      # public and a cluster-internal Service (`kacho-iam` + `kacho-iam-internal`).
+      # Kept in sync with api-gateway `backends.*` + each service's `peers.*`.
       services:
-        # api-gateway pod SA is kacho-api-gateway (server DNS = service name
-        # api-gateway; client identity = SA) — matches spire-registration.
+        # api-gateway pod SA is kacho-api-gateway; Service DNS = api-gateway.
         api-gateway:
           saName: "kacho-api-gateway"
-        kacho-iam: {}
-        kacho-vpc: {}
-        kacho-compute: {}
-        kacho-nlb: {}
+          serverHosts: ["api-gateway"]
+        # iam answers on public `kacho-iam` (9090) + internal `kacho-iam-internal`
+        # (9091). Every *→iam edge dials the internal Service.
+        kacho-iam:
+          serverHosts: ["kacho-iam", "kacho-iam-internal"]
+        # kacho-vpc deployment's Service is literally `vpc` (9090 + 9091).
+        kacho-vpc:
+          serverHosts: ["vpc"]
+        # kacho-compute deployment's Service is literally `compute`.
+        kacho-compute:
+          serverHosts: ["compute"]
+        # nlb answers on public `kacho-nlb` (9090) + internal `kacho-nlb-internal`
+        # (9091).
+        kacho-nlb:
+          serverHosts: ["kacho-nlb", "kacho-nlb-internal"]
 
 argo-cd:
   enabled: false

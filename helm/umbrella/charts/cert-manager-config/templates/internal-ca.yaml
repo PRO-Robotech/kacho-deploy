@@ -68,14 +68,21 @@ spec:
     secretName: {{ $ica.caSecretName | quote }}
 {{- range $svc, $cfg := $ica.services }}
 {{/*
-  $svc      — service/deployment DNS name (server-cert DNS-SAN host).
-  $saName   — the ServiceAccount the pod runs as (client-cert URI-SAN identity);
-              MUST equal the spire-registration spiffeId sa-part. Defaults to
-              `kacho-<svc>` unless the service name already starts with `kacho-`
-              (then the svc name is also the SA), overridable via `saName`.
+  $svc        — cert/secret/SA name key (NOT necessarily the dialed Service DNS).
+  $saName     — the ServiceAccount the pod runs as (client-cert URI-SAN identity);
+                MUST equal the spire-registration spiffeId sa-part. Defaults to
+                `kacho-<svc>` unless the key already starts with `kacho-` (then the
+                key is also the SA), overridable via `saName`.
+  $serverHosts — SEC-F КРИТ#1: the bare Service hostnames a peer DIALS to reach
+                this server (may differ from $svc, and may be several: a service
+                with a public + a cluster-internal Service answers on both). The
+                server-cert SAN MUST cover every dial-host of every edge that
+                terminates here, else the client's ServerName verify fails the
+                handshake. Empty/absent → fall back to [$svc] (back-compat).
 */}}
 {{- $saName := default (ternary $svc (printf "kacho-%s" $svc) (hasPrefix "kacho-" $svc)) $cfg.saName }}
 {{- $spiffeId := default (printf "spiffe://%s/ns/%s/sa/%s" $trust $podNs $saName) $cfg.spiffeId }}
+{{- $serverHosts := $cfg.serverHosts | default (list $svc) }}
 ---
 # ─── leaf: {{ $svc }} server cert (SAN = service DNS) ─────────────────────────
 apiVersion: cert-manager.io/v1
@@ -100,9 +107,11 @@ spec:
     kind: ClusterIssuer
     group: cert-manager.io
   dnsNames:
-    - {{ printf "%s.%s.svc.cluster.local" $svc $podNs | quote }}
-    - {{ printf "%s.%s.svc" $svc $podNs | quote }}
-    - {{ printf "%s.%s" $svc $podNs | quote }}
+    {{- range $host := $serverHosts }}
+    - {{ printf "%s.%s.svc.cluster.local" $host $podNs | quote }}
+    - {{ printf "%s.%s.svc" $host $podNs | quote }}
+    - {{ printf "%s.%s" $host $podNs | quote }}
+    {{- end }}
   usages:
     - server auth
     - client auth                          # backstop for the listen side

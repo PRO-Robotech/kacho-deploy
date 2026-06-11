@@ -13,6 +13,10 @@
 # Base profile (values.dev.yaml) keeps mTLS off → zero regression by default.
 
 # Global mTLS opt-in + per-edge flags (all edges on for the full-stack profile).
+# These are the umbrella-level INTENT flags. КРИТ#3: they are mapped below into
+# each sibling subchart's own `mtls.*` block so the service templates actually
+# render the cert mount + per-edge env (КРИТ#2). Flipping a flag here changes the
+# rendered pod-spec of the affected subchart(s).
 mtls:
   enabled: true
   edges:
@@ -30,6 +34,50 @@ cert-manager-config:
   certManager:
     internalCA:
       enabled: true
+
+# ─── КРИТ#3 — propagate the umbrella mtls intent into each sibling subchart ────
+# Each service consumes its OWN `mtls.*` block (КРИТ#2). A service's SERVER is
+# enabled whenever ANY edge terminates at it; in this full-stack profile every
+# edge is on, so every server is on. Per-edge CLIENT flags map 1:1 from the
+# umbrella `mtls.edges.*` intent above. (Helm cannot self-reference values, so
+# this overlay is the single place that materialises the mapping; `helm template`
+# / the assertion harness verify flag→pod-spec.)
+
+# api-gateway — backend-dial client only (terminates external TLS separately).
+api-gateway:
+  mtls:
+    enable: true            # gateway_to_* ⇒ the gateway dials ≥1 edge over mTLS
+    edges:
+      vpc: true             # ← mtls.edges.gateway_to_vpc
+      compute: true         # ← mtls.edges.gateway_to_compute
+      iam: true             # ← mtls.edges.gateway_to_iam
+      nlb: true             # ← mtls.edges.gateway_to_nlb
+
+# kacho-vpc — server (gateway_to_vpc, compute_to_vpc, nlb_to_vpc terminate here)
+# + client (vpc_to_iam; vpc→compute filled by SEC-D).
+vpc:
+  mtls:
+    enable: true
+    edges:
+      iamRegister: true     # ← mtls.edges.vpc_to_iam
+
+# kacho-compute — server (gateway_to_compute, vpc_to_compute, nlb_to_compute) +
+# client (compute_to_iam; compute→vpc filled by SEC-D).
+compute:
+  mtls:
+    enable: true
+    edges:
+      iamRegister: true     # ← mtls.edges.compute_to_iam
+
+# kacho-nlb — server (gateway_to_nlb terminates here) + clients (nlb_to_iam;
+# nlb→vpc / nlb→compute follow when those edges are exercised).
+kacho-nlb:
+  mtls:
+    enable: true
+    edges:
+      iamRegister: true     # ← mtls.edges.nlb_to_iam
+      vpc: true             # nlb→vpc (Address/Subnet/NIC)
+      compute: true         # nlb→compute (Region/Instance)
 
 # OpenFGA ingress allowlist (only kacho-iam may dial FGA). Gated on SEC-D being
 # green — vpc/compute/nlb no longer dial FGA directly.

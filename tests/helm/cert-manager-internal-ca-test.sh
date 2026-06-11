@@ -100,10 +100,34 @@ for svc in api-gateway kacho-iam kacho-vpc kacho-compute kacho-nlb; do
   has_line "client auth" "$cli_usages" || fail "SEC-F-02: ${svc}-client missing 'client auth' usage"
   if has_line "server auth" "$cli_usages"; then fail "SEC-F-02: ${svc}-client must not carry 'server auth'"; fi
 
-  # SEC-F-03: server-cert SAN = DNS name; NO spiffe URI-SAN on server.
+  # SEC-F-03 / КРИТ#1 (assertion (a)): server-cert SAN ⊇ the ACTUAL dial-host of
+  # every edge terminating at this server. The cert KEY (kacho-vpc) is NOT the
+  # dial-host (the kacho-vpc deployment's Service is `vpc`; iam/nlb answer on a
+  # public AND a cluster-internal Service). The client verifies its dial-host
+  # ServerName against this SAN, so a key-derived SAN (the pre-КРИТ#1 bug) fails
+  # the handshake for vpc/compute and misses the *-internal hosts for iam/nlb.
+  # Expected dial-hosts (source: api-gateway backends.* + each svc peers.*):
+  case "$svc" in
+    kacho-vpc)     want_hosts="vpc" ;;
+    kacho-compute) want_hosts="compute" ;;
+    kacho-iam)     want_hosts="kacho-iam kacho-iam-internal" ;;
+    kacho-nlb)     want_hosts="kacho-nlb kacho-nlb-internal" ;;
+    api-gateway)   want_hosts="api-gateway" ;;
+    *)             want_hosts="$svc" ;;
+  esac
   srv_dns="$(echo "$srv" | yq '.spec.dnsNames[]')"
-  has_line "${svc}.kacho.svc.cluster.local" "$srv_dns" \
-    || fail "SEC-F-03: ${svc}-server missing DNS-SAN ${svc}.kacho.svc.cluster.local"
+  for h in $want_hosts; do
+    has_line "${h}.kacho.svc.cluster.local" "$srv_dns" \
+      || fail "КРИТ#1: ${svc}-server SAN missing real dial-host ${h}.kacho.svc.cluster.local (got: $(echo "$srv_dns" | tr '\n' ',') )"
+  done
+  # The cert KEY must NOT leak into the SAN unless it is also a real dial-host
+  # (guards against regressing to the key-derived SAN for vpc/compute).
+  case "$svc" in
+    kacho-vpc|kacho-compute)
+      if has_line "${svc}.kacho.svc.cluster.local" "$srv_dns"; then
+        fail "КРИТ#1: ${svc}-server SAN must use the Service dial-host, not the cert key ${svc}.*"
+      fi ;;
+  esac
   [ "$(echo "$srv" | yq '.spec.uris | length')" = "0" ] || fail "SEC-F-03: ${svc}-server must NOT carry URI-SAN"
 
   # SEC-F-04: client-cert URI-SAN = SPIRE-format spiffe id (sa-part = pod's SA,
