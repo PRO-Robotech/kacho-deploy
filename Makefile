@@ -12,8 +12,14 @@ CLUSTER_NAME := kacho
 MTLS ?= off
 ifeq ($(MTLS),on)
 MTLS_FLAGS := -f ./helm/umbrella/values.mtls.yaml
+# MTLS=on also installs the cert-manager controller (BEFORE the umbrella, so the
+# internal-CA PKI can issue certs) and the data-plane add-ons + operator (AFTER).
+CERTMGR_UP   := bash ./scripts/cert-manager-up.sh
+DATAPLANE_UP := bash ./scripts/dataplane-up.sh
 else
 MTLS_FLAGS :=
+CERTMGR_UP   := true
+DATAPLANE_UP := true
 endif
 
 # KAC-127: build + kind-load kacho-ui:dev.
@@ -63,6 +69,7 @@ dev-up: preflight
 	$(MAKE) build-services; \
 	./scripts/gen-tls-cert.sh; \
 	cd helm/umbrella && helm dep update >/dev/null && cd ../..; \
+	$(CERTMGR_UP); \
 	echo "=== helm install (KAC-127: single-stage — Zitadel pre-install hooks удалены) ==="; \
 	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho --create-namespace \
 	  -f ./helm/umbrella/values.dev.yaml \
@@ -74,6 +81,7 @@ dev-up: preflight
 	echo "    NB: must run before any user signs up — else account/project FGA tuples"; \
 	echo "    are written best-effort against a missing store and lost (→ 503 on List)."; \
 	$(MAKE) fga-bootstrap; \
+	$(DATAPLANE_UP); \
 	kubectl -n kacho rollout status deploy/kacho-iam --timeout=180s || true; \
 	kubectl -n kacho rollout status deploy/api-gateway --timeout=180s || true; \
 	end=$$(date +%s); \
@@ -212,7 +220,7 @@ logs-iam:
 fga-bootstrap:
 	@echo "Запускаем openfga-bootstrap Job (idempotent):"
 	@kubectl -n kacho delete job openfga-bootstrap --ignore-not-found
-	@helm template kacho-umbrella ./helm/umbrella -f ./helm/umbrella/values.dev.yaml --show-only templates/openfga-bootstrap-job.yaml | kubectl -n kacho apply -f -
+	@helm template kacho-umbrella ./helm/umbrella -n kacho -f ./helm/umbrella/values.dev.yaml --show-only templates/openfga-bootstrap-job.yaml | kubectl -n kacho apply -f -
 	@echo "Ждём завершения…"
 	@kubectl -n kacho wait --for=condition=complete job/openfga-bootstrap --timeout=300s || \
 	 kubectl -n kacho wait --for=condition=failed job/openfga-bootstrap --timeout=10s
