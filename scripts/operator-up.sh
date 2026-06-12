@@ -45,7 +45,15 @@ kubectl --context "${CTX}" create namespace kacho-vpc-operator \
 echo "--- webhook cert ---"
 CTX="${CTX}" bash "${OP_DIR}/scripts/deploy-webhook.sh"
 
-# ── deploy: KachoSubnet CRD + RBAC + both operator binaries + mTLS overlay ───
+# ── RBAC bundle (Namespace + SA + ClusterRole + ClusterRoleBinding) ──────────
+# Applied via `-f` (NOT kustomize): kustomize's load-restrictor refuses a raw
+# file above the config/dev root, and config/rbac as a whole drags in a
+# controller-manager SA in the non-existent `system` namespace. `kubectl -f`
+# has no such restriction. Idempotent.
+echo "--- RBAC bundle ---"
+kubectl --context "${CTX}" apply -f "${OP_DIR}/config/rbac/role.yaml"
+
+# ── deploy: KachoSubnet CRD + both operator binaries + mTLS overlay ──────────
 echo "--- kubectl apply -k config/dev ---"
 kubectl --context "${CTX}" apply -k "${OP_DIR}/config/dev"
 
