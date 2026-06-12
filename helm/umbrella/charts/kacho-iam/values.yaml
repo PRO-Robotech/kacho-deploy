@@ -156,6 +156,29 @@ resources:
 
 env: {}
 
+# ─── SEC-H mTLS — server-side, per-edge opt-in (cert-manager internal-CA) ──
+# IAM is a leaf-owner: it terminates inbound service→service mTLS but holds no
+# outgoing peer-dial edges in scope (subject_change drainer is a separate edge,
+# out of SEC-H), so SEC-H wires the SERVER only — both listeners (public :9090 +
+# internal :9091). Strict mirror of the vpc subchart server block (SEC-D).
+#
+# enable=false (default) → NO cert-secret mounted and NO KACHO_IAM_*_SERVER_MTLS_*
+# env emitted → current insecure dev behaviour (zero regression). The umbrella
+# values.mtls.yaml overlay flips kacho-iam.mtls.enable=true for the full-stack
+# profile (КРИТ#3 mapping). When enable=true:
+#   - mounts cert-manager secret kacho-iam-server-tls (tls.crt/tls.key/ca.crt) in
+#     volume mtls-server at <mountPath>/server;
+#   - emits, via corelib LoadPrefixed("KACHO_IAM"):
+#       KACHO_IAM_PUBLIC_SERVER_MTLS_*   (public :9090 listener)
+#       KACHO_IAM_INTERNAL_SERVER_MTLS_* (internal :9091 listener)
+#     each = {ENABLE, CERTFILE, KEYFILE, CLIENTCAFILES} → RequireAndVerifyClientCert
+#     against the internal-CA bundle (ca.crt in the server secret).
+mtls:
+  enable: false
+  # cert-manager secret name (SEC-F naming: kacho-<svc>-server-tls).
+  serverSecretName: kacho-iam-server-tls
+  mountPath: /etc/kacho-iam/tls   # <mountPath>/server/{tls.crt,tls.key,ca.crt}
+
 # ─── KAC-127 Phase 3 — OPA sidecar + OpenFGA model id ────────────────────
 # Fallback defaults if umbrella does not override. Umbrella's `opaSidecar.*`
 # section (in values.yaml at top-level) propagates here via subchart import
@@ -311,6 +334,12 @@ audit:
       openfgaName: openfga
       grpcPort: 8081
       httpPort: 8080
+      # The OpenFGA store+model bootstrap (helm post-install Job) seeds FGA over
+      # HTTP and MUST be let through, else the iam-only allowlist blocks it and
+      # `helm --wait` hangs on the hook. It is provisioning infra (not a runtime
+      # FGA dialer), allowed by its OWN component label on the HTTP port only —
+      # least-privilege. Empty string disables the bootstrap allowance.
+      bootstrapComponent: openfga-bootstrap
     # Пример:
     #   - cidr: "10.100.0.0/24"
     #     port: 2223

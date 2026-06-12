@@ -45,6 +45,19 @@ done
 [ "$(yq '.["cert-manager-config"].enabled' "$OVL")" = "true" ] \
   || fail "SEC-F-06: values.mtls.yaml must enable cert-manager-config subchart"
 ok
+# SEC-F-NS: the dev/kind mTLS overlay must DISABLE the public ACME PKI — the
+# kacho-wildcard-tls Certificate targets the prod-only `kacho-system` ns (absent
+# on a kind stand → `namespaces "kacho-system" not found` aborts the upgrade) and
+# the letsencrypt issuers need a real domain + Cloudflare DNS-01. Only the
+# cluster-internal CA stays on. (Prod keeps public PKI via values.prod.yaml.)
+[ "$(yq '.["cert-manager-config"].certManager.certificates | length' "$OVL")" = "0" ] \
+  || fail "SEC-F-NS: values.mtls.yaml must set cert-manager-config.certManager.certificates=[] (no public wildcard in kacho-system)"
+ok
+[ "$(yq '.["cert-manager-config"].certManager.issuers.prod.enabled' "$OVL")" = "false" ] \
+  || fail "SEC-F-NS: values.mtls.yaml must disable letsencrypt-prod issuer in dev"
+[ "$(yq '.["cert-manager-config"].certManager.issuers.staging.enabled' "$OVL")" = "false" ] \
+  || fail "SEC-F-NS: values.mtls.yaml must disable letsencrypt-staging issuer in dev"
+ok
 
 # ── SEC-F-09/04: spiffe.namespace single-source; svc→spiffeId table ──────────
 NS="$(yq '.spiffe.namespace' "$U/values.yaml")"
@@ -121,13 +134,20 @@ ok
 [ "$(yq '.["api-gateway"].mtls.edges.vpc' "$OVL")" = "true" ]     || fail "КРИТ#3: values.mtls.yaml must set api-gateway.mtls.edges.vpc"
 [ "$(yq '.vpc.mtls.enable' "$OVL")" = "true" ]                    || fail "КРИТ#3: values.mtls.yaml must set vpc.mtls.enable (server)"
 [ "$(yq '.vpc.mtls.edges.iamRegister' "$OVL")" = "true" ]         || fail "КРИТ#3: values.mtls.yaml must set vpc.mtls.edges.iamRegister (vpc_to_iam)"
+# SEC-I: vpc read/authz iam edges must flip ON with vpc_to_iam (completeness — else
+# the un-flipped edge's handshake fails under SEC-H RequireAndVerifyClientCert).
+[ "$(yq '.vpc.mtls.edges.iamProject' "$OVL")" = "true" ]         || fail "SEC-I/КРИТ#3: values.mtls.yaml must set vpc.mtls.edges.iamProject (ProjectService.Get :9090)"
+[ "$(yq '.vpc.mtls.edges.iamAuthz' "$OVL")" = "true" ]           || fail "SEC-I/КРИТ#3: values.mtls.yaml must set vpc.mtls.edges.iamAuthz (Check+list-filter :9091)"
 [ "$(yq '.compute.mtls.enable' "$OVL")" = "true" ]               || fail "КРИТ#3: values.mtls.yaml must set compute.mtls.enable"
 [ "$(yq '.compute.mtls.edges.iamRegister' "$OVL")" = "true" ]    || fail "КРИТ#3: values.mtls.yaml must set compute.mtls.edges.iamRegister"
 [ "$(yq '.["kacho-nlb"].mtls.enable' "$OVL")" = "true" ]          || fail "КРИТ#3: values.mtls.yaml must set kacho-nlb.mtls.enable"
 [ "$(yq '.["kacho-nlb"].mtls.edges.iamRegister' "$OVL")" = "true" ] || fail "КРИТ#3: values.mtls.yaml must set kacho-nlb.mtls.edges.iamRegister (nlb_to_iam)"
+# SEC-H: kacho-iam server-side mTLS — the iam server terminates *_to_iam edges
+# (gateway/vpc/compute/nlb all dial it), so the full-stack profile turns it on.
+[ "$(yq '.["kacho-iam"].mtls.enable' "$OVL")" = "true" ]          || fail "SEC-H/КРИТ#3: values.mtls.yaml must set kacho-iam.mtls.enable (server, *_to_iam terminate here)"
 ok
 # Base values.yaml keeps each subchart mtls OFF / absent (zero dev regression).
-for sub in vpc compute api-gateway kacho-nlb; do
+for sub in vpc compute api-gateway kacho-nlb kacho-iam; do
   base="$(yq ".[\"$sub\"].mtls.enable // \"absent\"" "$U/values.yaml")"
   [ "$base" = "false" ] || [ "$base" = "absent" ] || fail "SEC-F-05: values.yaml $sub.mtls.enable must default off (got $base)"
 done

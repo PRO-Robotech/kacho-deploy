@@ -1,7 +1,14 @@
 {{- if .Values.certManager.internalCA.enabled }}
 {{- $ica := .Values.certManager.internalCA }}
-{{- $ns := .Values.certManager.certificates | first | dig "namespace" "kacho-system" }}
 {{- $podNs := .Values.spiffe.namespace }}
+{{/*
+$caNs — namespace of the CA-root Certificate (and thus the secret a CA-type
+ClusterIssuer consumes). cert-manager reads a ClusterIssuer's `ca.secretName`
+from its cluster-resource-namespace (`--cluster-resource-namespace`, default
+`cert-manager`), so the CA-root MUST land there — NOT in the wildcard cert's
+`kacho-system` (which need not exist on a stand and broke `dev-up MTLS=on`).
+*/}}
+{{- $caNs := $ica.caNamespace | default "cert-manager" }}
 {{- $trust := .Values.spiffe.trustDomain }}
 {{/*
 SEC-F — internal CA PKI for cluster-internal mTLS (separate from public ACME).
@@ -33,7 +40,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ $ica.caSecretName | quote }}
-  namespace: {{ $ns | quote }}
+  namespace: {{ $caNs | quote }}
   labels:
     kacho.cloud/component: cert-manager-internal-ca
     app.kubernetes.io/managed-by: helm
@@ -89,7 +96,7 @@ SEC-G — per-service overrides (default to the global values for back-compat):
                  identity matches the SPIRE entry + IAM cert→SA mapping (§4.1.4).
   $clientOnly  — emit only the client-cert leaf (no inbound server-cert).
 */}}
-{{- $svcNs := default $ns $cfg.namespace }}
+{{- $svcNs := default $podNs $cfg.namespace }}
 {{- $spiffeNs := default $podNs $cfg.spiffeNamespace }}
 {{- $spiffeId := default (printf "spiffe://%s/ns/%s/sa/%s" $trust $spiffeNs $saName) $cfg.spiffeId }}
 {{- $serverHosts := $cfg.serverHosts | default (list $svc) }}

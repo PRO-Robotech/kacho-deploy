@@ -15,6 +15,7 @@ isolation**, then assert structure with `yq`/`grep`.
 | `cert-manager-internal-ca-test.sh` | SEC-F-01/02/03/04/14 | internal-CA issuer chain (selfSigned `kacho-selfsigned` root → CA-root `Certificate` → `kacho-internal-ca` CA-issuer), per-svc `Certificate` ×2 in separate secrets, server-cert DNS-SAN, client-cert SPIRE URI-SAN, exactly-one selfSigned issuer, external `letsencrypt-*` unchanged, `internalCA.enabled=false` → none rendered |
 | `openfga-networkpolicy-test.sh` | SEC-F-12/14 | openfga ingress-from-iam-only `NetworkPolicy` with `app.kubernetes.io/name` selectors; absent when flag off |
 | `mtls-values-profile-test.sh` | SEC-F-05/06/07/14 | `mtls.enabled`/`mtls.edges.*` shape, `values.mtls.yaml` overlay flips on, `spiffe.namespace` single-source, NLB spire-registration aligned `kacho-nlb` |
+| `hydra-jwks-url-test.sh` | KAC-127 Phase 2 | api-gateway resolves a REACHABLE cluster-internal Hydra JWKS URL: sibling chart renders `KACHO_HYDRA_JWKS_URL` from `hydra.jwksUrl` (unset → no env, zero regression); umbrella `values.dev.yaml` + `values.prod.yaml` point the gateway pod at `kacho-umbrella-hydra-public:4444/.well-known/jwks.json` (never localhost / public ingress) |
 
 ## Running
 

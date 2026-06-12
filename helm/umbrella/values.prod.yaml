@@ -377,6 +377,16 @@ api-gateway:
   # overlay until now.)
   authn:
     mode: production-strict
+  # KAC-127 Phase 2 — Hydra JWKS for RS256 access-token verification.
+  # production-strict makes the verifier mandatory; it fetches Hydra's JWKS.
+  # The expected `iss` is the public issuer (`https://hydra.api.kacho.cloud`,
+  # matches hydra.hydra.config.urls.self.issuer), but the gateway pod fetches
+  # the keyset from the cluster-internal Hydra PUBLIC Service — never the
+  # external ingress (avoids egress→ingress hairpin + keeps JWKS load on the
+  # in-cluster path). Same `kacho-umbrella-hydra-public:4444` Service as dev.
+  hydra:
+    jwksUrl: "http://kacho-umbrella-hydra-public.kacho.svc.cluster.local:4444/.well-known/jwks.json"
+    issuer: "https://hydra.api.kacho.cloud"
   # KAC-139 (W1.3): startup-validation in cmd/api-gateway/main.go refuses to
   # boot in production when authz.enabled=false OR failOpen=true. The signal
   # is KACHO_APP_ENV; emitted here via the chart's extraEnv escape-hatch

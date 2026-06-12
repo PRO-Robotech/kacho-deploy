@@ -32,4 +32,20 @@ spec:
           protocol: TCP
         - port: {{ $np.httpPort }}
           protocol: TCP
+{{- if $np.bootstrapComponent }}
+    {{/*
+    SEC-F-12 — the OpenFGA store+model bootstrap (helm post-install Job) seeds
+    FGA over HTTP. It is provisioning infra, NOT a runtime FGA dialer, so it is
+    allowed by its OWN component label (the app.kubernetes.io/name allowlist
+    above stays exactly kacho-iam) and ONLY on the HTTP port — least-privilege.
+    Without this the iam-only allowlist blocks the hook and `helm --wait` hangs.
+    */}}
+    - from:
+        - podSelector:
+            matchLabels:
+              kacho.cloud/component: {{ $np.bootstrapComponent | quote }}
+      ports:
+        - port: {{ $np.httpPort }}
+          protocol: TCP
+{{- end }}
 {{- end }}

@@ -1,0 +1,33 @@
+{{- if .Values.certManager.internalCA.enabled }}
+{{- $ica := .Values.certManager.internalCA }}
+{{- $podNs := .Values.spiffe.namespace }}
+{{- $caNs := $ica.caNamespace | default "cert-manager" }}
+{{/*
+SEC-G/NS — a client-only sibling (vpc-operator) consumes its leaf cert in its
+OWN namespace, which is NOT a release/subchart namespace and may not exist when
+cert-manager tries to create the Certificate there (→ `namespaces
+"kacho-vpc-operator" not found`, which broke `make dev-up MTLS=on`). Pre-create
+every per-service OVERRIDE namespace so the leaf cert can be placed.
+
+The release pod namespace ($podNs, e.g. `kacho`) and the CA cluster-resource
+namespace ($caNs, e.g. `cert-manager`) are created elsewhere (kubectl / the
+cert-manager install) and are deliberately skipped — emitting them here would
+make helm clash with an externally-owned namespace. Each distinct override ns is
+emitted once.
+*/}}
+{{- $emitted := dict }}
+{{- range $svc, $cfg := $ica.services }}
+{{- $svcNs := default $podNs $cfg.namespace }}
+{{- if and (ne $svcNs $podNs) (ne $svcNs $caNs) (not (hasKey $emitted $svcNs)) }}
+{{- $_ := set $emitted $svcNs true }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $svcNs | quote }}
+  labels:
+    kacho.cloud/component: cert-manager-internal-ca
+    app.kubernetes.io/managed-by: helm
+{{- end }}
+{{- end }}
+{{- end }}

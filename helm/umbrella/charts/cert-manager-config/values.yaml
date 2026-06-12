@@ -46,6 +46,13 @@ certManager:
     clusterIssuerName: "kacho-internal-ca"
     # Secret holding the self-signed CA root cert+key (consumed by the CA issuer).
     caSecretName: "kacho-internal-ca-root"
+    # Namespace of the CA-root Certificate/secret. A CA-type ClusterIssuer reads
+    # its `ca.secretName` from cert-manager's cluster-resource-namespace
+    # (`--cluster-resource-namespace`, default `cert-manager`), so the CA-root
+    # MUST be created there — NOT in the pod namespace or the wildcard's
+    # `kacho-system`. Override only if cert-manager runs with a custom
+    # cluster-resource-namespace.
+    caNamespace: "cert-manager"
     # CA root cert lifetime.
     caDuration: "87600h"                   # 10y root
     caRenewBefore: "720h"                  # 30d

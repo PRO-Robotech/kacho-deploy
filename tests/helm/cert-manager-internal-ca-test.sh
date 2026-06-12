@@ -64,6 +64,17 @@ ca_root="$(doc Certificate kacho-internal-ca-root)"
   || fail "SEC-F-01: CA-root must be issued by kacho-selfsigned"
 ok
 
+# SEC-F-NS (КРИТ install): a CA-type ClusterIssuer reads its ca.secretName from
+# the cert-manager controller's cluster-resource-namespace (default `cert-manager`,
+# `--cluster-resource-namespace=$(POD_NAMESPACE)`). The CA-root Certificate (whose
+# secret the issuer consumes) MUST therefore be created IN that namespace — not in
+# the wildcard cert's `kacho-system` (which doesn't even exist on the dev stand and
+# broke `make dev-up MTLS=on` with `namespaces "kacho-system" not found`).
+ca_root_ns="$(echo "$ca_root" | yq '.metadata.namespace')"
+[ "$ca_root_ns" = "cert-manager" ] \
+  || fail "SEC-F-NS: CA-root Certificate must live in cert-manager (cluster-resource-namespace), got '$ca_root_ns'"
+ok
+
 ca_issuer="$(doc ClusterIssuer kacho-internal-ca)"
 [ -n "$ca_issuer" ] || fail "SEC-F-01: ClusterIssuer/kacho-internal-ca not rendered"
 [ "$(echo "$ca_issuer" | yq '.spec.ca != null')" = "true" ] \
@@ -85,6 +96,15 @@ for svc in api-gateway kacho-iam kacho-vpc kacho-compute kacho-nlb; do
   [ "$ssec" = "${svc}-server-tls" ] || fail "SEC-F-02: ${svc} server secretName=$ssec"
   [ "$csec" = "${svc}-client-tls" ] || fail "SEC-F-02: ${svc} client secretName=$csec"
   [ "$ssec" != "$csec" ] || fail "SEC-F-02: ${svc} server/client share a secret"
+
+  # SEC-F-NS (КРИТ install): a leaf-cert secret is mounted by the consuming pod,
+  # so it MUST live in that pod's namespace = spiffe.namespace (`kacho` here), NOT
+  # the wildcard's `kacho-system`. A secret in the wrong namespace is invisible to
+  # the pod (mount fails / pod never reads the cert).
+  srv_ns="$(echo "$srv" | yq '.metadata.namespace')"
+  cli_ns="$(echo "$cli" | yq '.metadata.namespace')"
+  [ "$srv_ns" = "kacho" ] || fail "SEC-F-NS: ${svc}-server-tls must live in pod ns 'kacho', got '$srv_ns'"
+  [ "$cli_ns" = "kacho" ] || fail "SEC-F-NS: ${svc}-client-tls must live in pod ns 'kacho', got '$cli_ns'"
 
   # Both issued by the internal CA.
   [ "$(echo "$srv" | yq '.spec.issuerRef.name')" = "kacho-internal-ca" ] || fail "SEC-F-02: ${svc}-server issuer != kacho-internal-ca"
@@ -148,6 +168,29 @@ done
 client_ids="$(rendered 'select(.kind=="Certificate" and (.metadata.name | test("-client-tls$"))) | .spec.uris[0]' "$ON" | grep '^spiffe://' | sort -u)"
 distinct="$(printf '%s\n' "$client_ids" | sed '/^$/d' | wc -l | tr -d ' ')"
 [ "$distinct" = "6" ] || fail "SEC-F/G-04: expected 6 distinct client spiffe ids (5 core + vpc-operator), got $distinct"
+ok
+
+# SEC-G/NS: the vpc-operator is client-only and consumes its cert in its OWN
+# namespace → its client-cert Certificate must be created in kacho-vpc-operator,
+# and no server-cert is emitted for it.
+op_cli="$(doc Certificate vpc-operator-client-tls)"
+[ -n "$op_cli" ] || fail "SEC-G: vpc-operator-client-tls Certificate missing"
+op_cli_ns="$(echo "$op_cli" | yq '.metadata.namespace')"
+[ "$op_cli_ns" = "kacho-vpc-operator" ] \
+  || fail "SEC-G/NS: vpc-operator-client-tls must live in kacho-vpc-operator ns, got '$op_cli_ns'"
+[ -z "$(doc Certificate vpc-operator-server-tls)" ] || fail "SEC-G: vpc-operator must be client-only (no server cert)"
+ok
+
+# SEC-G/NS: the override namespace (kacho-vpc-operator) is NOT a release/subchart
+# namespace and need not pre-exist when cert-manager creates the leaf there
+# (→ `namespaces "kacho-vpc-operator" not found` broke `dev-up MTLS=on`). The
+# chart MUST pre-create every per-service override namespace. The release pod-ns
+# (kacho) and CA cluster-resource-namespace (cert-manager) are created elsewhere
+# and must NOT be emitted here (helm would clash on an externally-owned ns).
+op_ns_doc="$(doc Namespace kacho-vpc-operator)"
+[ -n "$op_ns_doc" ] || fail "SEC-G/NS: Namespace/kacho-vpc-operator not rendered (cert would fail to place)"
+[ -z "$(doc Namespace kacho)" ] || fail "SEC-G/NS: must NOT emit the release ns 'kacho' (externally owned)"
+[ -z "$(doc Namespace cert-manager)" ] || fail "SEC-G/NS: must NOT emit 'cert-manager' ns (externally owned)"
 ok
 
 # ── SEC-F-14: external letsencrypt + wildcard untouched, additive ─────────────

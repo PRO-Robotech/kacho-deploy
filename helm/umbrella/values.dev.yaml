@@ -71,6 +71,29 @@ api-gateway:
   authz:
     enabled: true
     failOpen: false
+  # KAC-127 Phase 2 — Hydra JWKS for RS256 access-token verification.
+  #
+  # After register+login the SPA carries a Hydra-issued RS256 access token. The
+  # gateway auth path validates it by fetching Hydra's JWKS. config.go derives
+  # the JWKS endpoint from KACHO_HYDRA_ISSUER unless KACHO_HYDRA_JWKS_URL is set
+  # explicitly; the derived default (`https://hydra.api.kacho.cloud/...`) is NOT
+  # reachable from inside the cluster (Hydra's dev self.issuer is
+  # `http://localhost:28080/.ory/hydra/public/`). So point the gateway at the
+  # in-cluster Hydra PUBLIC Service directly.
+  #
+  # Service: `kacho-umbrella-hydra-public` (release kacho-umbrella), port 4444,
+  # JWKS path `/.well-known/jwks.json` (Ory Hydra chart service-public.yaml).
+  # Without this the gateway fetches the unreachable default → Hydra tokens are
+  # never validated → WhoAmI / Account / Project return code 16 AUTHN_REQUIRED.
+  # SEC-J: the verifier does an EXACT-match `iss` check, so the gateway issuer
+  # MUST equal Hydra's `self.issuer` (hydra.config.urls.self.issuer below =
+  # `http://localhost:28080/.ory/hydra/public/`) — the identity-string Hydra
+  # stamps into the token `iss` claim (browser never navigates there). Without
+  # it, KACHO_HYDRA_ISSUER derives the unreachable external default and every
+  # real login token fails the iss check → AUTHN_REQUIRED persists.
+  hydra:
+    jwksUrl: "http://kacho-umbrella-hydra-public.kacho.svc.cluster.local:4444/.well-known/jwks.json"
+    issuer: "http://localhost:28080/.ory/hydra/public/"
 
 compute:
   image: kacho-compute:dev

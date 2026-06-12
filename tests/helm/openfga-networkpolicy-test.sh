@@ -61,6 +61,18 @@ ports="$(echo "$P" | yq '.spec.ingress[].ports[].port')"
   || fail "SEC-F-12: ingress must constrain a FGA port (8080/8081)"
 ok
 
+# ── SEC-F-12 (bootstrap): the OpenFGA provisioning hook must reach FGA ────────
+# The store+model bootstrap (helm post-install Job, label
+# kacho.cloud/component=openfga-bootstrap) seeds OpenFGA over HTTP. The
+# iam-only allowlist would otherwise BLOCK it (helm --wait hangs on the hook →
+# install never completes). It is provisioning infra, not a runtime FGA dialer,
+# so it is allowed by its OWN component label (NOT app.kubernetes.io/name, which
+# stays exactly [kacho-iam] above) and only on the HTTP port — least-privilege.
+boot_from="$(echo "$P" | yq '[.spec.ingress[].from[].podSelector.matchLabels."kacho.cloud/component"] | map(select(. != null)) | .[]' 2>/dev/null)"
+has_line "openfga-bootstrap" "$boot_from" \
+  || fail "SEC-F-12: ingress must allow the openfga-bootstrap provisioning hook (kacho.cloud/component=openfga-bootstrap)"
+ok
+
 # ── SEC-F-12/14: flag off → policy absent (no failure window before SEC-D) ────
 [ -z "$P_OFF" ] || fail "SEC-F-12: openfga NetworkPolicy rendered while flag off"
 ok

@@ -36,6 +36,13 @@ spec:
         - name: config
           configMap:
             name: {{ include "kacho-iam.fullname" . }}-config
+        {{- if .Values.mtls.enable }}
+        # SEC-H mTLS — cert-manager internal-CA server secret (tls.crt/tls.key/ca.crt).
+        # IAM is a leaf-owner: server-side only (both listeners), no client edge in scope.
+        - name: mtls-server
+          secret:
+            secretName: {{ .Values.mtls.serverSecretName | quote }}
+        {{- end }}
         {{- if .Values.opaSidecar.enabled }}
         # KAC-127 Phase 3 (acceptance §5.6) — OPA sidecar config + JWKS public key.
         # Shared ConfigMaps managed at umbrella level (not per sub-chart).
@@ -115,6 +122,11 @@ spec:
             - name: config
               mountPath: /etc/kacho-iam
               readOnly: true
+            {{- if .Values.mtls.enable }}
+            - name: mtls-server
+              mountPath: {{ printf "%s/server" .Values.mtls.mountPath | quote }}
+              readOnly: true
+            {{- end }}
           env:
             - name: KACHO_IAM_CONFIG_PATH
               value: /etc/kacho-iam/config.yaml
@@ -123,6 +135,29 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.db.passwordSecretName }}
                   key: {{ .Values.db.passwordSecretKey }}
+            {{- if .Values.mtls.enable }}
+            {{- $srv := printf "%s/server" .Values.mtls.mountPath }}
+            # SEC-H mTLS server-creds (both listeners) — corelib grpcsrv.TLSServer
+            # via config.LoadPrefixed("KACHO_IAM"). RequireAndVerifyClientCert
+            # against the internal-CA bundle (ca.crt in the server secret). IAM is
+            # a leaf-owner: server-side only, no outgoing peer-dial edge in scope.
+            - name: KACHO_IAM_PUBLIC_SERVER_MTLS_ENABLE
+              value: "true"
+            - name: KACHO_IAM_PUBLIC_SERVER_MTLS_CERTFILE
+              value: {{ printf "%s/tls.crt" $srv | quote }}
+            - name: KACHO_IAM_PUBLIC_SERVER_MTLS_KEYFILE
+              value: {{ printf "%s/tls.key" $srv | quote }}
+            - name: KACHO_IAM_PUBLIC_SERVER_MTLS_CLIENTCAFILES
+              value: {{ printf "%s/ca.crt" $srv | quote }}
+            - name: KACHO_IAM_INTERNAL_SERVER_MTLS_ENABLE
+              value: "true"
+            - name: KACHO_IAM_INTERNAL_SERVER_MTLS_CERTFILE
+              value: {{ printf "%s/tls.crt" $srv | quote }}
+            - name: KACHO_IAM_INTERNAL_SERVER_MTLS_KEYFILE
+              value: {{ printf "%s/tls.key" $srv | quote }}
+            - name: KACHO_IAM_INTERNAL_SERVER_MTLS_CLIENTCAFILES
+              value: {{ printf "%s/ca.crt" $srv | quote }}
+            {{- end }}
             # OpenFGA store-id создаётся bootstrap-job'ом, см. umbrella/templates/openfga-bootstrap-job.yaml.
             # На E0 secret может ещё не существовать к моменту первого старта;
             # `optional: true` позволяет pod'у стартовать без него (kacho-iam
