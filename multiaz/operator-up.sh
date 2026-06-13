@@ -39,6 +39,23 @@ for cr in kacho-vpc-operator kacho-project-operator; do
   kubectl --context "$CP_CTX" get clusterrole "$cr" -o yaml 2>/dev/null | sed '/resourceVersion:/d;/uid:/d;/creationTimestamp:/d' | kubectl --context "$CTX" apply -f - >/dev/null 2>&1 || true
   kubectl --context "$CP_CTX" get clusterrolebinding "$cr" -o yaml 2>/dev/null | sed '/resourceVersion:/d;/uid:/d;/creationTimestamp:/d' | kubectl --context "$CTX" apply -f - >/dev/null 2>&1 || true
 done
+# Direct OVN-NB cross-route programming exec-s `ovn-nbctl` in the ovn-central pod —
+# needs pods get/list + pods/exec create (NOT in the helm-templated operator role).
+cat <<'RBAC' | kubectl --context "$CTX" apply -f - >/dev/null 2>&1
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: kacho-vpc-operator-ovnexec}
+rules:
+  - {apiGroups: [""], resources: [pods], verbs: [get, list]}
+  - {apiGroups: [""], resources: [pods/exec], verbs: [create]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: kacho-vpc-operator-ovnexec}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kacho-vpc-operator-ovnexec}
+subjects:
+  - {kind: ServiceAccount, name: kacho-vpc-operator, namespace: kacho-vpc-operator}
+RBAC
 
 echo "--- [$CTX] copy mTLS client-cert + identity from control-plane ---"
 kubectl --context "$CP_CTX" -n "$NS" get secret vpc-operator-client-tls -o yaml \
