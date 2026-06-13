@@ -1,7 +1,7 @@
 .PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint seed-ipam \
         loadtest-address-allocate loadtest-address-allocate-clean \
         reload-svc-iam psql-iam logs-iam fga-bootstrap build-ui build-services openfga-model-json \
-        reload-svc-nlb psql-nlb logs-nlb seed-nlb
+        reload-svc-nlb psql-nlb logs-nlb seed-nlb e2e-newman
 
 CLUSTER_NAME := kacho
 
@@ -169,6 +169,16 @@ e2e-test:
 		echo "=== $$sh ==="; \
 		bash "$$sh" || exit 1; \
 	done
+
+# e2e-newman — REPRODUCIBLE newman e2e: port-forward + seed authz fixtures
+# (non-expiring dev JWTs, users, projects, cluster-admin, patched newman env) +
+# run a service's newman suite against the running dev stand. Not a manual
+# side-step — one command, deterministic. Requires: dev-up complete; kubectl,
+# python3, newman, grpcurl in PATH.
+#   make e2e-newman SVC=vpc
+#   make e2e-newman SVC=vpc COLLECTION=internal-network
+e2e-newman:
+	@bash ./scripts/newman-e2e.sh "$(SVC)" "$(COLLECTION)"
 
 # ─── Load testing ────────────────────────────────────────────────
 
