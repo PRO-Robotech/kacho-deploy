@@ -12,7 +12,7 @@
 #   kacho-vpc          main-3b48f99b   (PR #145 — mTLS leaf cert + cross-compile)
 #   kacho-compute      main-1ecb2817   (PR #48)
 #   kacho-api-gateway  main-fa9a8422   (PR #70)
-#   kacho-nlb          main-3f914dba   (PR #24)
+#   kacho-nlb          main-cfaceb6c   (PR #24)
 #   kacho-iam          main-be5a45a2   (PR #104 — cross-compile Dockerfile)
 #   kacho-ui           main-dc395a2e   (no source change; current main image)
 #
@@ -49,5 +49,5 @@ kacho-iam:
 kacho-nlb:
   image:
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-3f914dba
+    tag: main-cfaceb6c
     pullPolicy: IfNotPresent
