@@ -1,0 +1,88 @@
+# values.fe3455.yaml — overlay for the fe3455 managed cluster (Beget).
+#
+# Layered ON TOP of values.dev.yaml (which enables the full stack + mTLS):
+#   helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho --create-namespace \
+#     -f ./helm/umbrella/values.dev.yaml \
+#     -f ./helm/umbrella/values.fe3455.yaml \
+#     --wait --timeout 15m
+#
+# fe3455 cluster facts that drive this overlay:
+#   - cert-manager is ALREADY installed (ns `beget-cert-manager`) → do NOT install
+#     the umbrella's cert-manager dependency; its --cluster-resource-namespace is
+#     its own ns, so the internal-CA root secret must live THERE. Single helm apply
+#     (no two-phase) because the webhook is already Ready.
+#   - NO StorageClass / dynamic provisioner → every Postgres runs emptyDir
+#     (persistence.enabled=false). Data is ephemeral (greenfield install).
+#   - NO ingress controller / LoadBalancer → ingress-nginx off + service ingresses
+#     off; reach the stack via `kubectl port-forward`.
+#   - images pulled from docker.io/prorobotech/kacho-<svc>:mtls-rc1 (public).
+
+# ── mTLS: keep ON (from values.dev) but reuse the pre-existing cert-manager ──
+cert-manager:
+  enabled: false                 # already installed in ns beget-cert-manager
+mtls:
+  enabled: true
+  internalCA:
+    caNamespace: beget-cert-manager   # cert-manager --cluster-resource-namespace
+
+# ── images: prorobotech registry, mtls-rc1 tag ──
+vpc:
+  image: docker.io/prorobotech/kacho-vpc:main-3b48f99b
+  imagePullPolicy: IfNotPresent
+compute:
+  image: docker.io/prorobotech/kacho-compute:main-1ecb2817
+  imagePullPolicy: IfNotPresent
+api-gateway:
+  image: docker.io/prorobotech/kacho-api-gateway:main-fa9a8422
+  imagePullPolicy: IfNotPresent
+ui:
+  image: docker.io/prorobotech/kacho-ui:main-dc395a2e
+  imagePullPolicy: IfNotPresent
+kacho-iam:
+  image:
+    repository: docker.io/prorobotech/kacho-iam
+    tag: main-be5a45a2
+    pullPolicy: IfNotPresent
+kacho-nlb:
+  enabled: true
+  image:
+    repository: docker.io/prorobotech/kacho-nlb
+    tag: main-3f914dba
+    pullPolicy: IfNotPresent
+
+# ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
+pg-vpc:
+  primary:
+    persistence:
+      enabled: false
+pg-compute:
+  primary:
+    persistence:
+      enabled: false
+pg-iam:
+  primary:
+    persistence:
+      enabled: false
+pg-openfga:
+  primary:
+    persistence:
+      enabled: false
+pg-nlb:
+  primary:
+    persistence:
+      enabled: false
+pg-kratos:
+  primary:
+    persistence:
+      enabled: false
+pg-hydra:
+  primary:
+    persistence:
+      enabled: false
+
+# ── no ingress controller on this cluster ──
+ingress-nginx:
+  enabled: false
+openfga:
+  ingress:
+    enabled: false

@@ -1,0 +1,17 @@
+# Default values for the kratos-selfservice-ui sub-chart.
+#
+# The template reads `.Values.kratosSelfServiceUI.*`; the umbrella overrides via
+# its `kratos-selfservice-ui:` block (nested key mirrors the former top-level
+# `kratosSelfServiceUI` so the template needed no rewrite on the move).
+#
+# Off by default; dev enables it (umbrella values.dev.yaml). NOTE: the Service
+# name must stay `kratos-selfservice-ui` — kacho-ui nginx proxies to it by name.
+kratosSelfServiceUI:
+  enabled: false
+  image:
+    repository: oryd/kratos-selfservice-ui-node
+    tag: v1.3.1
+  cookieSecret: please-change-this-32-bytes-A1Bx
+  hydraAdminUrl: http://kacho-umbrella-hydra-admin:4445
+  kratosBrowserUrl: http://localhost:28080/.ory/kratos/public
+  kratosPublicUrl: http://kacho-umbrella-kratos-public:80

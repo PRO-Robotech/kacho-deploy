@@ -1,51 +1,53 @@
-# values.prorobotech.yaml — override для деплоя стенда из public docker.io/prorobotech/* образов
-# собранных из master веток (KAC-deploy + feedback-deploy-images-dockerhub-prorobotech).
+# values.prorobotech.yaml — overlay for deploying from public docker.io/prorobotech/*
+# images built by each service repo's `docker-build.yml` CI (multi-arch amd64+arm64)
+# on push to main.
 #
-# Использование:
+# Usage (e.g. on a managed cluster with its own cert-manager — see values.fe3455.yaml):
 #   helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho \
 #     -f ./helm/umbrella/values.dev.yaml \
 #     -f ./helm/umbrella/values.prorobotech.yaml \
 #     --wait --timeout 15m
 #
-# Tags pinned на конкретные master commit-SHA, актуальны на 2026-05-24 (probed via Docker Hub API):
-#   kacho-vpc          main-97ffcaf0
-#   kacho-iam          main-1339eee3
-#   kacho-compute      main-79eaa6ed
-#   kacho-api-gateway  main-c860bfba
-#   kacho-nlb          main-8d37bc06
-#   kacho-ui           main-43a0ba4d
+# Tags pinned to the main-branch commit SHA that CI built (multi-arch manifest):
+#   kacho-vpc          main-3b48f99b   (PR #145 — mTLS leaf cert + cross-compile)
+#   kacho-compute      main-1ecb2817   (PR #48)
+#   kacho-api-gateway  main-fa9a8422   (PR #70)
+#   kacho-nlb          main-3f914dba   (PR #24)
+#   kacho-iam          main-be5a45a2   (PR #104 — cross-compile Dockerfile)
+#   kacho-ui           main-dc395a2e   (no source change; current main image)
 #
-# Image-shape для top-level (apiGateway/compute/ui/vpc) — flat string (per values.yaml convention).
-# Image-shape для sub-chart (kacho-iam/kacho-nlb) — map {repository, tag, pullPolicy}
-# (sub-chart templates вытаскивают `.Values.image.repository` + `.Values.image.tag`).
+# Image-shape: sibling sub-charts (vpc/compute/api-gateway/ui) take a flat `image:`
+# string; the vendored sub-charts (kacho-iam/kacho-nlb) take map {repository,tag,pullPolicy}.
+# NB: the sub-chart values KEY must equal the Chart.yaml dependency name — `api-gateway`
+# (hyphen), NOT `apiGateway`.
 
 global:
   imageRegistry: ""
 
-apiGateway:
-  image: docker.io/prorobotech/kacho-api-gateway:main-c860bfba
+vpc:
+  image: docker.io/prorobotech/kacho-vpc:main-3b48f99b
   imagePullPolicy: IfNotPresent
 
 compute:
-  image: docker.io/prorobotech/kacho-compute:main-79eaa6ed
+  image: docker.io/prorobotech/kacho-compute:main-1ecb2817
+  imagePullPolicy: IfNotPresent
+
+api-gateway:
+  image: docker.io/prorobotech/kacho-api-gateway:main-fa9a8422
   imagePullPolicy: IfNotPresent
 
 ui:
-  image: docker.io/prorobotech/kacho-ui:main-43a0ba4d
-  imagePullPolicy: IfNotPresent
-
-vpc:
-  image: docker.io/prorobotech/kacho-vpc:main-97ffcaf0
+  image: docker.io/prorobotech/kacho-ui:main-dc395a2e
   imagePullPolicy: IfNotPresent
 
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    tag: main-1339eee3
+    tag: main-be5a45a2
     pullPolicy: IfNotPresent
 
 kacho-nlb:
   image:
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-8d37bc06
+    tag: main-3f914dba
     pullPolicy: IfNotPresent
