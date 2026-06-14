@@ -27,27 +27,27 @@ mtls:
 
 # ── images: prorobotech registry, mtls-rc1 tag ──
 vpc:
-  image: docker.io/prorobotech/kacho-vpc:main-3b48f99b
+  image: docker.io/prorobotech/kacho-vpc:main-d752de57
   imagePullPolicy: IfNotPresent
 compute:
-  image: docker.io/prorobotech/kacho-compute:main-1ecb2817
+  image: docker.io/prorobotech/kacho-compute:main-e2a6fded
   imagePullPolicy: IfNotPresent
 api-gateway:
-  image: docker.io/prorobotech/kacho-api-gateway:main-fa9a8422
+  image: docker.io/prorobotech/kacho-api-gateway:main-1adc9d12
   imagePullPolicy: IfNotPresent
 ui:
-  image: docker.io/prorobotech/kacho-ui:main-dc395a2e
+  image: docker.io/prorobotech/kacho-ui:main-75d27127
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    tag: main-be5a45a2
+    tag: main-a1b28f4c
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
   image:
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-cfaceb6c
+    tag: main-ab61eff3
     pullPolicy: IfNotPresent
 
 # ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
