@@ -47,7 +47,7 @@ kacho-nlb:
   enabled: true
   image:
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-3f914dba
+    tag: main-cfaceb6c
     pullPolicy: IfNotPresent
 
 # ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
