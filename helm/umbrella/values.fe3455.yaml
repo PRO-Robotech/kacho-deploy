@@ -51,38 +51,70 @@ kacho-nlb:
     pullPolicy: IfNotPresent
 
 # ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
+# Capacity: fe3455 is 4 vCPU / 8 GB total → trim every Postgres request to
+# 100m/256Mi (dev defaults pg-vpc to 500m/1Gi, which alone won't fit alongside
+# the rest → pg-vpc stuck Pending). Ephemeral test DBs don't need the footprint.
 pg-vpc:
   primary:
     persistence:
       enabled: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
 pg-compute:
   primary:
     persistence:
       enabled: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
 pg-iam:
   primary:
     persistence:
       enabled: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
 pg-openfga:
   primary:
     persistence:
       enabled: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
 pg-nlb:
   primary:
     persistence:
       enabled: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
 pg-kratos:
   primary:
     persistence:
       enabled: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
 pg-hydra:
   primary:
     persistence:
       enabled: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
+
+# ── capacity trims: single OpenFGA replica + drop the dev MinIO ──
+openfga:
+  replicaCount: 1
+  ingress:
+    enabled: false
+
+# minio-dev (compliance-report S3 sink) isn't needed for the core rollout — drop
+# it to free a pod's worth of CPU/mem on the 4-vCPU cluster.
+minioDev:
+  enabled: false
 
 # ── no ingress controller on this cluster ──
 ingress-nginx:
   enabled: false
-openfga:
-  ingress:
-    enabled: false
