@@ -27,7 +27,10 @@ mtls:
 
 # ── images: prorobotech registry, mtls-rc1 tag ──
 vpc:
-  image: docker.io/prorobotech/kacho-vpc:main-d752de57
+  # main-f7857599: + InternalNetworkService.GetNetwork (vrf_id) + migration 0007
+  # (authoritative per-network VRF). Нужно kacho-vpc-net оператору (VRF из Kachō,
+  # без hash-фолбэка).
+  image: docker.io/prorobotech/kacho-vpc:main-f7857599
   imagePullPolicy: IfNotPresent
 compute:
   image: docker.io/prorobotech/kacho-compute:main-e2a6fded
