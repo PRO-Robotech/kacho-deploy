@@ -920,6 +920,13 @@ kacho-iam:
     KACHO_IAM_COMPLIANCE__S3__PATH_STYLE: "true"
     KACHO_IAM_COMPLIANCE__S3__ACCESS_KEY: "minioadmin"
     KACHO_IAM_COMPLIANCE__S3__SECRET_KEY: "minioadmin"
+    # Bug B fix: bootstrap cluster-admin. kacho-iam's startup reconciler grants
+    # `system_admin@cluster_kacho_root` to this user and enqueues the FGA tuple
+    # via the transactional fga_outbox (replacing the former setup.sh SQL-seed
+    # backdoor that bypassed the drainer). The user row is mirrored on first
+    # fixture upsert; the reconciler retries until the grant commits. The
+    # authz-fixtures bootstrap user is admin@prorobotech.ru.
+    KACHO_IAM_BOOTSTRAP_ROOT_EMAIL: "admin@prorobotech.ru"
   # KAC-127 Phase 3: OPA sidecar config propagated from umbrella to sub-chart.
   # KAC-127 (deploy#39 fix): включён — kacho-iam отдаёт OPA-bundle по HTTP на
   # :9092; см. комментарий у top-level `opaSidecar` ниже.
