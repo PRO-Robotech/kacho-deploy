@@ -231,7 +231,7 @@ OPENFGA_CANONICAL_FGA ?= ../kacho-proto/proto/kacho/cloud/iam/v1/fga_model.fga
 openfga-model-json:
 	@echo "Regenerating openfga-model-stub configmap from canonical fga_model.fga..."
 	python3 scripts/gen-openfga-model-configmap.py \
-	  helm/umbrella/templates/openfga-model-stub-configmap.yaml \
+	  helm/umbrella/charts/openfga-bootstrap/templates/openfga-model-stub-configmap.yaml \
 	  $(OPENFGA_CANONICAL_FGA) $(OPENFGA_CLI_IMAGE)
 
 # ─── KAC-127 Phase 10 — SPIRE / Cilium mesh / cosign ─────────────────────
