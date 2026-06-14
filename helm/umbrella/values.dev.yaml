@@ -20,10 +20,32 @@
 global:
   imageRegistry: ""
 
+# ─── cluster-internal mTLS (default ON for the dev stand) ──────────────────
+# The whole scheme runs on mTLS: cert-manager mints an internal-CA, every
+# component gets a server/client leaf cert, and every service→service edge below
+# is verified mTLS. `make dev-up` brings this up in two phases (cert-manager
+# first, then the Issuer/Certificate CRs + per-edge enable) to avoid the
+# webhook-not-ready race. Set mtls.enabled=false (+ cert-manager.enabled=false)
+# to fall back to the insecure dev stand.
+mtls:
+  enabled: true
+cert-manager:
+  enabled: true
+
 api-gateway:
   advertisedEndpoint: localhost:18443
   image: kacho-api-gateway:dev
   imagePullPolicy: IfNotPresent
+  # mTLS: backend-dial client to every backend (cert + per-edge env). Hybrid
+  # external listener (cert-or-JWT). Cert config (issuer/spiffe/secret) — chart values.
+  mtls:
+    enable: true
+    hybridExternal: true
+    edges:
+      vpc: true
+      compute: true
+      iam: true
+      nlb: true
   # KAC-NLB: pre-wire kacho-nlb public + internal endpoints so that when the
   # api-gateway proxy un-freezes the loadbalancer domain (see
   # kacho-api-gateway/internal/allowlist/list.go — `loadbalancer заморожен`),
@@ -98,6 +120,14 @@ api-gateway:
 compute:
   image: kacho-compute:dev
   imagePullPolicy: IfNotPresent
+  # mTLS: server (gateway/vpc/nlb dial here) + client (compute→iam, compute→vpc).
+  mtls:
+    enable: true
+    edges:
+      iamRegister: true
+      iamProject: true
+      iamAuthz: true
+      vpc: true
   # KAC-178 follow-up: compute authzIam.grpcAddr дефолт `kacho-iam:9091` в
   # kacho-compute/deploy/values.yaml неверный — Service `kacho-iam`
   # экспонирует только port 9090 (public AuthorizeService);
@@ -225,6 +255,14 @@ vpc:
   # KAC-127 — local kind-loaded image (см. комментарий у api-gateway выше).
   image: kacho-vpc:dev
   imagePullPolicy: IfNotPresent
+  # mTLS: server (gateway/compute/nlb dial here) + client (vpc→iam, vpc→compute).
+  mtls:
+    enable: true
+    edges:
+      iamRegister: true
+      iamProject: true
+      iamAuthz: true
+      compute: true
   networkPolicy:
     enabled: false
     adminPodsSelector: {}
@@ -345,13 +383,6 @@ pg-nlb:
 # KAC-127: Zitadel chart + конфиг удалены — auth-tier (identity/OIDC) на Ory
 # Kratos + Hydra. OIDC issuer для kacho-iam теперь Hydra.
 
-# MailHog — SMTP catch-all (UI на :8025). Включается per-cluster в overrides.
-mailhog:
-  enabled: false
-  image:
-    repository: mailhog/mailhog
-    tag: "v1.0.1"
-
 # KAC-183: MinIO dev instance for compliance report S3 upload.
 # values.dev.yaml ↓ also declares KACHO_IAM_COMPLIANCE__S3__ENDPOINT=http://minio-dev:9000
 # (see kacho-iam.env / kacho-iam.compliance.s3 below). Until KAC-183 there was no
@@ -412,23 +443,6 @@ pg-hydra:
     database: hydra
   primary:
     persistence: { enabled: true, size: 1Gi }
-    resources:
-      requests: { cpu: 100m, memory: 256Mi }
-      limits:   { cpu: 1, memory: 1Gi }
-
-pg-keto:
-  enabled: false
-  global: { security: { allowInsecureImages: true } }
-  image:
-    registry: docker.io
-    repository: bitnamilegacy/postgresql
-    tag: "16.4.0-debian-12-r0"
-  auth:
-    username: keto
-    password: dev-keto-password
-    database: keto
-  primary:
-    persistence: { enabled: false }
     resources:
       requests: { cpu: 100m, memory: 256Mi }
       limits:   { cpu: 1, memory: 1Gi }
@@ -750,69 +764,25 @@ hydra:
       # disabled here as a guardrail; enabling this is a security incident.
       enabled: false
 
-keto:
-  enabled: false
-  keto:
-    config:
-      dsn: "postgres://keto:dev-keto-password@kacho-umbrella-pg-keto:5432/keto?sslmode=disable"
-      # KAC-119: full namespace catalog. id-numbers стабильны.
-      namespaces:
-        - id: 0
-          name: user
-        - id: 1
-          name: service_account
-        - id: 2
-          name: group
-        - id: 3
-          name: account
-        - id: 4
-          name: project
-        - id: 5
-          name: vpc_network
-        - id: 6
-          name: compute_instance
-        - id: 7
-          name: kacho_system        # KAC-119 system-wide admin marker
-        - id: 8
-          name: vpc_subnet
-        - id: 9
-          name: vpc_address
-        - id: 10
-          name: vpc_security_group
-        - id: 11
-          name: vpc_route_table
-        - id: 12
-          name: vpc_gateway
-        - id: 13
-          name: compute_disk
-        - id: 14
-          name: compute_image
-        - id: 15
-          name: compute_snapshot
-      log:
-        level: info
-        format: json
-    automigration:
-      enabled: true
-      type: initContainer
-
 # Ory Kratos self-service UI (login/registration/recovery/verification/settings).
 # Образ oryd/kratos-selfservice-ui-node. UI nginx проксирует /login,/registration,
 # /recovery,/verification,/settings,/error → этот pod на :3000.
-kratosSelfServiceUI:
-  # KAC-127: включён вместе с kratos. kacho-ui nginx безусловно проксирует
-  # /login,/registration,... → upstream `kratos-selfservice-ui.kacho.svc` —
-  # при enabled=false Service не существует → nginx падает на старте
-  # (`host not found in upstream`). С включённым Kratos-стеком этот UI-pod
-  # обязателен для рабочего IAM-стенда.
-  enabled: true
-  image:
-    repository: oryd/kratos-selfservice-ui-node
-    tag: "v1.3.1"
-  kratosBrowserUrl: "http://localhost:28080/.ory/kratos/public"
-  kratosPublicUrl: "http://kacho-umbrella-kratos-public:80"
-  hydraAdminUrl: "http://kacho-umbrella-hydra-admin:4445"
-  cookieSecret: "please-change-this-32-bytes-A1Bx"
+# Sub-chart `kratos-selfservice-ui` — значения под вложенным ключом kratosSelfServiceUI.
+kratos-selfservice-ui:
+  kratosSelfServiceUI:
+    # KAC-127: включён вместе с kratos. kacho-ui nginx безусловно проксирует
+    # /login,/registration,... → upstream `kratos-selfservice-ui.kacho.svc` —
+    # при enabled=false Service не существует → nginx падает на старте
+    # (`host not found in upstream`). С включённым Kratos-стеком этот UI-pod
+    # обязателен для рабочего IAM-стенда.
+    enabled: true
+    image:
+      repository: oryd/kratos-selfservice-ui-node
+      tag: "v1.3.1"
+    kratosBrowserUrl: "http://localhost:28080/.ory/kratos/public"
+    kratosPublicUrl: "http://kacho-umbrella-kratos-public:80"
+    hydraAdminUrl: "http://kacho-umbrella-hydra-admin:4445"
+    cookieSecret: "please-change-this-32-bytes-A1Bx"
 
 # KAC-127: zitadelOidcBootstrap удалён — identity/OIDC tier перешёл на Ory
 # Kratos + Hydra (см. секции pg-kratos / pg-hydra выше).
@@ -868,6 +838,9 @@ openfga:
 kacho-iam:
   name: kacho-iam
   replicas: 1
+  # mTLS: server-only (authz authority; gateway/vpc/compute/nlb dial iam over mTLS).
+  mtls:
+    enable: true
   image:
     repository: kacho-iam
     tag: dev
@@ -946,17 +919,42 @@ kacho-iam:
   # KAC-127 Phase 3: OPA sidecar config propagated from umbrella to sub-chart.
   # KAC-127 (deploy#39 fix): включён — kacho-iam отдаёт OPA-bundle по HTTP на
   # :9092; см. комментарий у top-level `opaSidecar` ниже.
+  # OPA sidecar config — read by the kacho-iam sub-chart (deployment.yaml injects
+  # the sidecar; the opa/jwks ConfigMaps now live in charts/kacho-iam/templates/).
+  # Disabled in dev (the OPA bundle-over-HTTP delivery on :9092 is wired but the
+  # sidecar is off until the bundle pipeline is finalized — see kacho-iam chart).
   opaSidecar:
     enabled: false
-    # KAC-127: `1.0.0-rootless` тег не существует. Нужен ИМЕННО opa-envoy
-    # вариант — kacho-iam Deployment передаёт OPA-сайдкару флаг
-    # `--set=plugins.envoy_ext_authz_grpc.enabled=false`; плагин
-    # `envoy_ext_authz_grpc` есть только в opa-envoy-сборке (plain `opa`
-    # падает `plugin not registered`). `-static`-суффикс = rootless static-build.
+    # `1.0.0-rootless` тег не существует. Нужен ИМЕННО opa-envoy вариант —
+    # kacho-iam Deployment передаёт OPA-сайдкару `--set=plugins.envoy_ext_authz_grpc.*`;
+    # плагин есть только в opa-envoy-сборке. `-static` = rootless static-build.
     image: openpolicyagent/opa:1.0.0-envoy-static
     logLevel: info
+    # OPA pulls the bundle from kacho-iam IN THE SAME pod via loopback
+    # (127.0.0.1:9092 HTTP) — not via Service (Service routes only to Ready pods,
+    # but the pod is Ready only after the bundle loads → rollout deadlock).
+    iamInternalHost: kacho-iam-internal
+    iamInternalPort: 9092
+    bundleResource: bundle.tar.gz
+    # kacho-iam OpaBundleService currently produces an UNSIGNED tarball, so OPA
+    # must not require in-bundle `.signatures.json`. Hardening follow-up: flip true.
+    bundleSigningEnabled: false
+    # Shorter poll interval on dev for faster iteration on Rego changes.
+    bundlePollMinSec: 60   # ~1min
+    bundlePollMaxSec: 90
+    signingKeyId: kacho-iam-signing-key-current
+    bundle:
+      ttlSeconds: 60          # dev: also short
+      signingAlgorithm: ES256
+      signingKeyKid: kacho-iam-signing-key-current
+      buildShaEnvVar: KACHO_BUILD_SHA
+      cacheStaleAfterSeconds: 600
+      keyRotationGraceSeconds: 600
     jwks:
       configMapName: kacho-iam-jwks
+      bootstrapKeyPem: ""
+    policiesFallback:
+      enabled: false
     resources:
       requests:
         cpu: 20m
@@ -1017,77 +1015,29 @@ kacho-iam:
 # post-install hook with full DSL v2 + idempotent + model-id Secret patch +
 # rolling-restart annotation on consumer Deployments.
 # See umbrella/templates/openfga-bootstrap-job.yaml for full behaviour.
-openfgaBootstrap:
-  # KAC-127 (deploy#38 fix): включён. Раньше был отключён из-за template-бага —
-  # init-container `dsl-transform` запускал `/bin/sh`-скрипт на distroless
-  # образе openfga/cli (нет shell) → падал `exec: "/bin/sh": not found`.
-  # Fix: init-container удалён, DSL→JSON transform перенесён на commit-time —
-  # ConfigMap openfga-model-stub несёт оба ключа (model.fga + model.json).
-  # bootstrap-job (curlimages/curl, alpine) читает model.json напрямую.
-  enabled: true
-  # KAC-127 (deploy#38): alpine/k8s несёт kubectl+jq+curl+coreutils,
-  # бежит root → bootstrap-скрипту не нужен runtime apk add.
-  image: alpine/k8s:1.29.2
-  # cliImage больше не нужен (init-container `dsl-transform` удалён) — оставлен
-  # пустым на случай отката; см. openfga-bootstrap-job.yaml.
-  cliImage: ""
-  storeName: kacho-store
-  authorizationModelConfigMap: openfga-model-stub
-  modelIdSecretName: openfga-model-id
-  clusterSingletonId: cluster_kacho_root
-  # Dev: rely on bitnami pg-openfga auto-init (database `openfga`).
-  initDatabase: false
+openfga-bootstrap:
+  openfgaBootstrap:
+    # KAC-127 (deploy#38 fix): включён. Раньше был отключён из-за template-бага —
+    # init-container `dsl-transform` запускал `/bin/sh`-скрипт на distroless
+    # образе openfga/cli (нет shell). Fix: init-container удалён, DSL→JSON transform
+    # перенесён на commit-time — ConfigMap openfga-model-stub несёт оба ключа.
+    enabled: true
+    # alpine/k8s несёт kubectl+jq+curl+coreutils, бежит root.
+    image: alpine/k8s:1.29.2
+    cliImage: ""
+    storeName: kacho-store
+    authorizationModelConfigMap: openfga-model-stub
+    modelIdSecretName: openfga-model-id
+    clusterSingletonId: cluster_kacho_root
+    # Dev: rely on bitnami pg-openfga auto-init (database `openfga`).
+    initDatabase: false
 
-# ─── KAC-127 Phase 3: OPA sidecar pipeline (acceptance §5.6) ────────────
-# Enables per-pod OPA sidecar across api-gateway + kacho-iam + vpc + compute
-# + loadbalancer for runtime guardrails (deny-only Rego on top of FGA ALLOW).
-# KAC-127: ВРЕМЕННО отключён на dev. OPA bundle-plugin тянет policy-bundle по
-# HTTP с `kacho-iam-internal:9091/opa/v1/bundle.tar.gz`, но порт 9091 kacho-iam —
-# gRPC-only listener (нет HTTP bundle-эндпоинта) → connection refused → OPA
-# sidecar не становится Ready → pod'ы застревают 1/2. Phase 3 OPA-bundle-delivery
-# integration не завершена — см. GitHub-issue. kacho-iam main-container здоров и
-# отдаёт gRPC API без OPA (OPA — deny-only guardrail-слой поверх FGA).
+# ─── Cross-cutting authz NetworkPolicy (umbrella template networkpolicy-authz) ─
+# The OPA sidecar config itself now lives in the kacho-iam sub-chart
+# (kacho-iam.opaSidecar above). Only the cross-cutting pod-to-pod allowlist stays
+# at umbrella level. Disabled on dev (would break port-forward debugging of :9091).
 opaSidecar:
-  # KAC-127 (deploy#39 fix): включён. Раньше отключён — OPA bundle-plugin тянул
-  # bundle по HTTP с `kacho-iam-internal:9091`, но :9091 — gRPC-only listener
-  # (нет HTTP bundle-эндпоинта) → connection refused → sidecar не Ready.
-  # Fix: kacho-iam теперь отдаёт bundle через HTTP на :9092 (тот же listener,
-  # что Hydra-hooks — `OPABundleHTTPHandler`, route `/opa/v1/bundle.tar.gz`);
-  # порт :9092 экспонирован в Service kacho-iam-internal как `http-hooks`.
-  enabled: false
-  # KAC-127: opa-envoy-сборка обязательна (envoy_ext_authz_grpc плагин);
-  # `-static`-суффикс = rootless static-build. См. opaSidecar выше.
-  image: openpolicyagent/opa:1.0.0-envoy-static
-  logLevel: info
-  # KAC-127 (deploy#39): OPA sidecar тянет bundle с kacho-iam-контейнера
-  # В ТОМ ЖЕ pod'е по loopback (127.0.0.1:9092) — НЕ через Service (это
-  # дедлок rollout'а: Service маршрутизирует только на Ready-pod'ы, а pod
-  # Ready только после загрузки bundle). `iamInternalHost` оставлен для
-  # обратной совместимости values-схемы, но в configmap не используется.
-  iamInternalHost: kacho-iam-internal
-  iamInternalPort: 9092
-  bundleResource: bundle.tar.gz
-  # KAC-127 (deploy#39): in-tarball JWS bundle signing. kacho-iam OpaBundleService
-  # currently produces an UNSIGNED tarball (detached JWS via separate gRPC RPC),
-  # so OPA must not require in-bundle `.signatures.json` — иначе bundle не
-  # загрузится. Hardening follow-up: embed `.signatures.json` → flip to true.
-  bundleSigningEnabled: false
-  # Shorter poll interval on dev for faster iteration on Rego changes.
-  bundlePollMinSec: 60   # ~1min
-  bundlePollMaxSec: 90
-  signingKeyId: kacho-iam-signing-key-current
-  bundle:
-    ttlSeconds: 60          # dev: also short
-    signingAlgorithm: ES256
-    signingKeyKid: kacho-iam-signing-key-current
-    buildShaEnvVar: KACHO_BUILD_SHA
-    cacheStaleAfterSeconds: 600
-    keyRotationGraceSeconds: 600
-  jwks:
-    configMapName: kacho-iam-jwks
-    bootstrapKeyPem: ""
   networkPolicy:
-    # Disabled on dev (would break port-forward debugging of kacho-iam :9091).
     enabled: false
 
 # Sub-chart propagation note: opaSidecar + openfgaBootstrap.modelIdSecretName
@@ -1124,6 +1074,14 @@ kacho-nlb:
   enabled: true
   name: kacho-nlb
   replicas: 1
+  # mTLS: server (gateway dials here) + client (nlb→iam, nlb→vpc, nlb→compute).
+  mtls:
+    enable: true
+    edges:
+      iamRegister: true
+      iamProject: true
+      vpc: true
+      compute: true
   image:
     repository: kacho-nlb
     tag: dev

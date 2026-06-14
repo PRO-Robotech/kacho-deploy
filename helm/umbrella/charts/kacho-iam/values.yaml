@@ -175,6 +175,20 @@ env: {}
 #     against the internal-CA bundle (ca.crt in the server secret).
 mtls:
   enable: false
+  # ─── internal-CA leaf-cert issuance (this chart owns its Certificate, rule #1) ─
+  # kacho-iam is the authz authority itself → SERVER cert only (no client cert,
+  # no IAM grant needed — it does not dial peers in SEC-H scope). Server-cert SAN
+  # covers both Services (public kacho-iam :9090 + internal kacho-iam-internal :9091).
+  issuer:
+    name: kacho-internal-ca
+    kind: ClusterIssuer   # ClusterIssuer (cluster-scoped), NOT namespaced Issuer
+  serverHosts: ["kacho-iam", "kacho-iam-internal"]
+  spiffe:
+    trustDomain: kacho.cloud
+    namespace: kacho
+    saName: kacho-iam
+  leafDuration: 2160h
+  leafRenewBefore: 720h
   # cert-manager secret name (SEC-F naming: kacho-<svc>-server-tls).
   serverSecretName: kacho-iam-server-tls
   mountPath: /etc/kacho-iam/tls   # <mountPath>/server/{tls.crt,tls.key,ca.crt}
@@ -185,7 +199,7 @@ mtls:
 # (Helm rule: subchart can read parent values only via `--set` or aliasing;
 # we therefore mirror minimal knobs here for standalone-deploy).
 opaSidecar:
-  enabled: false   # Disabled by default in sub-chart standalone; umbrella enables.
+  enabled: false   # Disabled by default; umbrella `kacho-iam.opaSidecar.*` enables.
   image: openpolicyagent/opa:1.0.0-rootless
   logLevel: info
   resources:
@@ -195,157 +209,35 @@ opaSidecar:
     limits:
       cpu: 200m
       memory: 256Mi
+  # Bundle endpoint topology — OPA pulls the signed Rego bundle from kacho-iam's
+  # Internal RPC (loopback in the same pod). Consumed by opa-sidecar-configmap.yaml.
+  iamInternalHost: kacho-iam-internal
+  iamInternalPort: 9092
+  # Bundle resource path → OPA fetches `<service.url>/<resource>`.
+  bundleResource: bundle.tar.gz
+  # Poll interval (~1h TTL, jittered in [min,max] to avoid thundering herd).
+  bundlePollMinSec: 3000   # ~50min
+  bundlePollMaxSec: 3900   # ~65min
+  # Detached-signature verification of the bundle (dev: off; prod: on).
+  bundleSigningEnabled: false
+  # kid of the current JWS signing key (matches the JWKS rotator output).
+  signingKeyId: kacho-iam-signing-key-current
+  # Bundle server-side knobs (mirrored into opa-bundle-server-config ConfigMap).
+  bundle:
+    ttlSeconds: 3600
+    signingAlgorithm: ES256
+    signingKeyKid: kacho-iam-signing-key-current
+    buildShaEnvVar: KACHO_BUILD_SHA
+    cacheStaleAfterSeconds: 7200
+    keyRotationGraceSeconds: 7200
+  # Public-key ConfigMap (managed by the Phase 2 JWKS rotator at runtime).
   jwks:
     configMapName: kacho-iam-jwks
+    bootstrapKeyPem: ""
+  # Dev-only inline policy fallback (bypasses bundle signing). MUST stay off on prod.
+  policiesFallback:
+    enabled: false
 
 # Mirror knob — `openfga-bootstrap-job` writes here at install/upgrade.
 openfgaBootstrap:
   modelIdSecretName: openfga-model-id
-
-# ─── KAC-127 Phase 9 — Audit pipeline (sub-phase 3.9) ─────────────────────
-# Все ключи configurable; HSM provider / S3 endpoint / SIEM providers — env-
-# specific (dev / staging / prod). На kind/dev — audit.enabled=false
-# (drainer работает в pg_notify mode, без OLAP/S3/HSM/SIEM).
-#
-# Соответствует acceptance:
-#   - §2.5 (Kafka topics)
-#   - §2.6 (ClickHouse schema)
-#   - §2.7 (S3 layout + lifecycle)
-#   - §2.8 (HSM signing contract — PKCS#11 + ECDSA P-384)
-#   - §2.9 (SIEM webhook protocol)
-#   - §2.10 (Detection rules library — 8 rules)
-#   - §4.1 (data flow)
-#   - D-3 / D-5 / D-7 / D-9 / D-13 / D-15 / D-17
-audit:
-  # Master toggle для всего audit pipeline на стороне kacho-iam Helm chart.
-  # При false — chart НЕ создаёт audit-related CronJob'ы / Deployment'ы /
-  # ConfigMaps / NetworkPolicies (drainer работает только в pg_notify mode).
-  enabled: false
-
-  # ─── Merkle batch signer ────────────────────────────────────────────
-  # CronJob */5 * * * * (P9-D7). 5-min window — баланс между S3 object
-  # count и tamper-blast-radius.
-  merkleBatchSchedule: "*/5 * * * *"
-  merkleBatchActiveDeadlineSeconds: 240
-
-  # ─── Independent verifier ────────────────────────────────────────────
-  # Daily 02:00 UTC (P9-D13).
-  verifierSchedule: "0 2 * * *"
-  verifier:
-    # Sample ratio для S3 download verification (P9-D27).
-    # 0.01 = 1/100 batches — full-jsonl-recompute; rest — manifest-only verify.
-    s3SampleRatio: "0.01"
-
-  # ─── Kafka connection (umbrella reads from kafka subchart) ─────────
-  kafka:
-    bootstrapServers: "kacho-umbrella-kafka-bootstrap:9092"
-
-  # ─── S3 cold storage ──────────────────────────────────────────────
-  # Configurable bucket + endpoint. На prod — обязательно override.
-  s3:
-    # Bucket name. PROD: override via umbrella values. dev: MinIO compat.
-    bucket: ""
-    # Endpoint URL. Пусто = AWS S3 (region-based); override для MinIO /
-    # Wasabi / Cloudflare R2.
-    endpoint: ""
-    region: us-east-1
-    # IAM credentials. Через external-secrets-operator на prod.
-    accessKeySecretName: kacho-audit-s3-creds
-    accessKeySecretKey: AWS_ACCESS_KEY_ID
-    secretKeySecretName: kacho-audit-s3-creds
-    secretKeySecretKey: AWS_SECRET_ACCESS_KEY
-
-  # ─── Retention tiers ────────────────────────────────────────────────
-  # Соответствует acceptance §2.7 lifecycle table + P9-D8.
-  retention:
-    # ClickHouse hot tier (TTL DELETE per partition).
-    hot: 90d
-    # S3 Standard tier.
-    warmStandard: 30d
-    # S3 Standard-IA tier (after warmStandard).
-    warmIA: 1y
-    # S3 Glacier Deep Archive tier (after warmIA).
-    cold: 10y
-
-  # ─── HSM PKCS#11 (configurable provider) ────────────────────────────
-  # Соответствует acceptance §2.8 + P9-D9 + P9-D10.
-  hsm:
-    # provider: softhsm | awscloudhsm | gcpcloudhsm | azurekv | thalesluna
-    # PROD: НИКОГДА softhsm (dev only — explicitly marked).
-    provider: softhsm
-
-    # PKCS#11 library path per provider.
-    libraryPath: /usr/lib/softhsm/libsofthsm2.so
-
-    # PKCS#11 slot id.
-    slot: 0
-
-    # Token label (configured при создании token via softhsm2-util / vendor tool).
-    tokenLabel: kacho-audit-signing
-
-    # Key label (configured при keypair generation).
-    # Rotation: yearly label `kacho-audit-merkle-<year+1>` (P9-D28 dual-sign 7d).
-    keyLabel: kacho-audit-merkle-2026
-
-    # Signing algorithm: ECDSA P-384 (FIPS 140-2 Level 3 acceptable).
-    signingAlgorithm: ECDSA-P384-SHA384
-
-    # PIN Secret name. Externally-managed (sealed-secrets / external-secrets).
-    pinSecret: kacho-iam-hsm-pin
-
-  # ─── SIEM forwarders ─────────────────────────────────────────────────
-  # Соответствует acceptance §2.9 + P9-D15..D17, D-25.
-  siem:
-    enabled: false
-    replicas: 2
-
-    # Auto-disable threshold (P9-D17): consecutive 4xx (non-429) → disabled=true.
-    autoDisableThreshold: 5
-
-    # Per-subscriber rate-limit (events/sec) — Datadog HEC default.
-    rateLimitEventsPerSec: 100
-
-    # Per-provider toggles. Subscribers tenant-scoped (siem_subscribers row),
-    # provider-toggles infra-scoped (drainer compiles in provider client).
-    datadog:
-      enabled: true
-    splunk:
-      enabled: true
-    elastic:
-      enabled: true
-    genericWebhook:
-      enabled: true
-
-  # ─── NetworkPolicies (defense-in-depth) ──────────────────────────────
-  networkPolicy:
-    enabled: false
-    # HSM endpoint CIDRs (whitelisted egress from signer + verifier pods).
-    # PROD: AWS CloudHSM ENI CIDR; GCP/Azure — VPN/PrivateLink endpoints.
-    hsmEndpoints: []
-    # SEC-F-12 — OpenFGA ingress allowlist: only kacho-iam may dial OpenFGA.
-    # Safe to enable ONLY after SEC-D (vpc/compute/nlb stopped dialing FGA
-    # directly and go through InternalIAMService.RegisterResource) — else it
-    # creates a failure window. Disabled by default; flipped by the
-    # values.mtls.yaml overlay / prod profile once SEC-D is green.
-    openfgaIngressFromIamOnly:
-      enabled: false
-      # OpenFGA pod label (matches the upstream openfga helm chart's
-      # app.kubernetes.io/name) and the FGA gRPC + HTTP ports.
-      openfgaName: openfga
-      grpcPort: 8081
-      httpPort: 8080
-      # The OpenFGA store+model bootstrap (helm post-install Job) seeds FGA over
-      # HTTP and MUST be let through, else the iam-only allowlist blocks it and
-      # `helm --wait` hangs on the hook. It is provisioning infra (not a runtime
-      # FGA dialer), allowed by its OWN component label on the HTTP port only —
-      # least-privilege. Empty string disables the bootstrap allowance.
-      bootstrapComponent: openfga-bootstrap
-    # Пример:
-    #   - cidr: "10.100.0.0/24"
-    #     port: 2223
-    #   - cidr: "10.100.0.0/24"
-    #     port: 2224
-
-  # ─── Prometheus alerts ───────────────────────────────────────────────
-  prometheusRules:
-    enabled: true

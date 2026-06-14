@@ -1,26 +1,9 @@
 .PHONY: dev-up dev-down reload-svc logs-svc psql preflight e2e-test helm-lint seed-ipam \
         loadtest-address-allocate loadtest-address-allocate-clean \
         reload-svc-iam psql-iam logs-iam fga-bootstrap build-ui build-services openfga-model-json \
-        reload-svc-nlb psql-nlb logs-nlb seed-nlb
+        reload-svc-nlb psql-nlb logs-nlb seed-nlb e2e-newman
 
 CLUSTER_NAME := kacho
-
-# SEC-F — `make dev-up MTLS=on` layers the cluster-internal mTLS overlay
-# (values.mtls.yaml: internal-CA PKI + per-edge mTLS + openfga NetworkPolicy)
-# on top of the dev profile. Default (unset / MTLS=off) keeps the stand insecure
-# service→service — zero regression.
-MTLS ?= off
-ifeq ($(MTLS),on)
-MTLS_FLAGS := -f ./helm/umbrella/values.mtls.yaml
-# MTLS=on also installs the cert-manager controller (BEFORE the umbrella, so the
-# internal-CA PKI can issue certs) and the data-plane add-ons + operator (AFTER).
-CERTMGR_UP   := bash ./scripts/cert-manager-up.sh
-DATAPLANE_UP := bash ./scripts/dataplane-up.sh
-else
-MTLS_FLAGS :=
-CERTMGR_UP   := true
-DATAPLANE_UP := true
-endif
 
 # KAC-127: build + kind-load kacho-ui:dev.
 # kacho-ui — standalone Vite+nginx multi-stage build (контекст — сам kacho-ui/,
@@ -69,11 +52,19 @@ dev-up: preflight
 	$(MAKE) build-services; \
 	./scripts/gen-tls-cert.sh; \
 	cd helm/umbrella && helm dep update >/dev/null && cd ../..; \
-	$(CERTMGR_UP); \
-	echo "=== helm install (KAC-127: single-stage — Zitadel pre-install hooks удалены) ==="; \
+	echo "=== helm phase 1: cert-manager + control-plane (insecure) ==="; \
 	helm upgrade --install kacho-umbrella ./helm/umbrella -n kacho --create-namespace \
 	  -f ./helm/umbrella/values.dev.yaml \
-	  $(MTLS_FLAGS) \
+	  --set mtls.enabled=false \
+	  --set vpc.mtls.enable=false --set compute.mtls.enable=false \
+	  --set api-gateway.mtls.enable=false --set kacho-nlb.mtls.enable=false \
+	  --set kacho-iam.mtls.enable=false \
+	  --wait --timeout 10m; \
+	echo "=== waiting for cert-manager webhook (before applying Issuer/Certificate CRs) ==="; \
+	kubectl -n kacho rollout status deploy/kacho-umbrella-cert-manager-webhook --timeout=180s; \
+	echo "=== helm phase 2: enable cluster-internal mTLS (internal-CA + per-service certs) ==="; \
+	helm upgrade kacho-umbrella ./helm/umbrella -n kacho \
+	  -f ./helm/umbrella/values.dev.yaml \
 	  --wait --timeout 10m; \
 	echo "Waiting for ingress-nginx admission webhook..."; \
 	kubectl -n kacho wait --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=60s; \
@@ -81,7 +72,6 @@ dev-up: preflight
 	echo "    NB: must run before any user signs up — else account/project FGA tuples"; \
 	echo "    are written best-effort against a missing store and lost (→ 503 on List)."; \
 	$(MAKE) fga-bootstrap; \
-	$(DATAPLANE_UP); \
 	kubectl -n kacho rollout status deploy/kacho-iam --timeout=180s || true; \
 	kubectl -n kacho rollout status deploy/api-gateway --timeout=180s || true; \
 	end=$$(date +%s); \
@@ -98,23 +88,15 @@ dev-down:
 helm-lint:
 	cd helm/umbrella && helm dep update >/dev/null && helm lint -f values.dev.yaml
 
-# SEC-F — offline helm manifest-assertion suite (tests/helm/). Renders the
-# cert-manager-config + kacho-iam subcharts standalone (no kind cluster, no
-# sibling-chart checkout) and asserts the internal-CA PKI chain, per-service
-# Certificate pairs (SANs), the openfga NetworkPolicy and the mTLS values
-# profile + spire-registration alignment. NEW manifest-test infra.
+# Offline helm manifest-assertion suite (tests/helm/). Asserts kept-stack wiring
+# against the rendered umbrella — e.g. hydra-jwks-url-test.sh checks that
+# api-gateway points at the in-cluster Hydra JWKS endpoint. No kind cluster needed.
 helm-manifest-test:
 	@for t in tests/helm/*-test.sh; do \
 		echo "=== $$t ==="; \
 		bash "$$t" || exit 1; \
 	done
 	@echo "helm-manifest-test: all green"
-
-# Lint the SEC-F internal-CA + openfga-NetworkPolicy subcharts standalone
-# (they render without sibling-chart checkouts), in addition to umbrella lint.
-helm-lint-internal-ca:
-	helm lint ./helm/umbrella/charts/cert-manager-config
-	helm lint ./helm/umbrella/charts/kacho-iam
 
 reload-svc:
 ifndef SVC
@@ -169,6 +151,16 @@ e2e-test:
 		echo "=== $$sh ==="; \
 		bash "$$sh" || exit 1; \
 	done
+
+# e2e-newman — REPRODUCIBLE newman e2e: port-forward + seed authz fixtures
+# (non-expiring dev JWTs, users, projects, cluster-admin, patched newman env) +
+# run a service's newman suite against the running dev stand. Not a manual
+# side-step — one command, deterministic. Requires: dev-up complete; kubectl,
+# python3, newman, grpcurl in PATH.
+#   make e2e-newman SVC=vpc
+#   make e2e-newman SVC=vpc COLLECTION=internal-network
+e2e-newman:
+	@bash ./scripts/newman-e2e.sh "$(SVC)" "$(COLLECTION)"
 
 # ─── Load testing ────────────────────────────────────────────────
 
