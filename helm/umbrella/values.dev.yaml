@@ -41,6 +41,10 @@ api-gateway:
   mtls:
     enable: true
     hybridExternal: true
+    # Server leaf for the external listener, issued by kacho-internal-ca (keys
+    # tls.crt/tls.key → tls.certPath/keyPath). Without it the pod mounts the
+    # `api-gateway-tls` secret (tls.enabled=true) that nothing provisions.
+    serverSecretName: api-gateway-tls
     edges:
       vpc: true
       compute: true
