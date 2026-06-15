@@ -9,8 +9,14 @@ KAC-127 Phase 2 — Kratos config ConfigMap (WebAuthn / Passkey enabled).
   - totp secondary (RFC 6238) для AAL2 fallback;
   - lookup_secret (backup codes) для recovery-edge;
   - recovery: magic-link, lifespan 5min (acceptance §2.8 — IP-bound enforced на use-time);
-  - post-registration/post-login web_hook → kacho-iam :upsertFromIdentity (cluster-internal 9091);
-  - post-recovery web_hook → kacho-iam :onRecoveryCompleted + revoke_active_sessions.
+  - post-registration/post-login web_hook → kacho-iam provisioning HTTP route
+    `/iam/v1/hooks/provision` on the :9092 hooks listener (Service kacho-iam-internal).
+    C4 fix: the previous target was the PURE gRPC :9091 port with a REST-style
+    path that does not exist there → every hook failed silently → users were
+    never mirrored into kacho_iam (no project/namespace). Body = identity-payload.jsonnet
+    (kacho-iam-kratos-hooks ConfigMap), emitting {external_id, email, display_name}.
+  - post-recovery web_hook — left on legacy :9091 gRPC path (TODO(C4-followup):
+    OnRecoveryCompleted is Unimplemented, so no :9092 recovery route exists yet).
 
 Файл маунтится в Kratos pod как `/etc/config/kratos/kratos.yaml`. Hydra/Kratos
 helm subchart'ы умеют читать config из этого ConfigMap через `config.fromConfigMap`
@@ -121,9 +127,16 @@ data:
           after:
             webauthn:
               hooks:
+                # C4 fix: provisioning web_hook → kacho-iam :9092 HTTP hooks
+                # listener (Service kacho-iam-internal). The previous target was
+                # the PURE gRPC :9091 port with a REST-style path that does not
+                # exist there → every hook failed silently → users were never
+                # mirrored into kacho_iam (no project/namespace). The handler
+                # (internal/handler/iamhooks/provision_hook_handler.go) calls the
+                # UpsertFromIdentity use-case in-process.
                 - hook: web_hook
                   config:
-                    url: http://kacho-iam.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.ports.internalGrpc }}/iam/v1/internal/users:upsertFromIdentity
+                    url: http://kacho-iam-internal.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.internal.hooksHttpPort | default 9092 }}/iam/v1/hooks/provision
                     method: POST
                     body: file:///etc/config/kratos/hooks/identity-payload.jsonnet
                     auth:
@@ -136,9 +149,10 @@ data:
                 - hook: session   # Kratos auto-issues session post-registration → AAL2
             password:
               hooks:
+                # C4 fix — see webauthn note above (same :9092 HTTP route).
                 - hook: web_hook
                   config:
-                    url: http://kacho-iam.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.ports.internalGrpc }}/iam/v1/internal/users:upsertFromIdentity
+                    url: http://kacho-iam-internal.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.internal.hooksHttpPort | default 9092 }}/iam/v1/hooks/provision
                     method: POST
                     body: file:///etc/config/kratos/hooks/identity-payload.jsonnet
                     auth:
@@ -156,9 +170,11 @@ data:
           after:
             webauthn:
               hooks:
+                # C4 fix — provisioning web_hook → kacho-iam :9092 HTTP route
+                # (see the registration.after note above for the rationale).
                 - hook: web_hook
                   config:
-                    url: http://kacho-iam.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.ports.internalGrpc }}/iam/v1/internal/users:upsertFromIdentity
+                    url: http://kacho-iam-internal.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.internal.hooksHttpPort | default 9092 }}/iam/v1/hooks/provision
                     method: POST
                     body: file:///etc/config/kratos/hooks/identity-payload.jsonnet
                     auth:
@@ -170,9 +186,10 @@ data:
                 - hook: require_verified_address
             password:
               hooks:
+                # C4 fix — provisioning web_hook → kacho-iam :9092 HTTP route.
                 - hook: web_hook
                   config:
-                    url: http://kacho-iam.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.ports.internalGrpc }}/iam/v1/internal/users:upsertFromIdentity
+                    url: http://kacho-iam-internal.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.internal.hooksHttpPort | default 9092 }}/iam/v1/hooks/provision
                     method: POST
                     body: file:///etc/config/kratos/hooks/identity-payload.jsonnet
                     auth:
@@ -203,6 +220,13 @@ data:
           after:
             hooks:
               - hook: revoke_active_sessions
+              # TODO(C4-followup): recovery provisioning route once
+              # OnRecoveryCompleted is implemented. The kacho-iam
+              # InternalUserService.OnRecoveryCompleted RPC is currently
+              # Unimplemented (no Go handler), so this web_hook is left pointing
+              # at the legacy :9091 gRPC path — it still fails silently. It is
+              # NOT re-routed to the :9092 HTTP hooks listener in this PR because
+              # there is no /iam/v1/hooks/* recovery handler to serve it yet.
               - hook: web_hook
                 config:
                   url: http://kacho-iam.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.ports.internalGrpc }}/iam/v1/internal/users:onRecoveryCompleted
