@@ -27,10 +27,12 @@ mtls:
 
 # ── images: prorobotech registry, mtls-rc1 tag ──
 vpc:
-  # main-f7857599: + InternalNetworkService.GetNetwork (vrf_id) + migration 0007
-  # (authoritative per-network VRF). Нужно kacho-vpc-net оператору (VRF из Kachō,
-  # без hash-фолбэка).
-  image: docker.io/prorobotech/kacho-vpc:main-f7857599
+  # main-e4030b21: FGA-Check на internal :9091-листенере (epic authZ-на-internal) —
+  # GetNetwork (system_viewer) / SetDefaultSecurityGroupId + AddressPool (system_admin)
+  # энфорсятся; IPAM InternalAddressService.* остаются exempt. Включает также
+  # GetNetwork→vrf_id (mig 0007). kacho-vpc-net оператор (system_viewer@cluster)
+  # читает GetNetwork через Check.
+  image: docker.io/prorobotech/kacho-vpc:main-e4030b21
   imagePullPolicy: IfNotPresent
 compute:
   image: docker.io/prorobotech/kacho-compute:main-e2a6fded
