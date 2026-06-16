@@ -158,23 +158,33 @@ spec:
             - name: KACHO_IAM_INTERNAL_SERVER_MTLS_CLIENTCAFILES
               value: {{ printf "%s/ca.crt" $srv | quote }}
             {{- if .Values.mtls.httpListeners }}
-            # P0 hardening — HTTP listener mTLS (hooks :9092 + /metrics :9095).
+            # Sub-phase 5.5 — HTTP listener TLS (hooks :9092 + /metrics :9095).
             # These two listeners were served PLAINTEXT; per-edge, default-off
-            # server-side mTLS now wraps them (config.MTLSConfig.HooksServerTLSConfig
-            # / MetricsServerTLSConfig → tls.NewListener with
-            # RequireAndVerifyClientCert). They REUSE the SAME SEC-F internal-CA
-            # server cert-trio mounted above (no new PKI): only Hydra/Kratos
-            # (hooks) and a future internal-CA scrape client (metrics) — both
-            # holding an internal-CA client cert — can connect.
+            # server-side TLS now wraps them (config.MTLSConfig.HooksServerTLSConfig
+            # / MetricsServerTLSConfig → tls.NewListener). The per-edge
+            # CLIENTAUTHMODE selects the TLS ClientAuth mode:
+            #   - server-tls-only → tls.NoClientCert (encryption + server-auth only,
+            #     NO client cert required). The hooks edge carries THREE
+            #     HMAC-authenticated hook endpoints (Hydra token/refresh + Kratos
+            #     provision); all three callers are HTTP clients that present no
+            #     transport client-cert (Ory webhooks cannot) — HMAC
+            #     (X-Kacho-Hook-Token) is the caller-auth. The metrics edge has no
+            #     scrape client cert wired yet → server-tls-only too.
+            #   - mutual → RequireAndVerifyClientCert (option, flip CLIENTAUTHMODE
+            #     to "mutual" when a scrape client is provisioned with a client cert).
+            # They REUSE the SAME SEC-F internal-CA server cert-trio mounted above
+            # (no new PKI).
             #
-            # SEPARATE toggle from mtls.enable: the dev/newman kind stand already
-            # runs the gRPC listeners under mTLS (mtls.enable=true) but reaches
-            # hooks/metrics over PLAINTEXT (Hydra/Kratos hook clients + the OPA
-            # bundle pull have no client cert there). mtls.httpListeners stays
-            # false on dev → these env are NOT emitted → hooks/metrics stay
-            # plaintext (byte-identical). Only values.prod.yaml flips it true.
+            # SEPARATE toggle from mtls.enable: the dev/newman kind stand runs the
+            # gRPC listeners under mTLS (mtls.enable=true) but keeps hooks/metrics
+            # PLAINTEXT (the Hydra/Kratos hook clients have no client cert there).
+            # mtls.httpListeners stays false on dev → these env are NOT emitted →
+            # hooks/metrics stay plaintext (byte-identical). values.prod.yaml flips
+            # it true with clientAuthMode=server-tls-only.
             - name: KACHO_IAM_HOOKS_SERVER_MTLS_ENABLE
               value: "true"
+            - name: KACHO_IAM_HOOKS_SERVER_MTLS_CLIENTAUTHMODE
+              value: {{ .Values.mtls.hooksClientAuthMode | default "server-tls-only" | quote }}
             - name: KACHO_IAM_HOOKS_SERVER_MTLS_CERTFILE
               value: {{ printf "%s/tls.crt" $srv | quote }}
             - name: KACHO_IAM_HOOKS_SERVER_MTLS_KEYFILE
@@ -183,6 +193,8 @@ spec:
               value: {{ printf "%s/ca.crt" $srv | quote }}
             - name: KACHO_IAM_METRICS_SERVER_MTLS_ENABLE
               value: "true"
+            - name: KACHO_IAM_METRICS_SERVER_MTLS_CLIENTAUTHMODE
+              value: {{ .Values.mtls.metricsClientAuthMode | default "server-tls-only" | quote }}
             - name: KACHO_IAM_METRICS_SERVER_MTLS_CERTFILE
               value: {{ printf "%s/tls.crt" $srv | quote }}
             - name: KACHO_IAM_METRICS_SERVER_MTLS_KEYFILE

@@ -1,30 +1,36 @@
 #!/usr/bin/env bash
 # kacho-iam Hydra/Kratos hooks listener (:9092) + Prometheus /metrics listener
-# (:9095) — per-edge, default-off server-side mTLS capability
-# (KACHO_IAM_HOOKS_SERVER_MTLS_* / KACHO_IAM_METRICS_SERVER_MTLS_*), mirroring the
-# SEC-H gRPC listener pattern and reusing the SEC-F internal-CA server cert.
+# (:9095) — per-edge server-side TLS, reusing the SEC-F internal-CA server cert.
 #
-# IMPORTANT (regression #122 / Round-5 P0): the prod profile previously set
-# `kacho-iam.mtls.httpListeners: true`, which enables RequireAndVerifyClientCert
-# on the hooks/metrics listeners. But the hook CALLERS (Hydra/Kratos webhooks)
-# authenticate with an HMAC shared-secret (bearerToken) over a *plaintext* client
-# — they are NOT provisioned with an internal-CA client cert, and Ory webhooks do
-# not support presenting a transport client-cert. Likewise no Prometheus scraper
-# is wired with a client cert. Enabling RequireAndVerifyClientCert there would
-# reject every Hydra/Kratos webhook at the TLS handshake (before HMAC), breaking
-# ALL user login/registration in prod. So httpListeners is gated OFF until the
-# transport-hardening design lands (server-TLS-only for the HMAC-authenticated
-# hooks edge + Ory CA-trust; scrape client-cert for metrics). Tracked: kacho-iam#122.
+# Sub-phase 5.5 (kacho-iam#137, supersedes the OFF-gate #122/#136): the hooks edge
+# carries THREE HMAC-authenticated hook endpoints (Hydra token/refresh + Kratos
+# provision); all three callers are HTTP clients that present NO transport
+# client-cert (Ory webhooks cannot). The old RequireAndVerifyClientCert default
+# would reject every webhook at the TLS handshake. 5.5 introduces a per-edge
+# clientAuthMode: the hooks/metrics edges run `server-tls-only` (encryption +
+# server-auth; HMAC is the caller-auth — a single mode on :9092 correctly covers
+# all three hook endpoints). The prod gate is now flipped ON.
 #
-# This guard now asserts:
-#   - PROD profile  → emits NONE of the hooks/metrics mTLS env (gated off — the
-#     listeners stay plaintext, exactly as before Wave-17, no auth-break regression);
-#   - DEV profile   → emits NONE (dev/newman stand byte-identical, unchanged);
-#   - CAPABILITY INTACT → with an explicit `--set kacho-iam.mtls.httpListeners=true`
-#     override the chart DOES emit all eight env, each reusing the SAME mounted
-#     SEC-F server cert-trio (no new PKI). This proves the server-side mTLS support
-#     is shipped and ready to enable the moment the client side is provisioned —
-#     the gate is a values decision, not a deleted feature.
+# DETERMINISM NOTE: `helm template` on this large multi-subchart umbrella renders
+# the kacho-iam subchart Deployment NON-deterministically (values coalescing — the
+# httpListeners-gated env block is present/absent across repeated renders; this
+# PRE-DATES #137 and is why the prior guard asserted prod-OFF via env-ABSENCE and
+# capability via the TEMPLATE SOURCE). So the prod-ON DECISION is asserted from
+# values.prod.yaml directly (yq — deterministic), and CAPABILITY (env names incl.
+# the new CLIENTAUTHMODE) from the template source (deterministic). The Hydra
+# subchart renders ARE deterministic, so its https-URL + CA-mount are asserted by
+# render.
+#
+# This guard asserts:
+#   - PROD values DECISION → kacho-iam.mtls.httpListeners=true with both
+#     {hooks,metrics}ClientAuthMode=server-tls-only (gate ON, server-tls-only);
+#   - PROD Hydra render → token/refresh webhook URLs https://…:9092 (encrypted),
+#     HMAC X-Kacho-Hook-Token kept, Hydra pod mounts the SEC-F internal-CA bundle
+#     (kacho-iam-server-tls) + SSL_CERT_FILE so it trusts the kacho-iam server cert;
+#   - DEV → httpListeners off (unset/false) + Hydra hook URLs stay plaintext
+#     http://…:9092 (newman stand byte-identical);
+#   - CAPABILITY INTACT → the kacho-iam deployment TEMPLATE emits every per-edge env
+#     incl. CLIENTAUTHMODE, reusing the mounted SEC-F server cert (no new PKI).
 #
 # Offline manifest-assertion harness (no kind cluster). Mirrors tests/helm/*.
 set -euo pipefail
@@ -34,70 +40,95 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 UMBRELLA="$REPO_ROOT/helm/umbrella"
 PROD="$UMBRELLA/values.prod.yaml"
 DEV="$UMBRELLA/values.dev.yaml"
+TPL="$UMBRELLA/charts/kacho-iam/templates/deployment.yaml"
 N=0
 fail() { echo "FAIL: $1"; exit 1; }
 ok() { N=$((N + 1)); }
 
 [ -f "$PROD" ] || fail "values.prod.yaml not found at $PROD"
 [ -f "$DEV" ]  || fail "values.dev.yaml not found at $DEV"
+[ -f "$TPL" ]  || fail "kacho-iam deployment template not found at $TPL"
 
 render_only() {
   helm template kacho-umbrella "$UMBRELLA" -f "$1" --show-only "$2" 2>/dev/null
 }
-# env_val <ENV_NAME> <render> — value of the named container env entry ("" if absent).
-env_val() {
-  echo "$2" | yq eval-all \
-    "select(.kind==\"Deployment\") | .spec.template.spec.containers[].env[] | select(.name==\"$1\") | .value" -
-}
 
+# Full per-edge env set, INCLUDING the new CLIENTAUTHMODE (M2): the prior array
+# knew only ENABLE/CERTFILE/KEYFILE/CLIENTCAFILES — adding CLIENTAUTHMODE makes the
+# capability-intact section RED against a template that does not yet emit it.
 HOOKS_METRICS_ENV=(
   KACHO_IAM_HOOKS_SERVER_MTLS_ENABLE
+  KACHO_IAM_HOOKS_SERVER_MTLS_CLIENTAUTHMODE
   KACHO_IAM_HOOKS_SERVER_MTLS_CERTFILE
   KACHO_IAM_HOOKS_SERVER_MTLS_KEYFILE
   KACHO_IAM_HOOKS_SERVER_MTLS_CLIENTCAFILES
   KACHO_IAM_METRICS_SERVER_MTLS_ENABLE
+  KACHO_IAM_METRICS_SERVER_MTLS_CLIENTAUTHMODE
   KACHO_IAM_METRICS_SERVER_MTLS_CERTFILE
   KACHO_IAM_METRICS_SERVER_MTLS_KEYFILE
   KACHO_IAM_METRICS_SERVER_MTLS_CLIENTCAFILES
 )
 
-# ── 1. PROD profile — NONE of the hooks/metrics mTLS env present (gated OFF) ───
-# Until Hydra/Kratos/Prometheus are provisioned with client certs (or the edge is
-# moved to server-TLS-only), RequireAndVerifyClientCert here would break auth.
-IAM_DEPLOY_PROD="$(render_only "$PROD" charts/kacho-iam/templates/deployment.yaml)"
-[ -n "$IAM_DEPLOY_PROD" ] || fail "kacho-iam deployment did not render in prod profile"
-for name in "${HOOKS_METRICS_ENV[@]}"; do
-  v="$(env_val "$name" "$IAM_DEPLOY_PROD")"
-  [ -z "$v" ] || fail "prod: env $name=$v is set — httpListeners mTLS would reject Hydra/Kratos webhooks (no client cert) → auth-break. Must stay gated off (kacho-iam#122)."
-done
+# ── 1. PROD values DECISION — gate ON in server-tls-only mode (deterministic yq) ─
+prod_http="$(yq '.["kacho-iam"].mtls.httpListeners' "$PROD")"
+[ "$prod_http" = "true" ] \
+  || fail "prod: kacho-iam.mtls.httpListeners=$prod_http (want true — hooks/metrics transport hardening ON, kacho-iam#137)"
+prod_hooks_mode="$(yq '.["kacho-iam"].mtls.hooksClientAuthMode' "$PROD")"
+prod_metrics_mode="$(yq '.["kacho-iam"].mtls.metricsClientAuthMode' "$PROD")"
+[ "$prod_hooks_mode" = "server-tls-only" ] \
+  || fail "prod: hooksClientAuthMode=$prod_hooks_mode (want server-tls-only — Ory webhooks present no client cert)"
+[ "$prod_metrics_mode" = "server-tls-only" ] \
+  || fail "prod: metricsClientAuthMode=$prod_metrics_mode (want server-tls-only — no scrape client cert wired)"
+# enable=true is the precondition (the SEC-F server cert-trio is mounted only then).
+prod_enable="$(yq '.["kacho-iam"].mtls.enable' "$PROD")"
+[ "$prod_enable" = "true" ] || fail "prod: kacho-iam.mtls.enable=$prod_enable (httpListeners requires enable=true — no new PKI)"
 ok
 
-# ── 2. DEV profile — NONE present (plaintext, unchanged) ──────────────────────
-IAM_DEPLOY_DEV="$(render_only "$DEV" charts/kacho-iam/templates/deployment.yaml)"
-[ -n "$IAM_DEPLOY_DEV" ] || fail "kacho-iam deployment did not render in dev profile"
-for name in "${HOOKS_METRICS_ENV[@]}"; do
-  v="$(env_val "$name" "$IAM_DEPLOY_DEV")"
-  [ -z "$v" ] || fail "dev: env $name=$v is set — dev hooks/metrics listener must stay PLAINTEXT (regression!)"
-done
+# ── 2. PROD Hydra — token/refresh webhook URLs https://…:9092 + HMAC kept ────
+HYDRA_CM_PROD="$(render_only "$PROD" charts/hydra/templates/configmap.yaml)"
+[ -n "$HYDRA_CM_PROD" ] || fail "hydra configmap did not render in prod profile"
+echo "$HYDRA_CM_PROD" | grep -Eq 'https://[^"]*:9092/iam/v1/hooks/token' \
+  || fail "prod: Hydra token_hook URL must be https://…:9092/iam/v1/hooks/token (got plaintext or missing)"
+echo "$HYDRA_CM_PROD" | grep -Eq 'https://[^"]*:9092/iam/v1/hooks/refresh' \
+  || fail "prod: Hydra refresh_token_hook URL must be https://…:9092/iam/v1/hooks/refresh"
+if echo "$HYDRA_CM_PROD" | grep -Eq 'http://[^"]*:9092/iam/v1/hooks/'; then
+  fail "prod: Hydra hook URL still uses plaintext http://…:9092 (must be https for server-tls-only)"
+fi
+echo "$HYDRA_CM_PROD" | grep -q 'X-Kacho-Hook-Token' \
+  || fail "prod: Hydra webhook must still carry the HMAC header X-Kacho-Hook-Token (caller-auth unchanged)"
 ok
 
-# ── 3. CAPABILITY INTACT — the chart still ships the gated mTLS block ─────────
-# Asserted against the TEMPLATE SOURCE (deterministic) rather than by rendering
-# an httpListeners=true override: layering a value override onto this large
-# multi-subchart umbrella is non-deterministic in `helm template` (values
-# coalescing), whereas a value set directly in a profile file renders
-# deterministically. Real deploys set file values, so the gate is reliable; the
-# test just proves the feature is present + correctly gated, not deleted.
-TPL="$UMBRELLA/charts/kacho-iam/templates/deployment.yaml"
-[ -f "$TPL" ] || fail "capability: kacho-iam deployment template not found at $TPL"
+# ── 3. PROD Hydra pod mounts the internal-CA bundle (trusts kacho-iam server cert) ─
+HYDRA_DEPLOY_PROD="$(render_only "$PROD" charts/hydra/templates/deployment.yaml)"
+[ -n "$HYDRA_DEPLOY_PROD" ] || fail "hydra deployment did not render in prod profile"
+echo "$HYDRA_DEPLOY_PROD" | grep -q 'kacho-iam-server-tls' \
+  || fail "prod: Hydra pod must mount the SEC-F internal-CA bundle (kacho-iam-server-tls) for webhook CA-trust"
+echo "$HYDRA_DEPLOY_PROD" | grep -qE 'name: SSL_CERT_FILE|name: SSL_CERT_DIR' \
+  || fail "prod: Hydra must set SSL_CERT_FILE/SSL_CERT_DIR so its webhook client trusts the internal-CA server cert"
+ok
+
+# ── 4. DEV — httpListeners off + Hydra hook URLs stay plaintext ──────────────
+dev_http="$(yq '.["kacho-iam"].mtls.httpListeners // false' "$DEV")"
+[ "$dev_http" != "true" ] \
+  || fail "dev: kacho-iam.mtls.httpListeners=$dev_http (dev hooks/metrics listener must stay PLAINTEXT — regression!)"
+HYDRA_CM_DEV="$(render_only "$DEV" charts/hydra/templates/configmap.yaml)"
+echo "$HYDRA_CM_DEV" | grep -Eq 'http://[^"]*:9092/iam/v1/hooks/token' \
+  || fail "dev: Hydra token_hook URL must stay plaintext http://…:9092 (newman stand unchanged)"
+ok
+
+# ── 5. CAPABILITY INTACT — the chart emits the gated block + every env (CLIENTAUTHMODE) ─
 grep -q '{{- if .Values.mtls.httpListeners }}' "$TPL" \
   || fail "capability: the '{{- if .Values.mtls.httpListeners }}' gate block was removed from the template"
 for name in "${HOOKS_METRICS_ENV[@]}"; do
   grep -q "name: $name" "$TPL" \
-    || fail "capability: env $name missing from template — server-side mTLS support was deleted, not just gated"
+    || fail "capability: env $name missing from template — server-side TLS support / CLIENTAUTHMODE not emitted"
 done
-# The hooks/metrics block must REUSE the mounted server cert-trio (no new PKI):
-# it references the same $srv mount the gRPC listeners use (tls.crt/tls.key/ca.crt).
+# Both CLIENTAUTHMODE env default to server-tls-only in the template.
+grep -A1 'KACHO_IAM_HOOKS_SERVER_MTLS_CLIENTAUTHMODE' "$TPL" | grep -q 'hooksClientAuthMode' \
+  || fail "capability: hooks CLIENTAUTHMODE must derive from .Values.mtls.hooksClientAuthMode"
+grep -A1 'KACHO_IAM_METRICS_SERVER_MTLS_CLIENTAUTHMODE' "$TPL" | grep -q 'metricsClientAuthMode' \
+  || fail "capability: metrics CLIENTAUTHMODE must derive from .Values.mtls.metricsClientAuthMode"
+# The hooks/metrics block must REUSE the mounted server cert-trio (no new PKI).
 grep -A1 'KACHO_IAM_HOOKS_SERVER_MTLS_CERTFILE' "$TPL" | grep -q 'tls.crt' \
   || fail "capability: hooks certfile must reuse the mounted server tls.crt (SEC-F)"
 ok

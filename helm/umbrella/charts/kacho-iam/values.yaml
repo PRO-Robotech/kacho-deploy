@@ -175,7 +175,7 @@ env: {}
 #     against the internal-CA bundle (ca.crt in the server secret).
 mtls:
   enable: false
-  # P0 hardening — server-side mTLS for the HTTP listeners (Hydra/Kratos hooks
+  # Sub-phase 5.5 — server-side TLS for the HTTP listeners (Hydra/Kratos hooks
   # :9092 + Prometheus /metrics :9095), which were served PLAINTEXT. SEPARATE
   # toggle from `enable` ON PURPOSE: the dev/newman kind stand runs the gRPC
   # listeners under mTLS (enable=true) yet must keep hooks/metrics PLAINTEXT
@@ -185,6 +185,16 @@ mtls:
   # production profile (values.prod.yaml) flips this true; it REQUIRES enable=true
   # (the server cert-trio it reuses is mounted only when enable=true — no new PKI).
   httpListeners: false
+  # Per-edge TLS ClientAuth mode for the HTTP listeners (kacho-iam#137). Default
+  # server-tls-only: the hooks edge carries three HMAC-authed Ory webhook
+  # endpoints (Hydra token/refresh + Kratos provision) that present NO client cert
+  # — RequireAndVerifyClientCert would reject them at the handshake (bug #122); the
+  # metrics edge has no scrape client cert wired yet. server-tls-only encrypts the
+  # transport without an impossible client-cert requirement; HMAC stays the
+  # caller-auth on hooks. Flip to "mutual" per edge when a client cert is
+  # provisioned (e.g. an internal-CA Prometheus scrape client for metrics).
+  hooksClientAuthMode: server-tls-only
+  metricsClientAuthMode: server-tls-only
   # ─── internal-CA leaf-cert issuance (this chart owns its Certificate, rule #1) ─
   # kacho-iam is the authz authority itself → SERVER cert only (no client cert,
   # no IAM grant needed — it does not dial peers in SEC-H scope). Server-cert SAN
