@@ -75,6 +75,18 @@ jobs:
 
       - uses: azure/setup-helm@v4
       - run: cd helm/umbrella && helm dep update && helm lint . -f values.dev.yaml
+      # values.prod.yaml — the fail-closed production profile. Lint + assert it
+      # renders AND carries production-mode (NOT dev) + ssl-mode != disable for
+      # every service (tests/helm/prod-profile-fail-closed-test.sh). The guard
+      # also regression-checks that values.dev.yaml STILL renders mode:dev, so the
+      # newman/dev stand is unaffected.
+      - run: cd helm/umbrella && helm lint . -f values.prod.yaml
+      - name: install yq (manifest-assertion harness)
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+      - run: make helm-manifest-test
 
   e2e-on-kind:
     runs-on: ubuntu-latest
