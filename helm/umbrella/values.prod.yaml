@@ -168,21 +168,25 @@ kacho-iam:
   # mTLS: server-only (authz authority; gateway/vpc/compute/nlb dial iam).
   mtls:
     enable: true
-    # Server-side mTLS for the HTTP hooks (:9092) + /metrics (:9095) listeners is
-    # SHIPPED and ready (config.MTLSConfig.{Hooks,Metrics}ServerTLSConfig →
-    # RequireAndVerifyClientCert, reusing the SEC-F server cert — no new PKI), but
-    # it is GATED OFF here.
+    # Server-side TLS for the HTTP hooks (:9092) + /metrics (:9095) listeners is
+    # ON in prod (kacho-iam#137, supersedes the OFF-gate #122/#136), reusing the
+    # SEC-F server cert — no new PKI.
     #
-    # WHY OFF (kacho-iam#122, Round-5 P0): the hooks CALLERS are Hydra/Kratos
-    # webhooks authenticated by an HMAC shared-secret (bearerToken) over a
-    # plaintext client — they are NOT provisioned with an internal-CA client cert,
-    # and Ory webhooks cannot present a transport client-cert. No Prometheus
-    # scraper is wired with a client cert either. RequireAndVerifyClientCert would
-    # therefore reject every webhook at the TLS handshake (before HMAC), breaking
-    # ALL login/registration in prod. Enabling it requires the transport-hardening
-    # design first (server-TLS-only + Ory CA-trust for the HMAC hooks edge; scrape
-    # client-cert for metrics) — tracked separately. Flip true ONLY after that.
-    httpListeners: false
+    # WHY ON in server-tls-only mode: the hooks edge carries three HMAC-authed Ory
+    # webhook endpoints (Hydra token/refresh + Kratos provision); all three callers
+    # are HTTP clients that present NO transport client-cert (Ory webhooks cannot).
+    # A single server-tls-only mode on :9092 correctly covers all three — it
+    # encrypts the transport + authenticates the server, while HMAC
+    # (X-Kacho-Hook-Token) remains the caller-auth (defense-in-depth). The metrics
+    # edge has no scrape client cert wired → server-tls-only too. mutual
+    # (RequireAndVerifyClientCert) stays available per edge via {hooks,metrics}
+    # ClientAuthMode when a client cert is provisioned. The prod Hydra OAuth2
+    # token/refresh webhook URLs are flipped to https://…:9092 and the Hydra pod
+    # mounts the internal-CA bundle so it trusts the kacho-iam server cert (below).
+    httpListeners: true
+    # Both HTTP edges run server-tls-only (default; restated here for prod clarity).
+    hooksClientAuthMode: server-tls-only
+    metricsClientAuthMode: server-tls-only
   config:
     repository:
       postgres:
@@ -290,6 +294,61 @@ kratos:
   enabled: true
 hydra:
   enabled: true
+  # Sub-phase 5.5 (kacho-iam#137) — prod transport hardening for the :9092 hooks
+  # listener. The OAuth2 token/refresh webhooks now go over https://…:9092 (the
+  # listener runs server-tls-only) and the Hydra pod mounts the SEC-F internal-CA
+  # bundle (ca.crt of the kacho-iam-server-tls secret — no new PKI) so its webhook
+  # client trusts the kacho-iam server cert. HMAC (X-Kacho-Hook-Token) is
+  # UNCHANGED — only the transport scheme moves http→https. (Kratos provision-URL
+  # routing is OUT OF SCOPE here — tracked as kacho-deploy#91.)
+  # Hydra OAuth2 webhook config (under the subchart's nested `hydra.config` key).
+  hydra:
+    config:
+      oauth2:
+        # token/refresh webhooks → https on the kacho-iam-internal Service :9092
+        # HTTP hooks listener (NOT the gRPC :9091). api_key HMAC header unchanged.
+        token_hook:
+          url: "https://kacho-iam-internal.kacho.svc.cluster.local:9092/iam/v1/hooks/token"
+          auth:
+            type: api_key
+            config:
+              in: header
+              name: X-Kacho-Hook-Token
+              value: ${KACHO_IAM_HOOK_TOKEN}
+        refresh_token_hook:
+          url: "https://kacho-iam-internal.kacho.svc.cluster.local:9092/iam/v1/hooks/refresh"
+          auth:
+            type: api_key
+            config:
+              in: header
+              name: X-Kacho-Hook-Token
+              value: ${KACHO_IAM_HOOK_TOKEN}
+  # Pod-level wiring (top-level `deployment` key of the Ory hydra subchart).
+  deployment:
+    # Inject the shared HMAC secret (for the ${KACHO_IAM_HOOK_TOKEN} expansion in
+    # the webhook config above) + point the Go TLS client at the mounted
+    # internal-CA bundle so Hydra trusts the kacho-iam server cert.
+    extraEnv:
+      - name: KACHO_IAM_HOOK_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: kacho-iam-hook-token
+            key: token
+      - name: SSL_CERT_FILE
+        value: /etc/kacho-iam-ca/ca.crt
+    extraVolumes:
+      - name: kacho-iam-internal-ca
+        secret:
+          # Reuse the SEC-F server secret — its ca.crt is the internal-CA bundle
+          # that signed the kacho-iam :9092 server cert (no new PKI).
+          secretName: kacho-iam-server-tls
+          items:
+            - key: ca.crt
+              path: ca.crt
+    extraVolumeMounts:
+      - name: kacho-iam-internal-ca
+        mountPath: /etc/kacho-iam-ca
+        readOnly: true
 kratos-selfservice-ui:
   kratosSelfServiceUI:
     enabled: true
