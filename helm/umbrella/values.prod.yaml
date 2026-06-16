@@ -168,11 +168,21 @@ kacho-iam:
   # mTLS: server-only (authz authority; gateway/vpc/compute/nlb dial iam).
   mtls:
     enable: true
-    # P0 hardening — turn ON server-side mTLS for the HTTP hooks (:9092) +
-    # /metrics (:9095) listeners (RequireAndVerifyClientCert, reusing the same
-    # SEC-F internal-CA server cert as the gRPC listeners — no new PKI). OFF on
-    # the dev profile (values.dev.yaml leaves it unset → plaintext, unchanged).
-    httpListeners: true
+    # Server-side mTLS for the HTTP hooks (:9092) + /metrics (:9095) listeners is
+    # SHIPPED and ready (config.MTLSConfig.{Hooks,Metrics}ServerTLSConfig →
+    # RequireAndVerifyClientCert, reusing the SEC-F server cert — no new PKI), but
+    # it is GATED OFF here.
+    #
+    # WHY OFF (kacho-iam#122, Round-5 P0): the hooks CALLERS are Hydra/Kratos
+    # webhooks authenticated by an HMAC shared-secret (bearerToken) over a
+    # plaintext client — they are NOT provisioned with an internal-CA client cert,
+    # and Ory webhooks cannot present a transport client-cert. No Prometheus
+    # scraper is wired with a client cert either. RequireAndVerifyClientCert would
+    # therefore reject every webhook at the TLS handshake (before HMAC), breaking
+    # ALL login/registration in prod. Enabling it requires the transport-hardening
+    # design first (server-TLS-only + Ory CA-trust for the HMAC hooks edge; scrape
+    # client-cert for metrics) — tracked separately. Flip true ONLY after that.
+    httpListeners: false
   config:
     repository:
       postgres:
