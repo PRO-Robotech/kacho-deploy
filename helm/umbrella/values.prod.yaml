@@ -168,6 +168,11 @@ kacho-iam:
   # mTLS: server-only (authz authority; gateway/vpc/compute/nlb dial iam).
   mtls:
     enable: true
+    # P0 hardening — turn ON server-side mTLS for the HTTP hooks (:9092) +
+    # /metrics (:9095) listeners (RequireAndVerifyClientCert, reusing the same
+    # SEC-F internal-CA server cert as the gRPC listeners — no new PKI). OFF on
+    # the dev profile (values.dev.yaml leaves it unset → plaintext, unchanged).
+    httpListeners: true
   config:
     repository:
       postgres:

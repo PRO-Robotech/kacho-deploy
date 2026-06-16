@@ -157,6 +157,39 @@ spec:
               value: {{ printf "%s/tls.key" $srv | quote }}
             - name: KACHO_IAM_INTERNAL_SERVER_MTLS_CLIENTCAFILES
               value: {{ printf "%s/ca.crt" $srv | quote }}
+            {{- if .Values.mtls.httpListeners }}
+            # P0 hardening — HTTP listener mTLS (hooks :9092 + /metrics :9095).
+            # These two listeners were served PLAINTEXT; per-edge, default-off
+            # server-side mTLS now wraps them (config.MTLSConfig.HooksServerTLSConfig
+            # / MetricsServerTLSConfig → tls.NewListener with
+            # RequireAndVerifyClientCert). They REUSE the SAME SEC-F internal-CA
+            # server cert-trio mounted above (no new PKI): only Hydra/Kratos
+            # (hooks) and a future internal-CA scrape client (metrics) — both
+            # holding an internal-CA client cert — can connect.
+            #
+            # SEPARATE toggle from mtls.enable: the dev/newman kind stand already
+            # runs the gRPC listeners under mTLS (mtls.enable=true) but reaches
+            # hooks/metrics over PLAINTEXT (Hydra/Kratos hook clients + the OPA
+            # bundle pull have no client cert there). mtls.httpListeners stays
+            # false on dev → these env are NOT emitted → hooks/metrics stay
+            # plaintext (byte-identical). Only values.prod.yaml flips it true.
+            - name: KACHO_IAM_HOOKS_SERVER_MTLS_ENABLE
+              value: "true"
+            - name: KACHO_IAM_HOOKS_SERVER_MTLS_CERTFILE
+              value: {{ printf "%s/tls.crt" $srv | quote }}
+            - name: KACHO_IAM_HOOKS_SERVER_MTLS_KEYFILE
+              value: {{ printf "%s/tls.key" $srv | quote }}
+            - name: KACHO_IAM_HOOKS_SERVER_MTLS_CLIENTCAFILES
+              value: {{ printf "%s/ca.crt" $srv | quote }}
+            - name: KACHO_IAM_METRICS_SERVER_MTLS_ENABLE
+              value: "true"
+            - name: KACHO_IAM_METRICS_SERVER_MTLS_CERTFILE
+              value: {{ printf "%s/tls.crt" $srv | quote }}
+            - name: KACHO_IAM_METRICS_SERVER_MTLS_KEYFILE
+              value: {{ printf "%s/tls.key" $srv | quote }}
+            - name: KACHO_IAM_METRICS_SERVER_MTLS_CLIENTCAFILES
+              value: {{ printf "%s/ca.crt" $srv | quote }}
+            {{- end }}
             {{- end }}
             # OpenFGA store-id создаётся bootstrap-job'ом, см. umbrella/templates/openfga-bootstrap-job.yaml.
             # На E0 secret может ещё не существовать к моменту первого старта;
