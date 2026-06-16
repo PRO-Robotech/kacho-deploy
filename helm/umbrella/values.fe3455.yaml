@@ -32,27 +32,33 @@ vpc:
   # энфорсятся; IPAM InternalAddressService.* остаются exempt. Включает также
   # GetNetwork→vrf_id (mig 0007). kacho-vpc-net оператор (system_viewer@cluster)
   # читает GetNetwork через Check.
-  image: docker.io/prorobotech/kacho-vpc:main-e4030b21
+  image: docker.io/prorobotech/kacho-vpc:main-95f1e526
   imagePullPolicy: IfNotPresent
 compute:
-  image: docker.io/prorobotech/kacho-compute:main-e2a6fded
+  image: docker.io/prorobotech/kacho-compute:main-d4128b3e
   imagePullPolicy: IfNotPresent
 api-gateway:
-  image: docker.io/prorobotech/kacho-api-gateway:main-1adc9d12
+  # main-9674fef1: priv-esc RequiredRelation adapter fix + acr-forward on internal
+  # re-dial (sub-phase 5.4; acr enforcement is prod-mode-gated → inert on this dev-mode stand).
+  image: docker.io/prorobotech/kacho-api-gateway:main-9674fef1
   imagePullPolicy: IfNotPresent
 ui:
-  image: docker.io/prorobotech/kacho-ui:main-75d27127
+  image: docker.io/prorobotech/kacho-ui:main-377a1876
   imagePullPolicy: IfNotPresent
 kacho-iam:
+  # main-0c90efa5: prod-readiness sweep — audit_outbox on ALL mutations,
+  # acr-floor + system_viewer-floor (prod-mode-gated → inert in dev), OnRecoveryCompleted,
+  # AccountService.ListOperations (was 501), timestamp-truncate. Migrations 0014
+  # (reader-SA system_viewer fga_outbox seed) + 0015 (recovery_completions) — additive.
   image:
     repository: docker.io/prorobotech/kacho-iam
-    tag: main-a1b28f4c
+    tag: main-0c90efa5
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
   image:
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-ab61eff3
+    tag: main-75599a14
     pullPolicy: IfNotPresent
 
 # ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
