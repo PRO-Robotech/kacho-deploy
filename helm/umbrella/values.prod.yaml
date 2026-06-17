@@ -163,6 +163,28 @@ compute:
       iamAuthz: true
       vpc: true
 
+# ─── kacho-geo (Geography Region/Zone leaf-service) ─────────────────────────
+# Production posture: AUTH_MODE=production (anonymous fail-closed) + DB ssl-mode
+# require + mTLS server-creds on BOTH listeners + the geo→iam Check client edge.
+# Internal :9091 is NOT exempt (security.md AuthN+AuthZ ВЕЗДЕ). authzIamGrpcAddr
+# stays at iam-internal :9091 (non-empty → per-RPC Check interceptor attached).
+# Image tag comes from the per-cluster image-tag overlay (placeholder default).
+kacho-geo:
+  authMode: production
+  authzBreakglass: false
+  db:
+    sslmode: require
+  mtls:
+    enable: true
+    edges:
+      iamAuthz: true
+  # compute→geo data-migration ON: prod stands may carry admin-added geography
+  # that must be copied id-preserving before consumers repoint (S4/S5).
+  dataMigration:
+    enabled: true
+    source:
+      sslmode: require
+
 # ─── kacho-iam (authz authority + identity tier) ────────────────────────────
 kacho-iam:
   # mTLS: server-only (authz authority; gateway/vpc/compute/nlb dial iam).
@@ -250,6 +272,11 @@ pg-iam:
     username: iam
     database: kacho_iam
     existingSecret: kacho-umbrella-pg-iam
+pg-geo:
+  auth:
+    username: geo
+    database: kacho_geo
+    existingSecret: kacho-umbrella-pg-geo
 pg-openfga:
   enabled: true
   auth:

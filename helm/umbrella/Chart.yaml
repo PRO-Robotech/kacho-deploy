@@ -25,6 +25,12 @@ dependencies:
     alias: pg-iam
     version: 13.x
     repository: https://charts.bitnami.com/bitnami
+  # kacho-geo owns its own Postgres instance (schema kacho_geo, goose migrator).
+  # database-per-service (ban #8). Always on (geo is a core leaf-service like iam).
+  - name: postgresql
+    alias: pg-geo
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
   - name: postgresql
     alias: pg-openfga
     version: 13.x
@@ -66,6 +72,13 @@ dependencies:
   - name: kacho-iam
     version: ">= 1.0.0"
     repository: file://./charts/kacho-iam
+
+  # kacho-geo — vendored sub-chart (Geography Region/Zone leaf-service + its
+  # compute→geo data-migration hook-Job). Lives under charts/ (file:// relative)
+  # like kacho-iam, so it renders without the sibling-repo `file://` checkouts.
+  - name: kacho-geo
+    version: ">= 1.0.0"
+    repository: file://./charts/kacho-geo
 
   # ─── Identity / authorization tier ───────────────────────────────────────
   # openfga-bootstrap — local glue for the external openfga chart: install/upgrade
