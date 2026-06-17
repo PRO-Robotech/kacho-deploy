@@ -49,7 +49,7 @@ api-gateway:
   image: docker.io/prorobotech/kacho-api-gateway:main-5bcd9a0f
   imagePullPolicy: IfNotPresent
 ui:
-  image: docker.io/prorobotech/kacho-ui:main-75d27127
+  image: docker.io/prorobotech/kacho-ui:main-46f20176
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
