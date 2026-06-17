@@ -45,7 +45,7 @@ kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
 api-gateway:
-  image: docker.io/prorobotech/kacho-api-gateway:main-5bcd9a0f
+  image: docker.io/prorobotech/kacho-api-gateway:main-165cec08
   imagePullPolicy: IfNotPresent
 ui:
   image: docker.io/prorobotech/kacho-ui:main-46f20176
