@@ -124,7 +124,7 @@ api-gateway:
 compute:
   image: kacho-compute:dev
   imagePullPolicy: IfNotPresent
-  # mTLS: server (gateway/vpc/nlb dial here) + client (compute→iam, compute→vpc).
+  # mTLS: server (gateway/vpc/nlb dial here) + client (compute→iam, compute→vpc, compute→geo).
   mtls:
     enable: true
     edges:
@@ -132,6 +132,7 @@ compute:
       iamProject: true
       iamAuthz: true
       vpc: true
+      geo: true        # compute→geo zone_id validation (geo cutover, kacho-workspace#82)
   # KAC-178 follow-up: compute authzIam.grpcAddr дефолт `kacho-iam:9091` в
   # kacho-compute/deploy/values.yaml неверный — Service `kacho-iam`
   # экспонирует только port 9090 (public AuthorizeService);
@@ -276,7 +277,7 @@ vpc:
   # KAC-127 — local kind-loaded image (см. комментарий у api-gateway выше).
   image: kacho-vpc:dev
   imagePullPolicy: IfNotPresent
-  # mTLS: server (gateway/compute/nlb dial here) + client (vpc→iam, vpc→compute).
+  # mTLS: server (gateway/compute/nlb dial here) + client (vpc→iam, vpc→compute, vpc→geo).
   mtls:
     enable: true
     edges:
@@ -284,6 +285,7 @@ vpc:
       iamProject: true
       iamAuthz: true
       compute: true
+      geo: true        # vpc→geo zone_id validation (geo cutover, kacho-workspace#82)
   networkPolicy:
     enabled: false
     adminPodsSelector: {}
@@ -1132,7 +1134,7 @@ kacho-nlb:
   enabled: true
   name: kacho-nlb
   replicas: 1
-  # mTLS: server (gateway dials here) + client (nlb→iam, nlb→vpc, nlb→compute).
+  # mTLS: server (gateway dials here) + client (nlb→iam, nlb→vpc, nlb→compute, nlb→geo).
   mtls:
     enable: true
     edges:
@@ -1140,6 +1142,7 @@ kacho-nlb:
       iamProject: true
       vpc: true
       compute: true
+      geo: true        # nlb→geo region_id validation (geo cutover, kacho-workspace#82)
   image:
     repository: kacho-nlb
     tag: dev
