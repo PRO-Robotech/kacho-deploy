@@ -226,7 +226,7 @@ pg-vpc:
       size: 5Gi
     resources:
       requests:
-        cpu: 500m
+        cpu: 100m
         memory: 1Gi
       limits:
         cpu: 4000m
@@ -257,7 +257,7 @@ pg-compute:
       size: 5Gi
     resources:
       requests:
-        cpu: 200m
+        cpu: 100m
         memory: 512Mi
       limits:
         cpu: 2000m
@@ -334,7 +334,7 @@ pg-iam:
       size: 2Gi
     resources:
       requests:
-        cpu: 200m
+        cpu: 100m
         memory: 256Mi
       limits:
         cpu: 1000m
@@ -394,7 +394,7 @@ pg-openfga:
       size: 2Gi
     resources:
       requests:
-        cpu: 200m
+        cpu: 100m
         memory: 256Mi
       limits:
         cpu: 1000m
@@ -421,7 +421,7 @@ pg-nlb:
       size: 2Gi
     resources:
       requests:
-        cpu: 200m
+        cpu: 100m
         memory: 256Mi
       limits:
         cpu: 1500m
@@ -1025,7 +1025,7 @@ kacho-iam:
         cpu: 20m
         memory: 64Mi
       limits:
-        cpu: 200m
+        cpu: 100m
         memory: 256Mi
   openfgaBootstrap:
     modelIdSecretName: openfga-model-id
