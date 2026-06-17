@@ -67,6 +67,7 @@ jobs:
           echo "REF_VPC=main"              >> "$GITHUB_ENV"
           echo "REF_COMPUTE=main"          >> "$GITHUB_ENV"
           echo "REF_IAM=main"              >> "$GITHUB_ENV"
+          echo "REF_GEO=main"              >> "$GITHUB_ENV"
           echo "REF_API_GATEWAY=main"      >> "$GITHUB_ENV"
           echo "REF_WORKSPACE=main"        >> "$GITHUB_ENV"
           echo "REF_UI=main"               >> "$GITHUB_ENV"
@@ -107,6 +108,10 @@ jobs:
         with: { repository: PRO-Robotech/kacho-compute, ref: "${{ env.REF_COMPUTE }}", path: kacho-compute }
       - uses: actions/checkout@v4
         with: { repository: PRO-Robotech/kacho-iam, ref: "${{ env.REF_IAM }}", path: kacho-iam }
+      # kacho-geo leaf-service (Geography Region/Zone, extracted from compute):
+      # helm dep (vendored sub-chart) + Dockerfile build context for kacho-geo:dev.
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-geo, ref: "${{ env.REF_GEO }}", path: kacho-geo }
       - uses: actions/checkout@v4
         with: { repository: PRO-Robotech/kacho-api-gateway, ref: "${{ env.REF_API_GATEWAY }}", path: kacho-api-gateway }
       # KAC-NLB: kacho-nlb sibling (helm dep + Dockerfile build context).
@@ -157,7 +162,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          for svc in vpc iam compute api-gateway nlb; do
+          for svc in vpc iam compute geo api-gateway nlb; do
             echo "=== build kacho-$svc:dev ==="
             docker build -f "kacho-$svc/Dockerfile" -t "kacho-$svc:dev" .
           done
@@ -174,7 +179,7 @@ jobs:
       - name: load images into kind
         run: |
           set -euo pipefail
-          for img in kacho-vpc:dev kacho-iam:dev kacho-compute:dev kacho-api-gateway:dev kacho-nlb:dev; do
+          for img in kacho-vpc:dev kacho-iam:dev kacho-compute:dev kacho-geo:dev kacho-api-gateway:dev kacho-nlb:dev; do
             kind load docker-image "$img" --name kacho
           done
           docker image inspect kacho-ui:dev >/dev/null 2>&1 \
