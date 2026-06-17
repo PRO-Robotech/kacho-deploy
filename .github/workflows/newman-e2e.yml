@@ -205,7 +205,8 @@ jobs:
             --set compute.mtls.enable=false \
             --set api-gateway.mtls.enable=false \
             --set kacho-nlb.mtls.enable=false \
-            --set kacho-iam.mtls.enable=false
+            --set kacho-iam.mtls.enable=false \
+            --set kacho-geo.mtls.enable=false
 
       # Phase 1 — wait for the data-plane Deployments + Postgres to converge.
       - name: wait for core deployments
