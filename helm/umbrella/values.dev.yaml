@@ -156,6 +156,23 @@ compute:
       modelIdSecretKey: current
       timeoutMs: 2000
 
+# ─── kacho-geo (Geography Region/Zone leaf-service) ─────────────────────────
+# dev stand uses the locally-loaded `kacho-geo:dev` image (kind load), like the
+# other kacho-* services. dev = insecure posture (AUTH_MODE=dev) BUT mTLS is ON
+# on the dev stand, so server-creds on both listeners + the geo→iam Check client
+# edge are enabled (mirrors compute/vpc). authzIam stays wired at iam-internal
+# :9091. The compute→geo data-migration Job is ON so the dev stand exercises the
+# id-preserving copy path (a no-op on a fresh stand — geo seed covers baseline).
+kacho-geo:
+  image: kacho-geo:dev
+  imagePullPolicy: IfNotPresent
+  mtls:
+    enable: true
+    edges:
+      iamAuthz: true
+  dataMigration:
+    enabled: true
+
 ui:
   image: kacho-ui:dev
   imagePullPolicy: IfNotPresent
@@ -318,6 +335,36 @@ pg-iam:
     extendedConfiguration: |
       synchronous_commit = local
       max_connections = 200
+      shared_buffers = 128MB
+      work_mem = 8MB
+      effective_cache_size = 512MB
+  image:
+    repository: bitnamilegacy/postgresql
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell
+
+# pg-geo → kacho-geo (schema kacho_geo, database-per-service ban #8). Small
+# footprint: Geography is a couple of read-only catalog tables.
+pg-geo:
+  auth:
+    username: geo
+    password: dev-geo-password
+    database: kacho_geo
+  primary:
+    persistence:
+      enabled: true
+      size: 1Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+    extendedConfiguration: |
+      synchronous_commit = local
+      max_connections = 100
       shared_buffers = 128MB
       work_mem = 8MB
       effective_cache_size = 512MB

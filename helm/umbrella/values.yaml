@@ -242,6 +242,16 @@ compute:
   image: docker.io/prorobotech/kacho-compute:main-1ecb2817
   imagePullPolicy: IfNotPresent
 
+# kacho-geo — vendored sub-chart (Geography Region/Zone leaf-service). Image tag
+# is a PLACEHOLDER: the kacho-geo image is not yet pushed to the registry (epic
+# kacho-geo). `main-latest` is a values-overridable placeholder; the real
+# docker.io/prorobotech/kacho-geo:main-<sha> tag + pull secret are provisioned at
+# deploy time (per-profile override + per-cluster overlay). Full sub-chart
+# defaults live in charts/kacho-geo/values.yaml; this block overrides image only.
+kacho-geo:
+  image: docker.io/prorobotech/kacho-geo:main-latest
+  imagePullPolicy: IfNotPresent
+
 api-gateway:
   image: docker.io/prorobotech/kacho-api-gateway:main-fa9a8422
   imagePullPolicy: IfNotPresent
