@@ -178,10 +178,13 @@ kacho-geo:
     enable: true
     edges:
       iamAuthz: true
-  # compute→geo data-migration ON: prod stands may carry admin-added geography
-  # that must be copied id-preserving before consumers repoint (S4/S5).
+  # S7: one-time compute→geo geography copy is complete; compute no longer owns
+  # Region/Zone (tables dropped). geo seeds its own baseline → the migration Job
+  # is obsolete and would fail reading the dropped kacho_compute source. Disabled;
+  # the gated template stays as a one-time tool (set enabled=true only for a stand
+  # that still has legacy compute-side geography to carry across).
   dataMigration:
-    enabled: true
+    enabled: false
     source:
       sslmode: require
 
