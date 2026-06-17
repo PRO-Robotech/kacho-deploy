@@ -32,25 +32,24 @@ vpc:
   # энфорсятся; IPAM InternalAddressService.* остаются exempt. Включает также
   # GetNetwork→vrf_id (mig 0007). kacho-vpc-net оператор (system_viewer@cluster)
   # читает GetNetwork через Check.
-  image: docker.io/prorobotech/kacho-vpc:main-e4030b21
+  image: docker.io/prorobotech/kacho-vpc:main-12217ec9
   imagePullPolicy: IfNotPresent
 compute:
-  image: docker.io/prorobotech/kacho-compute:main-e2a6fded
+  image: docker.io/prorobotech/kacho-compute:main-fb43dd13
   imagePullPolicy: IfNotPresent
-# kacho-geo image: registry push pending → PLACEHOLDER tag. Override with the
-# real docker.io/prorobotech/kacho-geo:main-<sha> at deploy time (the build must
-# be pushed first). mTLS + dataMigration inherited ON from values.dev; on this
+# kacho-geo image: CI-built+pushed (docker-build on main, DOCKERHUB secrets now
+# provisioned). mTLS + dataMigration inherited ON from values.dev; on this
 # greenfield/ephemeral stand the geo seed already covers the baseline rows, so
 # the compute→geo copy-Job is a NO-OP here (every row hits ON CONFLICT DO NOTHING)
 # — kept wired only for parity with stands that carry admin-added geography.
 kacho-geo:
-  image: docker.io/prorobotech/kacho-geo:main-latest
+  image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
 api-gateway:
-  image: docker.io/prorobotech/kacho-api-gateway:main-1adc9d12
+  image: docker.io/prorobotech/kacho-api-gateway:main-5bcd9a0f
   imagePullPolicy: IfNotPresent
 ui:
-  image: docker.io/prorobotech/kacho-ui:main-75d27127
+  image: docker.io/prorobotech/kacho-ui:main-46f20176
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
@@ -61,7 +60,7 @@ kacho-nlb:
   enabled: true
   image:
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-ab61eff3
+    tag: main-4dcf19e0
     pullPolicy: IfNotPresent
 
 # ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
