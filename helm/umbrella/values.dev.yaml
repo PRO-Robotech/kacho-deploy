@@ -171,8 +171,12 @@ kacho-geo:
     enable: true
     edges:
       iamAuthz: true
+  # S7: the one-time compute→geo geography copy is complete; compute no longer
+  # owns/serves Region/Zone (tables dropped). geo seeds its own baseline, so the
+  # migration Job is obsolete (and would fail reading the dropped kacho_compute
+  # source). Disabled — the gated template stays as a one-time tool only.
   dataMigration:
-    enabled: true
+    enabled: false
 
 ui:
   image: kacho-ui:dev

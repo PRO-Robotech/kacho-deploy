@@ -38,10 +38,9 @@ compute:
   image: docker.io/prorobotech/kacho-compute:main-fb43dd13
   imagePullPolicy: IfNotPresent
 # kacho-geo image: CI-built+pushed (docker-build on main, DOCKERHUB secrets now
-# provisioned). mTLS + dataMigration inherited ON from values.dev; on this
-# greenfield/ephemeral stand the geo seed already covers the baseline rows, so
-# the compute→geo copy-Job is a NO-OP here (every row hits ON CONFLICT DO NOTHING)
-# — kept wired only for parity with stands that carry admin-added geography.
+# provisioned). mTLS inherited ON from values.dev. dataMigration is OFF (S7):
+# the one-time compute→geo copy already ran during the cutover and compute no
+# longer owns geography (Region/Zone tables dropped) — geo serves its own seed.
 kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
