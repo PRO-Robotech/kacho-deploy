@@ -50,6 +50,7 @@ api-gateway:
       compute: true
       iam: true
       nlb: true
+      geo: true        # gateway→geo (+ geoInternal) mTLS; backends.geo uses chart default kacho-geo.* (geo cutover, kacho-workspace#82)
   # KAC-NLB: pre-wire kacho-nlb public + internal endpoints so that when the
   # api-gateway proxy un-freezes the loadbalancer domain (see
   # kacho-api-gateway/internal/allowlist/list.go — `loadbalancer заморожен`),
