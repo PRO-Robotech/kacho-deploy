@@ -35,7 +35,7 @@ vpc:
   image: docker.io/prorobotech/kacho-vpc:main-12217ec9
   imagePullPolicy: IfNotPresent
 compute:
-  image: docker.io/prorobotech/kacho-compute:main-fb43dd13
+  image: docker.io/prorobotech/kacho-compute:main-b186d41e
   imagePullPolicy: IfNotPresent
 # kacho-geo image: CI-built+pushed (docker-build on main, DOCKERHUB secrets now
 # provisioned). mTLS inherited ON from values.dev. dataMigration is OFF (S7):
@@ -45,7 +45,7 @@ kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
 api-gateway:
-  image: docker.io/prorobotech/kacho-api-gateway:main-5bcd9a0f
+  image: docker.io/prorobotech/kacho-api-gateway:main-165cec08
   imagePullPolicy: IfNotPresent
 ui:
   image: docker.io/prorobotech/kacho-ui:main-46f20176
