@@ -32,10 +32,10 @@ vpc:
   # энфорсятся; IPAM InternalAddressService.* остаются exempt. Включает также
   # GetNetwork→vrf_id (mig 0007). kacho-vpc-net оператор (system_viewer@cluster)
   # читает GetNetwork через Check.
-  image: docker.io/prorobotech/kacho-vpc:main-12217ec9
+  image: docker.io/prorobotech/kacho-vpc:main-700114b8
   imagePullPolicy: IfNotPresent
 compute:
-  image: docker.io/prorobotech/kacho-compute:main-b186d41e
+  image: docker.io/prorobotech/kacho-compute:main-b803bfb1
   imagePullPolicy: IfNotPresent
 # kacho-geo image: CI-built+pushed (docker-build on main, DOCKERHUB secrets now
 # provisioned). mTLS inherited ON from values.dev. dataMigration is OFF (S7):
@@ -45,21 +45,21 @@ kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
 api-gateway:
-  image: docker.io/prorobotech/kacho-api-gateway:main-165cec08
+  image: docker.io/prorobotech/kacho-api-gateway:main-39508c93
   imagePullPolicy: IfNotPresent
 ui:
-  image: docker.io/prorobotech/kacho-ui:main-28195339
+  image: docker.io/prorobotech/kacho-ui:main-13298355
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    tag: main-a1b28f4c
+    tag: main-45cc66cd
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
   image:
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-4dcf19e0
+    tag: main-405057e4
     pullPolicy: IfNotPresent
 
 # ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
