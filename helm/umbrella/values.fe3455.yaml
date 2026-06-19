@@ -45,21 +45,22 @@ kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
 api-gateway:
-  # main-7dd13c58: sub-phase 1.5 — public AccessBindingService.ListAssignableRoles
-  # зарегистрирован (GET /iam/v1/accessBindings:listAssignableRoles).
-  image: docker.io/prorobotech/kacho-api-gateway:main-7dd13c58
+  # main-0f943164: epic-100 α — registered AddTargetResources /
+  # RemoveTargetResources / ListGrantableResources (resource-scoped AccessBinding).
+  image: docker.io/prorobotech/kacho-api-gateway:main-0f943164
   imagePullPolicy: IfNotPresent
 ui:
-  # main-37372fa6: sub-phase 1.5 — resource-first grant-форма + backend-driven
-  # assignable roles (рендер по серверному scope_group).
-  image: docker.io/prorobotech/kacho-ui:main-37372fa6
+  # main-cfa11c88: epic-100 α — AccessBinding target picker (all_in_scope /
+  # resources[] mode + object-picker + target display).
+  image: docker.io/prorobotech/kacho-ui:main-cfa11c88
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # main-f62d65ea: sub-phase 1.5 — ListAssignableRoles + AccessBinding.Create
-    # scope-enforcement (mis-scoped/missing role → Operation.error FAILED_PRECONDITION).
-    tag: main-f62d65ea
+    # main-e64df1e2: epic-100 α — resource-scoped AccessBinding (target oneof +
+    # role-coverage gate + Add/Remove/ListGrantable; migration 0018
+    # access_binding_targets applied by initContainer migrate).
+    tag: main-e64df1e2
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
