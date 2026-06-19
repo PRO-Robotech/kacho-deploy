@@ -45,15 +45,21 @@ kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
 api-gateway:
-  image: docker.io/prorobotech/kacho-api-gateway:main-39508c93
+  # main-7dd13c58: sub-phase 1.5 — public AccessBindingService.ListAssignableRoles
+  # зарегистрирован (GET /iam/v1/accessBindings:listAssignableRoles).
+  image: docker.io/prorobotech/kacho-api-gateway:main-7dd13c58
   imagePullPolicy: IfNotPresent
 ui:
-  image: docker.io/prorobotech/kacho-ui:main-784ce00b
+  # main-37372fa6: sub-phase 1.5 — resource-first grant-форма + backend-driven
+  # assignable roles (рендер по серверному scope_group).
+  image: docker.io/prorobotech/kacho-ui:main-37372fa6
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    tag: main-7ad4e3e7
+    # main-f62d65ea: sub-phase 1.5 — ListAssignableRoles + AccessBinding.Create
+    # scope-enforcement (mis-scoped/missing role → Operation.error FAILED_PRECONDITION).
+    tag: main-f62d65ea
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
