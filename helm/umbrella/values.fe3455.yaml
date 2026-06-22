@@ -26,11 +26,11 @@ mtls:
     caNamespace: beget-cert-manager   # cert-manager --cluster-resource-namespace
 
 # ── images: prorobotech registry ──
-# Rolled out to fe3455 2026-06-22 (RBAC rules-model 2026 cleanup + sub-phase G —
-# backend-driven permission catalog). Tags = current LIVE images (kubectl set image
-# applied + verified: rollout green, iam migration 0032 applied, catalog endpoint
-# 401-gated). Source-of-truth so a future `helm upgrade -f values.fe3455.yaml`
-# does not revert live.
+# Rolled out to fe3455 2026-06-22 (RBAC rules-model 2026 sub-phase H — Rule.module
+# scalar + #1 labelSelectable gating; on top of G cleanup). Tags = current LIVE
+# images (kubectl set image applied + verified: rollout green, iam migration 0033
+# applied → roles rewritten modules:[x]→module:x for 64 roles, catalog labelSelectable
+# live). Source-of-truth so a future `helm upgrade -f values.fe3455.yaml` does not revert.
 vpc:
   # main-c9bcc518: per-object filtered List (D-consumer) + ListByIDs test coverage.
   image: docker.io/prorobotech/kacho-vpc:main-c9bcc518
@@ -45,23 +45,23 @@ kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
 api-gateway:
-  # main-495c01a3: sub-phase G — public PermissionCatalogService.ListPermissionCatalog
-  # registered (external mux + allowlist) + authz-catalog resync after the
-  # RunRegoTest/ListPermissions tombstones.
-  image: docker.io/prorobotech/kacho-api-gateway:main-495c01a3
+  # main-d1afb89e: sub-phase H — rebuilt against proto Rule.module scalar +
+  # catalog label_selectable (grpc-gateway stubs marshal scalar module). G base:
+  # PermissionCatalogService.ListPermissionCatalog external mux + allowlist.
+  image: docker.io/prorobotech/kacho-api-gateway:main-d1afb89e
   imagePullPolicy: IfNotPresent
 ui:
-  # main-865d9688: sub-phase G — backend-driven permission catalog (RulesEditor loads
-  # GET /iam/v1/permissionCatalog) + resourceNames real-instance picker.
-  image: docker.io/prorobotech/kacho-ui:main-865d9688
+  # main-f19a92c5: sub-phase H — RulesEditor single-select module (scalar) + labels-arm
+  # labelSelectable gating (#1). G base: backend-driven catalog + resourceNames picker.
+  image: docker.io/prorobotech/kacho-ui:main-f19a92c5
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # main-92ca0f16: sub-phase G PermissionCatalog + prod-readiness cleanup —
-    # CRITICAL ledger fix (migration 0032 emitted_tuples source, applied by
-    # initContainer migrate), AccessBinding dedup, dead-code/stub removal.
-    tag: main-92ca0f16
+    # main-4ffca09e: sub-phase H — Rule.module scalar + migration 0033 (rewrites
+    # 64 roles modules:[x]→module:x + iam_rules_valid scalar CHECK, applied by
+    # initContainer migrate) + catalog label_selectable (#1). G base: PermissionCatalog.
+    tag: main-4ffca09e
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
