@@ -51,11 +51,11 @@ api-gateway:
   image: docker.io/prorobotech/kacho-api-gateway:main-d1afb89e
   imagePullPolicy: IfNotPresent
 ui:
-  # main-2a0ae017: sub-phase H — RulesEditor single-select module (scalar) + labels-arm
-  # labelSelectable gating (#1) + #2 fix (RolesListShell: roles list passes accountId from
-  # context-store → custom roles visible; keeps ResourceListPage Segmented chrome).
-  # G base: backend-driven catalog + resourceNames picker.
-  image: docker.io/prorobotech/kacho-ui:main-2a0ae017
+  # main-c1584e22: sub-phase H — RulesEditor single-select module (scalar) + labels-arm
+  # labelSelectable gating (#1) + #2 fix (RolesListShell: accountId scope + auto-default
+  # account + pageSize=1000 so custom roles load past the ~56 system-role page-boundary;
+  # LIVE-verified in browser — «Кастомные» shows custom roles). G base: backend-driven catalog.
+  image: docker.io/prorobotech/kacho-ui:main-c1584e22
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
