@@ -25,48 +25,50 @@ mtls:
   internalCA:
     caNamespace: beget-cert-manager   # cert-manager --cluster-resource-namespace
 
-# ── images: prorobotech registry, mtls-rc1 tag ──
+# ── images: prorobotech registry ──
+# Rolled out to fe3455 2026-06-22 (RBAC rules-model 2026 cleanup + sub-phase G —
+# backend-driven permission catalog). Tags = current LIVE images (kubectl set image
+# applied + verified: rollout green, iam migration 0032 applied, catalog endpoint
+# 401-gated). Source-of-truth so a future `helm upgrade -f values.fe3455.yaml`
+# does not revert live.
 vpc:
-  # main-e4030b21: FGA-Check на internal :9091-листенере (epic authZ-на-internal) —
-  # GetNetwork (system_viewer) / SetDefaultSecurityGroupId + AddressPool (system_admin)
-  # энфорсятся; IPAM InternalAddressService.* остаются exempt. Включает также
-  # GetNetwork→vrf_id (mig 0007). kacho-vpc-net оператор (system_viewer@cluster)
-  # читает GetNetwork через Check.
-  image: docker.io/prorobotech/kacho-vpc:main-700114b8
+  # main-c9bcc518: per-object filtered List (D-consumer) + ListByIDs test coverage.
+  image: docker.io/prorobotech/kacho-vpc:main-c9bcc518
   imagePullPolicy: IfNotPresent
 compute:
-  image: docker.io/prorobotech/kacho-compute:main-b803bfb1
+  # main-0af4e781: per-object filtered List (D-consumer #60) — live (unchanged this cut).
+  image: docker.io/prorobotech/kacho-compute:main-0af4e781
   imagePullPolicy: IfNotPresent
-# kacho-geo image: CI-built+pushed (docker-build on main, DOCKERHUB secrets now
-# provisioned). mTLS inherited ON from values.dev. dataMigration is OFF (S7):
-# the one-time compute→geo copy already ran during the cutover and compute no
-# longer owns geography (Region/Zone tables dropped) — geo serves its own seed.
+# kacho-geo image: CI-built+pushed. mTLS inherited ON from values.dev. dataMigration
+# OFF (S7): geo serves its own seed (compute no longer owns geography). Unchanged this cut.
 kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
 api-gateway:
-  # main-0f943164: epic-100 α — registered AddTargetResources /
-  # RemoveTargetResources / ListGrantableResources (resource-scoped AccessBinding).
-  image: docker.io/prorobotech/kacho-api-gateway:main-0f943164
+  # main-495c01a3: sub-phase G — public PermissionCatalogService.ListPermissionCatalog
+  # registered (external mux + allowlist) + authz-catalog resync after the
+  # RunRegoTest/ListPermissions tombstones.
+  image: docker.io/prorobotech/kacho-api-gateway:main-495c01a3
   imagePullPolicy: IfNotPresent
 ui:
-  # main-cfa11c88: epic-100 α — AccessBinding target picker (all_in_scope /
-  # resources[] mode + object-picker + target display).
-  image: docker.io/prorobotech/kacho-ui:main-cfa11c88
+  # main-865d9688: sub-phase G — backend-driven permission catalog (RulesEditor loads
+  # GET /iam/v1/permissionCatalog) + resourceNames real-instance picker.
+  image: docker.io/prorobotech/kacho-ui:main-865d9688
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # main-e64df1e2: epic-100 α — resource-scoped AccessBinding (target oneof +
-    # role-coverage gate + Add/Remove/ListGrantable; migration 0018
-    # access_binding_targets applied by initContainer migrate).
-    tag: main-e64df1e2
+    # main-92ca0f16: sub-phase G PermissionCatalog + prod-readiness cleanup —
+    # CRITICAL ledger fix (migration 0032 emitted_tuples source, applied by
+    # initContainer migrate), AccessBinding dedup, dead-code/stub removal.
+    tag: main-92ca0f16
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
   image:
+    # main-521d28d8: name= filter parser unified via corelib + authzfilter unit tests.
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-405057e4
+    tag: main-521d28d8
     pullPolicy: IfNotPresent
 
 # ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
