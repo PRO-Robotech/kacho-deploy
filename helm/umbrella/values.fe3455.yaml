@@ -32,12 +32,14 @@ mtls:
 # applied → roles rewritten modules:[x]→module:x for 64 roles, catalog labelSelectable
 # live). Source-of-truth so a future `helm upgrade -f values.fe3455.yaml` does not revert.
 vpc:
-  # main-c9bcc518: per-object filtered List (D-consumer) + ListByIDs test coverage.
-  image: docker.io/prorobotech/kacho-vpc:main-c9bcc518
+  # main-47d707da: T3.1 (#113) — network Update + securityGroup Create+Update emit
+  # RegisterResource(labels) on label-change (cross-service ARM_LABELS revoke).
+  image: docker.io/prorobotech/kacho-vpc:main-47d707da
   imagePullPolicy: IfNotPresent
 compute:
-  # main-0af4e781: per-object filtered List (D-consumer #60) — live (unchanged this cut).
-  image: docker.io/prorobotech/kacho-compute:main-0af4e781
+  # main-4a0b010e: T3.1 (#113) — disk/image/snapshot Update emit RegisterResource(labels)
+  # on label-change (cross-service ARM_LABELS revoke).
+  image: docker.io/prorobotech/kacho-compute:main-4a0b010e
   imagePullPolicy: IfNotPresent
 # kacho-geo image: CI-built+pushed. mTLS inherited ON from values.dev. dataMigration
 # OFF (S7): geo serves its own seed (compute no longer owns geography). Unchanged this cut.
@@ -61,17 +63,18 @@ ui:
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # main-4ffca09e: sub-phase H — Rule.module scalar + migration 0033 (rewrites
-    # 64 roles modules:[x]→module:x + iam_rules_valid scalar CHECK, applied by
-    # initContainer migrate) + catalog label_selectable (#1). G base: PermissionCatalog.
-    tag: main-4ffca09e
+    # main-299bbbba: #211 (invite/grant FGA — RC-1 anchor-tier emit + RC-2 invite-activation
+    # member-tuple + RC-5 every-user default account) + T3.1 #213 confirm-tests. Заменяет
+    # временный ttl.sh-образ реальным main. (carries прежний sub-phase H rules-scalar + 0033.)
+    tag: main-299bbbba
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
   image:
-    # main-521d28d8: name= filter parser unified via corelib + authzfilter unit tests.
+    # main-3cf783e5: T3.1 (#113) — listener Create+Update emit RegisterResource(labels)
+    # on label-change (double-bug closed; cross-service ARM_LABELS revoke).
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-521d28d8
+    tag: main-3cf783e5
     pullPolicy: IfNotPresent
 
 # ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
