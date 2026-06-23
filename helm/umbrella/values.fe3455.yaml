@@ -51,12 +51,12 @@ api-gateway:
   image: docker.io/prorobotech/kacho-api-gateway:main-d1afb89e
   imagePullPolicy: IfNotPresent
 ui:
-  # main-394f8207: sub-phase H — RulesEditor single-select module (scalar) + labels-arm
-  # labelSelectable gating (#1) + #2 fix (RolesListShell: header-pill accountId scope +
-  # auto-default account + pageSize=1000 past the ~56 system-role page-boundary; redundant
-  # page-level Account Select dropped — header pill is the sole selector). LIVE-verified in
-  # browser: «Кастомные» shows test+treska, no dup selector. G base: backend-driven catalog.
-  image: docker.io/prorobotech/kacho-ui:main-394f8207
+  # main-b097ff35: sub-phase H (RulesEditor scalar module + labels gating #1) + #2 roles-list
+  # (accountId scope + auto-default + pageSize=1000) + invite fix: InviteUserPage/AccessPage
+  # single-account auto-default + guard so inviting without a selected Account-pill no longer
+  # sends empty account_id → authz `account:*` deny. All LIVE-verified in browser (roles
+  # «Кастомные» shows custom; invite 200 with pill unselected). G base: backend-driven catalog.
+  image: docker.io/prorobotech/kacho-ui:main-b097ff35
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
