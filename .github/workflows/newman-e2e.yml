@@ -68,16 +68,15 @@ jobs:
           # so the checkout failed (git exit 1) before newman could run. Reverted to
           # main (flat model lives there; the deploy OpenFGA configmap is already the
           # flat regen, commit a273dd3).
-          echo "REF_PROTO=main"            >> "$GITHUB_ENV"
+          # flat-authz #241 TEMP-PIN: proto carries the tier⊇verb union model and
+          # this deploy branch regenerates the configmap from it — both must be in
+          # lockstep with the iam subject-derive fix so the e2e stack runs the new
+          # model + new iam image. Revert all three to main after the flat-authz
+          # PRs merge (kacho-proto / kacho-deploy#126 / kacho-iam#242).
+          echo "REF_PROTO=rbac-2026-flat-authz-tier-verb-union" >> "$GITHUB_ENV"
           echo "REF_VPC=main"              >> "$GITHUB_ENV"
           echo "REF_COMPUTE=main"          >> "$GITHUB_ENV"
-          # rbac-2026 Contract-A no-access-loss fix: pin iam to the flat-fallout
-          # branch (PRO-Robotech/kacho-iam#230) until it merges, then revert to
-          # main. Restores owner/creator per-object access on iam-native content
-          # under the flat FGA model — forward-mat (#228) + bootstrap owner-binding
-          # + sync FGA materialization + chunk/per-tuple-resilient sync-FGA write
-          # (iam-access-binding read-after-write tail, #232).
-          echo "REF_IAM=rbac-contract-a-flat-fallout" >> "$GITHUB_ENV"
+          echo "REF_IAM=rbac-2026-flat-authz-fix" >> "$GITHUB_ENV"
           echo "REF_GEO=main"              >> "$GITHUB_ENV"
           echo "REF_API_GATEWAY=main"      >> "$GITHUB_ENV"
           echo "REF_WORKSPACE=main"        >> "$GITHUB_ENV"
