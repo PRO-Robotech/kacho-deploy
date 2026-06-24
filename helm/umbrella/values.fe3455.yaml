@@ -53,12 +53,9 @@ api-gateway:
   image: docker.io/prorobotech/kacho-api-gateway:main-d1afb89e
   imagePullPolicy: IfNotPresent
 ui:
-  # main-b097ff35: sub-phase H (RulesEditor scalar module + labels gating #1) + #2 roles-list
-  # (accountId scope + auto-default + pageSize=1000) + invite fix: InviteUserPage/AccessPage
-  # single-account auto-default + guard so inviting without a selected Account-pill no longer
-  # sends empty account_id → authz `account:*` deny. All LIVE-verified in browser (roles
-  # «Кастомные» shows custom; invite 200 with pill unselected). G base: backend-driven catalog.
-  image: docker.io/prorobotech/kacho-ui:main-b097ff35
+  # main-27791bba: subjects[].type enum wire-form fix (SUBJECT_TYPE_USER) —
+  # AccessBinding grant-form create no longer 400s on empty subject_type.
+  image: docker.io/prorobotech/kacho-ui:main-27791bba
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
