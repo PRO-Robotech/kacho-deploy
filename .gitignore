@@ -22,3 +22,4 @@ ci/.seeded-ids.env
 # KAC-NLB: seed-nlb-fixtures.sh writes generated ids here for downstream
 # newman / e2e harnesses; never check the values in.
 .seeded-ids.env
+.claude/worktrees/
