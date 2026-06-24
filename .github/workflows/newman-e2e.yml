@@ -63,7 +63,9 @@ jobs:
           set -euo pipefail
           # KAC-135: all sibling pins reverted to main.
           echo "REF_CORELIB=main"          >> "$GITHUB_ENV"
-          echo "REF_PROTO=main"            >> "$GITHUB_ENV"
+          # rbac-2026 Contract-A: pin proto to the FGA-flat branch until
+          # PRO-Robotech/kacho-proto#85 merges, then revert to main.
+          echo "REF_PROTO=rbac-contract-a-fga-flat" >> "$GITHUB_ENV"
           echo "REF_VPC=main"              >> "$GITHUB_ENV"
           echo "REF_COMPUTE=main"          >> "$GITHUB_ENV"
           echo "REF_IAM=main"              >> "$GITHUB_ENV"
