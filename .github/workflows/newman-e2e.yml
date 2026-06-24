@@ -63,21 +63,16 @@ jobs:
           set -euo pipefail
           # KAC-135: all sibling pins reverted to main.
           echo "REF_CORELIB=main"          >> "$GITHUB_ENV"
-          # rbac-2026 Contract-A: kacho-proto#85 (FGA-flat model) is MERGED to main —
-          # the prior pin `rbac-contract-a-fga-flat` no longer exists on the remote,
-          # so the checkout failed (git exit 1) before newman could run. Reverted to
-          # main (flat model lives there; the deploy OpenFGA configmap is already the
-          # flat regen, commit a273dd3).
-          echo "REF_PROTO=main"            >> "$GITHUB_ENV"
+          # rbac-2026 Contract-B (org full-removal): pin kacho-proto + kacho-iam to
+          # the Contract-B branches until they merge to main, then revert to main.
+          # Proto drops organization.proto/OrganizationService + Account/Role
+          # organization_id (reserved-tombstone) + `type organization` from the FGA
+          # model; iam retires the residual org code paths/comments. The deploy
+          # OpenFGA configmap in THIS branch is the Contract-B regen (0 organization).
+          echo "REF_PROTO=rbac-contract-b-org-removal" >> "$GITHUB_ENV"
           echo "REF_VPC=main"              >> "$GITHUB_ENV"
           echo "REF_COMPUTE=main"          >> "$GITHUB_ENV"
-          # rbac-2026 Contract-A no-access-loss fix: pin iam to the flat-fallout
-          # branch (PRO-Robotech/kacho-iam#230) until it merges, then revert to
-          # main. Restores owner/creator per-object access on iam-native content
-          # under the flat FGA model — forward-mat (#228) + bootstrap owner-binding
-          # + sync FGA materialization + chunk/per-tuple-resilient sync-FGA write
-          # (iam-access-binding read-after-write tail, #232).
-          echo "REF_IAM=rbac-contract-a-flat-fallout" >> "$GITHUB_ENV"
+          echo "REF_IAM=rbac-contract-b-org-removal" >> "$GITHUB_ENV"
           echo "REF_GEO=main"              >> "$GITHUB_ENV"
           echo "REF_API_GATEWAY=main"      >> "$GITHUB_ENV"
           echo "REF_WORKSPACE=main"        >> "$GITHUB_ENV"
