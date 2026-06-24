@@ -11,10 +11,10 @@ kacho-iam serves the OPA bundle through Internal RPC `OpaBundleService.GetBundle
      compiled into the binary via `//go:embed` (so deploy artifact is one-shot,
      no separate file shipping). These live in the kacho-iam repo, not here.
   2. **Dynamic data sections** — derived from kacho-iam DB read-only queries:
-     - `data/organizations_users.json` — SCIM membership snapshot
-       (FROM scim_user_mappings — Phase 1).
-     - `data/timezones.json` — per-org TZ/business hours (FROM organizations).
+     - `data/timezones.json` — per-account TZ / business hours.
      - `data/billing_projects.json` — list of project_id LIKE 'prj_billing_%'.
+     (The legacy SCIM membership snapshot was removed with the B2B tenant type —
+     RBAC-2026 Contract-B / KAC-223.)
   3. **Signature** — JWS ES256 using current `oidc_jwks_keys.private_key_pem_encrypted`
      (decrypted with `KACHO_IAM_JWKS_ENC_KEY`, Phase 2 plumbed).
   4. **Revision** — `KACHO_BUILD_SHA` env var = git sha of kacho-iam build
