@@ -68,11 +68,13 @@ jobs:
           echo "REF_PROTO=rbac-contract-a-fga-flat" >> "$GITHUB_ENV"
           echo "REF_VPC=main"              >> "$GITHUB_ENV"
           echo "REF_COMPUTE=main"          >> "$GITHUB_ENV"
-          # rbac-2026 Contract-A no-access-loss fix: pin iam to the forward-
-          # materialization branch (PRO-Robotech/kacho-iam#228) until it merges,
-          # then revert to main. Restores owner/creator per-object access on
-          # iam-native content under the flat FGA model.
-          echo "REF_IAM=rbac-contract-a-fix" >> "$GITHUB_ENV"
+          # rbac-2026 Contract-A no-access-loss fix: pin iam to the flat-fallout
+          # branch (PRO-Robotech/kacho-iam#230) until it merges, then revert to
+          # main. Restores owner/creator per-object access on iam-native content
+          # under the flat FGA model — forward-mat (#228) + bootstrap owner-binding
+          # + sync FGA materialization + chunk/per-tuple-resilient sync-FGA write
+          # (iam-access-binding read-after-write tail, #232).
+          echo "REF_IAM=rbac-contract-a-flat-fallout" >> "$GITHUB_ENV"
           echo "REF_GEO=main"              >> "$GITHUB_ENV"
           echo "REF_API_GATEWAY=main"      >> "$GITHUB_ENV"
           echo "REF_WORKSPACE=main"        >> "$GITHUB_ENV"
