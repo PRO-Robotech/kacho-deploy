@@ -63,10 +63,11 @@ ui:
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # main-299bbbba: #211 (invite/grant FGA — RC-1 anchor-tier emit + RC-2 invite-activation
-    # member-tuple + RC-5 every-user default account) + T3.1 #213 confirm-tests. Заменяет
-    # временный ttl.sh-образ реальным main. (carries прежний sub-phase H rules-scalar + 0033.)
-    tag: main-299bbbba
+    # main-cf76ad4b: explicit RBAC model 2026 — Contract-A (FGA-flat: cascade+scope_grant
+    # removed, explicit per-object materialization + sync live-write own-object on create
+    # + batch-chunking) + Contract-B (organization full-removal). Carries P1-P8 + #224 +
+    # owner cluster-role (deletion_protection) + cluster-admin short-circuit + migrate-backfill.
+    tag: main-cf76ad4b
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
