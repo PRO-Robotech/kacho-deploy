@@ -63,9 +63,12 @@ jobs:
           set -euo pipefail
           # KAC-135: all sibling pins reverted to main.
           echo "REF_CORELIB=main"          >> "$GITHUB_ENV"
-          # rbac-2026 Contract-A: pin proto to the FGA-flat branch until
-          # PRO-Robotech/kacho-proto#85 merges, then revert to main.
-          echo "REF_PROTO=rbac-contract-a-fga-flat" >> "$GITHUB_ENV"
+          # rbac-2026 Contract-A: kacho-proto#85 (FGA-flat model) is MERGED to main —
+          # the prior pin `rbac-contract-a-fga-flat` no longer exists on the remote,
+          # so the checkout failed (git exit 1) before newman could run. Reverted to
+          # main (flat model lives there; the deploy OpenFGA configmap is already the
+          # flat regen, commit a273dd3).
+          echo "REF_PROTO=main"            >> "$GITHUB_ENV"
           echo "REF_VPC=main"              >> "$GITHUB_ENV"
           echo "REF_COMPUTE=main"          >> "$GITHUB_ENV"
           # rbac-2026 Contract-A no-access-loss fix: pin iam to the flat-fallout
