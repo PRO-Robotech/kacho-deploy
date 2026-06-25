@@ -67,7 +67,7 @@ kacho-iam:
     # removed, explicit per-object materialization + sync live-write own-object on create
     # + batch-chunking) + Contract-B (organization full-removal). Carries P1-P8 + #224 +
     # owner cluster-role (deletion_protection) + cluster-admin short-circuit + migrate-backfill.
-    tag: main-1cd16d96
+    tag: main-558617eb
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
