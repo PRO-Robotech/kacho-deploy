@@ -42,6 +42,14 @@ on:
 permissions:
   contents: read
 
+# kacho-geo is an external OSS dependency consumed as a PUBLISHED image (not
+# rebuilt from source in this umbrella). Pin the known-good tag — the one
+# running on the long-lived fe3455 stand — in one place so the docker-pull,
+# kind-load and helm --set all stay in lockstep. Bump alongside the umbrella
+# geo sub-chart default + values.dev.yaml when geo cuts a new known-good build.
+env:
+  KACHO_GEO_IMAGE: docker.io/prorobotech/kacho-geo:main-84d9d68f
+
 jobs:
   newman-e2e:
     name: newman E2E (kind + helm umbrella)
@@ -63,12 +71,14 @@ jobs:
           set -euo pipefail
           # KAC-135: all sibling pins reverted to main.
           echo "REF_CORELIB=main"          >> "$GITHUB_ENV"
-          # rbac-2026 Contract-A: kacho-proto#85 (FGA-flat model) is MERGED to main —
-          # the prior pin `rbac-contract-a-fga-flat` no longer exists on the remote,
-          # so the checkout failed (git exit 1) before newman could run. Reverted to
-          # main (flat model lives there; the deploy OpenFGA configmap is already the
-          # flat regen, commit a273dd3).
-          echo "REF_PROTO=main"            >> "$GITHUB_ENV"
+          # rbac-2026 Design-B (verb-bearing completion): pin kacho-proto to the
+          # flat verb-bearing branch (PRO-Robotech/kacho-proto#88) until it merges,
+          # then revert to main. Carries the poison-fixed flat fga_model
+          # (iam_user/iam_role/iam_condition viewer/editor directly-assignable, v_*
+          # decoupled from tiers — no union). The deploy OpenFGA configmap in THIS
+          # branch is regenerated from that model. The coverage gate also reads
+          # proto from this checkout, so the pin must match the generated configmap.
+          echo "REF_PROTO=rbac-flat-verb-bearing-proto" >> "$GITHUB_ENV"
           echo "REF_VPC=main"              >> "$GITHUB_ENV"
           echo "REF_COMPUTE=main"          >> "$GITHUB_ENV"
           # rbac-2026 Contract-A no-access-loss fix: pin iam to the flat-fallout
@@ -169,11 +179,18 @@ jobs:
 
       # Build every kacho-* :dev image. Go services build with context = the
       # workspace root (Dockerfile COPY kacho-corelib / kacho-proto / kacho-<svc>).
+      #
+      # kacho-geo is intentionally NOT built here. It is now an external OSS
+      # single-repo (own git history, versioned modules) and is consumed by the
+      # umbrella as a PUBLISHED dependency, not rebuilt from source. Building it
+      # from the OSS HEAD produced a runtime-broken image (geo-read 503 →
+      # cascading compute newman failures); the umbrella pulls the known-good
+      # published tag instead (see "pull published kacho-geo image" below).
       - name: build service images
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          for svc in vpc iam compute geo api-gateway nlb; do
+          for svc in vpc iam compute api-gateway nlb; do
             echo "=== build kacho-$svc:dev ==="
             docker build -f "kacho-$svc/Dockerfile" -t "kacho-$svc:dev" .
           done
@@ -181,6 +198,17 @@ jobs:
             echo "=== build kacho-ui:dev ==="
             docker build -t kacho-ui:dev kacho-ui
           fi
+
+      # geo is consumed as a published OSS dependency — pull the known-good
+      # image (the one running on the long-lived fe3455 stand) instead of
+      # building :dev from the OSS source. Tag is centralised in the umbrella
+      # geo sub-chart default + values.dev.yaml (KACHO_GEO_IMAGE below keeps the
+      # pull + the helm --set in lockstep).
+      - name: pull published kacho-geo image
+        run: |
+          set -euo pipefail
+          echo "=== pull ${KACHO_GEO_IMAGE} ==="
+          docker pull "${KACHO_GEO_IMAGE}"
 
       - uses: helm/kind-action@v1
         with:
@@ -190,9 +218,13 @@ jobs:
       - name: load images into kind
         run: |
           set -euo pipefail
-          for img in kacho-vpc:dev kacho-iam:dev kacho-compute:dev kacho-geo:dev kacho-api-gateway:dev kacho-nlb:dev; do
+          for img in kacho-vpc:dev kacho-iam:dev kacho-compute:dev kacho-api-gateway:dev kacho-nlb:dev; do
             kind load docker-image "$img" --name kacho
           done
+          # geo: load the PUBLISHED known-good image (pulled above) into kind so
+          # the geo Deployment runs the working build with imagePullPolicy
+          # IfNotPresent and never hits the registry from inside the cluster.
+          kind load docker-image "${KACHO_GEO_IMAGE}" --name kacho
           docker image inspect kacho-ui:dev >/dev/null 2>&1 \
             && kind load docker-image kacho-ui:dev --name kacho || true
 
@@ -222,7 +254,8 @@ jobs:
             --set api-gateway.mtls.enable=false \
             --set kacho-nlb.mtls.enable=false \
             --set kacho-iam.mtls.enable=false \
-            --set kacho-geo.mtls.enable=false
+            --set kacho-geo.mtls.enable=false \
+            --set "kacho-geo.image=${KACHO_GEO_IMAGE}"
 
       # Phase 1 — wait for the data-plane Deployments + Postgres to converge.
       - name: wait for core deployments
@@ -233,7 +266,9 @@ jobs:
             kubectl -n kacho rollout status "statefulset/kacho-umbrella-${sts}" --timeout=6m || true
           done
           echo "=== waiting for service Deployments (first generation) ==="
-          for dep in api-gateway kacho-iam vpc compute; do
+          # geo included: compute→geo (zone_id validation) is on the request path,
+          # so geo must be Ready before the compute newman cases run.
+          for dep in api-gateway kacho-iam vpc compute kacho-geo; do
             kubectl -n kacho rollout status "deploy/${dep}" --timeout=8m || true
           done
           kubectl -n kacho get pods -o wide || true
@@ -267,6 +302,9 @@ jobs:
       - name: wait for post-bootstrap rollout
         run: |
           set -euo pipefail
+          # geo is NOT in the openfga-bootstrap restart set (it holds no FGA
+          # store/model id — it only dials kacho-iam-internal:9091 for Check), so
+          # it is not re-rolled here; its first-generation rollout above is final.
           for dep in kacho-iam api-gateway vpc compute; do
             echo "=== rollout status (post-bootstrap): $dep ==="
             kubectl -n kacho rollout status "deploy/${dep}" --timeout=8m || true
@@ -343,7 +381,7 @@ jobs:
         run: |
           kubectl -n kacho get pods -o wide || true
           kubectl -n kacho get events --sort-by=.lastTimestamp | tail -40 || true
-          for d in api-gateway kacho-iam vpc compute; do
+          for d in api-gateway kacho-iam vpc compute kacho-geo; do
             echo "=== logs: $d ==="
             kubectl -n kacho logs "deploy/$d" --tail=200 || true
             echo "=== describe: $d ==="
