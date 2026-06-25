@@ -34,12 +34,12 @@ mtls:
 vpc:
   # main-47d707da: T3.1 (#113) — network Update + securityGroup Create+Update emit
   # RegisterResource(labels) on label-change (cross-service ARM_LABELS revoke).
-  image: docker.io/prorobotech/kacho-vpc:main-47d707da
+  image: docker.io/prorobotech/kacho-vpc:main-74b93579
   imagePullPolicy: IfNotPresent
 compute:
   # main-4a0b010e: T3.1 (#113) — disk/image/snapshot Update emit RegisterResource(labels)
   # on label-change (cross-service ARM_LABELS revoke).
-  image: docker.io/prorobotech/kacho-compute:main-4a0b010e
+  image: docker.io/prorobotech/kacho-compute:main-e153b6de
   imagePullPolicy: IfNotPresent
 # kacho-geo image: CI-built+pushed. mTLS inherited ON from values.dev. dataMigration
 # OFF (S7): geo serves its own seed (compute no longer owns geography). Unchanged this cut.
@@ -50,7 +50,7 @@ api-gateway:
   # main-d1afb89e: sub-phase H — rebuilt against proto Rule.module scalar +
   # catalog label_selectable (grpc-gateway stubs marshal scalar module). G base:
   # PermissionCatalogService.ListPermissionCatalog external mux + allowlist.
-  image: docker.io/prorobotech/kacho-api-gateway:main-d1afb89e
+  image: docker.io/prorobotech/kacho-api-gateway:main-5e05640b
   imagePullPolicy: IfNotPresent
 ui:
   # main-b097ff35: sub-phase H (RulesEditor scalar module + labels gating #1) + #2 roles-list
@@ -58,7 +58,7 @@ ui:
   # single-account auto-default + guard so inviting without a selected Account-pill no longer
   # sends empty account_id → authz `account:*` deny. All LIVE-verified in browser (roles
   # «Кастомные» shows custom; invite 200 with pill unselected). G base: backend-driven catalog.
-  image: docker.io/prorobotech/kacho-ui:main-b097ff35
+  image: docker.io/prorobotech/kacho-ui:main-a16e8893
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
@@ -67,7 +67,7 @@ kacho-iam:
     # removed, explicit per-object materialization + sync live-write own-object on create
     # + batch-chunking) + Contract-B (organization full-removal). Carries P1-P8 + #224 +
     # owner cluster-role (deletion_protection) + cluster-admin short-circuit + migrate-backfill.
-    tag: main-cf76ad4b
+    tag: main-1cd16d96
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
@@ -75,7 +75,7 @@ kacho-nlb:
     # main-3cf783e5: T3.1 (#113) — listener Create+Update emit RegisterResource(labels)
     # on label-change (double-bug closed; cross-service ARM_LABELS revoke).
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-3cf783e5
+    tag: main-65ba5ad0
     pullPolicy: IfNotPresent
 
 # ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
