@@ -69,32 +69,21 @@ jobs:
           DISPATCH_SOURCE: ${{ github.event.client_payload.source }}
         run: |
           set -euo pipefail
-          # KAC-135: all sibling pins reverted to main.
+          # All sibling pins reverted to main — the Design-B verb-bearing stack
+          # (proto#88 · iam#245 · vpc#9 · compute#64 · nlb#41 · api-gateway#99)
+          # is merged, so the coordinated feature-branch pins are no longer needed.
           echo "REF_CORELIB=main"          >> "$GITHUB_ENV"
-          # rbac-2026 Design-B (verb-bearing completion): pin kacho-proto to the
-          # flat verb-bearing branch (PRO-Robotech/kacho-proto#88) until it merges,
-          # then revert to main. Carries the poison-fixed flat fga_model
-          # (iam_user/iam_role/iam_condition viewer/editor directly-assignable, v_*
-          # decoupled from tiers — no union). The deploy OpenFGA configmap in THIS
-          # branch is regenerated from that model. The coverage gate also reads
-          # proto from this checkout, so the pin must match the generated configmap.
-          echo "REF_PROTO=rbac-flat-verb-bearing-proto" >> "$GITHUB_ENV"
-          # rbac-2026 Design-B coordinated e2e: pin every consumer to its
-          # verb-bearing feature branch so this run exercises the FULL Design-B
-          # stack (enforcement → v_* for object-self CRUD) against the
-          # regenerated flat OpenFGA configmap on THIS branch. Revert each to
-          # main after the corresponding PR merges:
-          #   proto#88 · iam#245 · vpc#9 · compute#64 · nlb#41 · api-gateway#99.
-          echo "REF_VPC=rbac-flat-verb-bearing-svc" >> "$GITHUB_ENV"
-          echo "REF_COMPUTE=rbac-flat-verb-bearing-svc" >> "$GITHUB_ENV"
-          echo "REF_IAM=rbac-flat-verb-bearing-iam" >> "$GITHUB_ENV"
+          echo "REF_PROTO=main"            >> "$GITHUB_ENV"
+          echo "REF_VPC=main"              >> "$GITHUB_ENV"
+          echo "REF_COMPUTE=main"          >> "$GITHUB_ENV"
+          echo "REF_IAM=main"              >> "$GITHUB_ENV"
           echo "REF_GEO=main"              >> "$GITHUB_ENV"
-          echo "REF_API_GATEWAY=rbac-flat-verb-bearing-gw" >> "$GITHUB_ENV"
+          echo "REF_API_GATEWAY=main"      >> "$GITHUB_ENV"
           echo "REF_WORKSPACE=main"        >> "$GITHUB_ENV"
           echo "REF_UI=main"               >> "$GITHUB_ENV"
           # KAC-NLB: kacho-nlb sibling for helm dep (file://../../../kacho-nlb/deploy)
           # and Dockerfile build context (COPY ../kacho-nlb when ci-images target runs).
-          echo "REF_NLB=rbac-flat-verb-bearing-svc" >> "$GITHUB_ENV"
+          echo "REF_NLB=main"              >> "$GITHUB_ENV"
           if [ -n "${DISPATCH_REPO:-}" ] && [ -n "${DISPATCH_REF:-}" ]; then
             # client_payload.repo may arrive as "PRO-Robotech/kacho-vpc" or
             # bare "kacho-vpc" — normalise to the kacho-<name> short form.
