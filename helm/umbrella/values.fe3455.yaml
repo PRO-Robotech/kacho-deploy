@@ -32,14 +32,16 @@ mtls:
 # applied → roles rewritten modules:[x]→module:x for 64 roles, catalog labelSelectable
 # live). Source-of-truth so a future `helm upgrade -f values.fe3455.yaml` does not revert.
 vpc:
-  # main-47d707da: T3.1 (#113) — network Update + securityGroup Create+Update emit
-  # RegisterResource(labels) on label-change (cross-service ARM_LABELS revoke).
-  image: docker.io/prorobotech/kacho-vpc:main-74b93579
+  # main-4987b56e: routeTable/address/gateway/networkInterface Create+Update feed labels +
+  # parent to the IAM mirror (RegisterItems(ProjectHierarchyItem)) so label-scoped grants
+  # materialize for all 7 VPC types — fixes under-show of the 4 residual types.
+  image: docker.io/prorobotech/kacho-vpc:main-4987b56e
   imagePullPolicy: IfNotPresent
 compute:
-  # main-4a0b010e: T3.1 (#113) — disk/image/snapshot Update emit RegisterResource(labels)
-  # on label-change (cross-service ARM_LABELS revoke).
-  image: docker.io/prorobotech/kacho-compute:main-e153b6de
+  # main-e5634e60: List filter resolves the FGA subject from operations.PrincipalFromContext
+  # (x-kacho-principal-*) and fail-closes on empty subject — fixes the public-List over-show
+  # leak (previously read a never-sent x-kacho-subject* header → bypassed list-authz).
+  image: docker.io/prorobotech/kacho-compute:main-e5634e60
   imagePullPolicy: IfNotPresent
 # kacho-geo image: CI-built+pushed. mTLS inherited ON from values.dev. dataMigration
 # OFF (S7): geo serves its own seed (compute no longer owns geography). Unchanged this cut.
@@ -47,10 +49,10 @@ kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
 api-gateway:
-  # main-d1afb89e: sub-phase H — rebuilt against proto Rule.module scalar +
-  # catalog label_selectable (grpc-gateway stubs marshal scalar module). G base:
-  # PermissionCatalogService.ListPermissionCatalog external mux + allowlist.
-  image: docker.io/prorobotech/kacho-api-gateway:main-5e05640b
+  # main-22b43201: read-deny on a verb-bearing Get → 404 NotFound hide-existence (no
+  # deny_reasons, denied == nonexistent, no enumeration leak); mutations/List stay 403,
+  # anon 401. Carries the Design-B v_* catalog sync + ListPermissionCatalog external mux.
+  image: docker.io/prorobotech/kacho-api-gateway:main-22b43201
   imagePullPolicy: IfNotPresent
 ui:
   # main-b097ff35: sub-phase H (RulesEditor scalar module + labels gating #1) + #2 roles-list
