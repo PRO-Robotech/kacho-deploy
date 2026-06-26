@@ -49,10 +49,11 @@ kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
 api-gateway:
-  # main-22b43201: read-deny on a verb-bearing Get → 404 NotFound hide-existence (no
-  # deny_reasons, denied == nonexistent, no enumeration leak); mutations/List stay 403,
-  # anon 401. Carries the Design-B v_* catalog sync + ListPermissionCatalog external mux.
-  image: docker.io/prorobotech/kacho-api-gateway:main-22b43201
+  # main-93d16dfa: register public iam.v1 UserService.Update (PATCH /iam/v1/users/{id}),
+  # the gateway side of the unified label-scope UpdateUser RPC. Retains the BUG-2
+  # hide-existence read-deny (verb-bearing Get → 404 NotFound, no enumeration leak;
+  # mutations/List stay 403, anon 401) + Design-B v_* catalog sync + ListPermissionCatalog.
+  image: docker.io/prorobotech/kacho-api-gateway:main-93d16dfa
   imagePullPolicy: IfNotPresent
 ui:
   # main-b097ff35: sub-phase H (RulesEditor scalar module + labels gating #1) + #2 roles-list
@@ -65,11 +66,11 @@ ui:
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # main-cf76ad4b: explicit RBAC model 2026 — Contract-A (FGA-flat: cascade+scope_grant
-    # removed, explicit per-object materialization + sync live-write own-object on create
-    # + batch-chunking) + Contract-B (organization full-removal). Carries P1-P8 + #224 +
-    # owner cluster-role (deletion_protection) + cluster-admin short-circuit + migrate-backfill.
-    tag: main-558617eb
+    # main-b4164e0f: unify IAM label-scope — all 5 iam types label-selectable
+    # (own-resource labels → viewer ∪ v_list catalog visibility) + new public UpdateUser
+    # RPC (labels mutable, identity-fields immutable) + feed-gate + unified reconciler.
+    # On the explicit RBAC model 2026 base (Contract-A flat per-object + owner cluster-role).
+    tag: main-b4164e0f
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
