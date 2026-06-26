@@ -49,11 +49,13 @@ kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-84d9d68f
   imagePullPolicy: IfNotPresent
 api-gateway:
-  # main-93d16dfa: register public iam.v1 UserService.Update (PATCH /iam/v1/users/{id}),
-  # the gateway side of the unified label-scope UpdateUser RPC. Retains the BUG-2
-  # hide-existence read-deny (verb-bearing Get → 404 NotFound, no enumeration leak;
-  # mutations/List stay 403, anon 401) + Design-B v_* catalog sync + ListPermissionCatalog.
-  image: docker.io/prorobotech/kacho-api-gateway:main-93d16dfa
+  # main-cbaa8bc1: permission-catalog sync — ProjectService.List + GroupService.List → <exempt>
+  # (parity with User/SA/Role List): gateway drops the account#v_list call-gate + acr=2 step-up
+  # on these List RPCs; the IAM handler's viewer ∪ v_list scope-filter is the authoritative gate
+  # (200+filtered, never 403; anon→401). Fixes non-member List 403→200+empty + by-label
+  # see-in-selector discovery (#255). On the main-93d16dfa base (UserService.Update + BUG-2
+  # hide-existence read-deny + Design-B v_* catalog).
+  image: docker.io/prorobotech/kacho-api-gateway:main-cbaa8bc1
   imagePullPolicy: IfNotPresent
 ui:
   # main-b097ff35: sub-phase H (RulesEditor scalar module + labels gating #1) + #2 roles-list
