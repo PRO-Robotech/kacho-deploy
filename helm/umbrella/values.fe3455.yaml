@@ -66,12 +66,12 @@ ui:
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # main-329fbf6d: User.List self-floor — a user always sees their own record,
-    # independent of FGA materialization (parity with GetUser.IsSelf), fixing the
-    # empty /iam/v1/users for users without a materialized subject self-tuple.
-    # On the unify-IAM-label-scope base (all 5 iam types label-selectable +
-    # public UpdateUser RPC + explicit RBAC model 2026 per-object + owner cluster-role).
-    tag: main-329fbf6d
+    # main-86ab8a95: User.List self-floor (#259) + GroupService.List per-object
+    # viewer∪v_list filter (#261) + reconcile drain 2s→150ms for label-grant latency
+    # (#263: label-grant 1951ms→422ms p50) + label-clear via updateMask=labels applies
+    # for all 7 iam-native types (#262, was a silent no-op). On the unify-IAM-label-scope
+    # base (all 5 iam types label-selectable + public UpdateUser + explicit RBAC 2026).
+    tag: main-86ab8a95
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
