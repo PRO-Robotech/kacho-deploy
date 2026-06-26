@@ -66,12 +66,12 @@ ui:
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # main-86ab8a95: User.List self-floor (#259) + GroupService.List per-object
-    # viewer∪v_list filter (#261) + reconcile drain 2s→150ms for label-grant latency
-    # (#263: label-grant 1951ms→422ms p50) + label-clear via updateMask=labels applies
-    # for all 7 iam-native types (#262, was a silent no-op). On the unify-IAM-label-scope
-    # base (all 5 iam types label-selectable + public UpdateUser + explicit RBAC 2026).
-    tag: main-86ab8a95
+    # main-7cede3e0: latency-complete iam — self-floor #259 + Group.List filter #261
+    # + label-clear #262 + reconcile drain 2s→150ms #263 + AccessBinding.Delete sync
+    # tuple-removal #266 (revoke 845→61ms) + reconcile_outbox LISTEN/NOTIFY #267
+    # (migration 0042 trigger; label-grant 1951→307ms). All grant/revoke paths ≤500ms
+    # SLO, grant+revoke in the 50-200ms ideal band. On the unify-IAM-label-scope base.
+    tag: main-7cede3e0
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
