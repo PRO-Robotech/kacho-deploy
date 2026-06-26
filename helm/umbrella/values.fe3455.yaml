@@ -66,11 +66,12 @@ ui:
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # main-b4164e0f: unify IAM label-scope — all 5 iam types label-selectable
-    # (own-resource labels → viewer ∪ v_list catalog visibility) + new public UpdateUser
-    # RPC (labels mutable, identity-fields immutable) + feed-gate + unified reconciler.
-    # On the explicit RBAC model 2026 base (Contract-A flat per-object + owner cluster-role).
-    tag: main-b4164e0f
+    # main-329fbf6d: User.List self-floor — a user always sees their own record,
+    # independent of FGA materialization (parity with GetUser.IsSelf), fixing the
+    # empty /iam/v1/users for users without a materialized subject self-tuple.
+    # On the unify-IAM-label-scope base (all 5 iam types label-selectable +
+    # public UpdateUser RPC + explicit RBAC model 2026 per-object + owner cluster-role).
+    tag: main-329fbf6d
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
