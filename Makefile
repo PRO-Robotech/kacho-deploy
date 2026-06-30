@@ -146,6 +146,14 @@ seed-ipam:
 	@echo "    --is-default \\"
 	@echo "    --name production-pool"
 
+# fe3455-forward — устойчивый доступ к удалённому стенду fe3455. Самовосстанавливается
+# при роллауте подов (каждый деплой катит pod → одноразовый port-forward рвётся) и
+# берёт выделенный порт 38080, не пересекающийся с локальным kind-стендом (:28080).
+# UI на http://127.0.0.1:38080. Override: UI_PORT=… GW_PORT=… make fe3455-forward.
+.PHONY: fe3455-forward
+fe3455-forward:
+	./scripts/fe3455-forward.sh
+
 e2e-test:
 	@for sh in e2e/0.1/*.sh; do \
 		echo "=== $$sh ==="; \
