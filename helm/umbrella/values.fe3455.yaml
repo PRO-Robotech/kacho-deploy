@@ -36,7 +36,7 @@ vpc:
   # anycast-VIP allocation. List несёт scope/ip_version-фильтры и сурфейсит платформенный
   # is_default пул (selector). SetAddressReference — expect_anycast CAS-guard (BYO VIP
   # принимает только anycast-адрес). fga_reconcile_adapter знает таблицу anycast-пулов.
-  image: docker.io/prorobotech/kacho-vpc:KAC-280-e04cba39
+  image: docker.io/prorobotech/kacho-vpc:KAC-280-5e712384
   imagePullPolicy: IfNotPresent
 compute:
   # main-e5634e60: List filter resolves the FGA subject from operations.PrincipalFromContext
@@ -56,7 +56,7 @@ api-gateway:
   # (200+filtered, never 403; anon→401). Fixes non-member List 403→200+empty + by-label
   # see-in-selector discovery (#255). On the main-93d16dfa base (UserService.Update + BUG-2
   # hide-existence read-deny + Design-B v_* catalog).
-  image: docker.io/prorobotech/kacho-api-gateway:KAC-280-86d86a6b
+  image: docker.io/prorobotech/kacho-api-gateway:KAC-280-30605ed7
   imagePullPolicy: IfNotPresent
 ui:
   # main-b097ff35: sub-phase H (RulesEditor scalar module + labels gating #1) + #2 roles-list
