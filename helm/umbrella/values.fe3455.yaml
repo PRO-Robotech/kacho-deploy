@@ -56,7 +56,7 @@ api-gateway:
   # (200+filtered, never 403; anon→401). Fixes non-member List 403→200+empty + by-label
   # see-in-selector discovery (#255). On the main-93d16dfa base (UserService.Update + BUG-2
   # hide-existence read-deny + Design-B v_* catalog).
-  image: docker.io/prorobotech/kacho-api-gateway:KAC-280-30605ed7
+  image: docker.io/prorobotech/kacho-api-gateway:KAC-280-fa9856b2
   imagePullPolicy: IfNotPresent
 ui:
   # main-b097ff35: sub-phase H (RulesEditor scalar module + labels gating #1) + #2 roles-list
