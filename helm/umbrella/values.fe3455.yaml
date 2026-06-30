@@ -36,7 +36,7 @@ vpc:
   # anycast-VIP allocation. List несёт scope/ip_version-фильтры и сурфейсит платформенный
   # is_default пул (selector). SetAddressReference — expect_anycast CAS-guard (BYO VIP
   # принимает только anycast-адрес). fga_reconcile_adapter знает таблицу anycast-пулов.
-  image: docker.io/prorobotech/kacho-vpc:KAC-280-5e712384
+  image: docker.io/prorobotech/kacho-vpc:KAC-280-cdffed56
   imagePullPolicy: IfNotPresent
 compute:
   # main-e5634e60: List filter resolves the FGA subject from operations.PrincipalFromContext
