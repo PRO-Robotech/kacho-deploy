@@ -64,7 +64,7 @@ ui:
   # single-account auto-default + guard so inviting without a selected Account-pill no longer
   # sends empty account_id → authz `account:*` deny. All LIVE-verified in browser (roles
   # «Кастомные» shows custom; invite 200 with pill unselected). G base: backend-driven catalog.
-  image: docker.io/prorobotech/kacho-ui:KAC-280-44a4b12a
+  image: docker.io/prorobotech/kacho-ui:KAC-280-df5864ae
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
