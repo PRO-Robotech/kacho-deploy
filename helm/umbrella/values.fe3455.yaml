@@ -32,10 +32,11 @@ mtls:
 # applied → roles rewritten modules:[x]→module:x for 64 roles, catalog labelSelectable
 # live). Source-of-truth so a future `helm upgrade -f values.fe3455.yaml` does not revert.
 vpc:
-  # main-4987b56e: routeTable/address/gateway/networkInterface Create+Update feed labels +
-  # parent to the IAM mirror (RegisterItems(ProjectHierarchyItem)) so label-scoped grants
-  # materialize for all 7 VPC types — fixes under-show of the 4 residual types.
-  image: docker.io/prorobotech/kacho-vpc:main-978f6e0f
+  # KAC-280-e04cba39: AnycastAddressPool (tenant-facing, M:N к Network) + network-scoped
+  # anycast-VIP allocation. List несёт scope/ip_version-фильтры и сурфейсит платформенный
+  # is_default пул (selector). SetAddressReference — expect_anycast CAS-guard (BYO VIP
+  # принимает только anycast-адрес). fga_reconcile_adapter знает таблицу anycast-пулов.
+  image: docker.io/prorobotech/kacho-vpc:KAC-280-e04cba39
   imagePullPolicy: IfNotPresent
 compute:
   # main-e5634e60: List filter resolves the FGA subject from operations.PrincipalFromContext
@@ -55,7 +56,7 @@ api-gateway:
   # (200+filtered, never 403; anon→401). Fixes non-member List 403→200+empty + by-label
   # see-in-selector discovery (#255). On the main-93d16dfa base (UserService.Update + BUG-2
   # hide-existence read-deny + Design-B v_* catalog).
-  image: docker.io/prorobotech/kacho-api-gateway:main-b96a48f9
+  image: docker.io/prorobotech/kacho-api-gateway:KAC-280-86d86a6b
   imagePullPolicy: IfNotPresent
 ui:
   # main-b097ff35: sub-phase H (RulesEditor scalar module + labels gating #1) + #2 roles-list
@@ -63,17 +64,16 @@ ui:
   # single-account auto-default + guard so inviting without a selected Account-pill no longer
   # sends empty account_id → authz `account:*` deny. All LIVE-verified in browser (roles
   # «Кастомные» shows custom; invite 200 with pill unselected). G base: backend-driven catalog.
-  image: docker.io/prorobotech/kacho-ui:main-09feff2e
+  image: docker.io/prorobotech/kacho-ui:KAC-280-c94b7c11
   imagePullPolicy: IfNotPresent
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # main-7cede3e0: latency-complete iam — self-floor #259 + Group.List filter #261
-    # + label-clear #262 + reconcile drain 2s→150ms #263 + AccessBinding.Delete sync
-    # tuple-removal #266 (revoke 845→61ms) + reconcile_outbox LISTEN/NOTIFY #267
-    # (migration 0042 trigger; label-grant 1951→307ms). All grant/revoke paths ≤500ms
-    # SLO, grant+revoke in the 50-200ms ideal band. On the unify-IAM-label-scope base.
-    tag: main-b4164e0f
+    # KAC-280-e6f51602: authzmap closed-table знает vpc_anycast_address_pool
+    # (objectTypes + verbBearingTypes) — per-object Check резолвит тип, permission-каталог
+    # проецирует его гранты. На базе latency-complete iam (self-floor/label-clear/
+    # reconcile NOTIFY, все grant/revoke ≤500ms SLO).
+    tag: KAC-280-e6f51602
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
@@ -81,7 +81,10 @@ kacho-nlb:
     # main-3cf783e5: T3.1 (#113) — listener Create+Update emit RegisterResource(labels)
     # on label-change (double-bug closed; cross-service ARM_LABELS revoke).
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-0edc9a5f
+    # KAC-280-2f2795a2: VIP→LoadBalancer (anycast active-active, INTERNAL-first) —
+    # per-family fan-out сага, CAS-attach single-VIP-per-LB. BYO VIP-привязка несёт
+    # expect_anycast (vpc-guard отвергает не-anycast/публичный адрес). migrations 0009/0010.
+    tag: KAC-280-2f2795a2
     pullPolicy: IfNotPresent
 
 # ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
