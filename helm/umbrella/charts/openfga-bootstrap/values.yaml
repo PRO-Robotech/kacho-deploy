@@ -60,6 +60,17 @@ openfgaBootstrap:
   # the Role's get/update/patch is scoped to them via resourceNames (least priv).
   storeIdSecretName: kacho-iam-openfga-store
   clusterSingletonId: cluster_kacho_root
+  # Consumer Deployments the Job bumps with the `kacho.cloud/openfga-model-id-rev`
+  # annotation on a model change (Step G rolling-restart). Single source of truth:
+  # the Job's patch loop AND the Role's deployments resourceNames both render from
+  # this list, so the RBAC grant stays least-privilege (no namespace-wide deployment
+  # patch) and can never drift from the set the Job actually touches.
+  consumerDeployments:
+    - kacho-iam
+    - api-gateway
+    - vpc
+    - compute
+    - loadbalancer
   # Opt-in `CREATE DATABASE kacho_openfga` Job. Off by default — the bitnami
   # pg-openfga chart auto-creates the DB from auth.username / auth.database.
   # Set true only against a shared Postgres (RDS / CloudNativePG).

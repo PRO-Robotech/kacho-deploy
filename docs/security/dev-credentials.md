@@ -14,6 +14,15 @@ The former well-known literals were replaced with unmistakable placeholders:
 | `minioadmin` (root password / secret key) | `changeme-dev-minio-secret` |
 | `dev-vpc-password`, `dev-compute-password`, `dev-iam-password`, `dev-geo-password`, `dev-openfga-password`, `dev-nlb-password`, `dev-kratos-password`, `dev-hydra-password` | `changeme-dev-<service>` |
 
+The JWT signing secret `authn.devSecret: kacho-dev-jwt-secret-2026` is likewise a
+committed **dev-only placeholder**. It is deliberately shared with the
+authz-fixtures JWT minter (`tests/authz-fixtures/setup.sh` `DEV_SECRET` default) so
+the ephemeral stand can mint valid dev tokens without an external IdP. It carries
+**no confidentiality** and falls under the same rules below — anyone with the file
+can forge dev tokens, so a `values.dev.yaml` cluster must never be network-reachable.
+Production runs `authn.mode` against a real IdP / validated JWKS and never uses this
+value.
+
 Each placeholder is replaced consistently across every occurrence (the Postgres
 `auth.password`, the service DSN/URI, and the MinIO client keys) so the
 ephemeral stand still comes up — the values are functional but carry **no

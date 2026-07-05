@@ -216,7 +216,7 @@ spec:
               # `api-gateway`, `vpc`, `compute`, `loadbalancer` (без `kacho-umbrella-`
               # префикса; раньше список был неверным → restart-bump молча скипался).
               REV=$(date +%s)
-              for DEP in kacho-iam api-gateway vpc compute loadbalancer; do
+              for DEP in {{ .Values.openfgaBootstrap.consumerDeployments | join " " }}; do
                 if kubectl -n "${NAMESPACE}" get deployment "${DEP}" >/dev/null 2>&1; then
                   echo "[bootstrap] bumping kacho.cloud/openfga-model-id-rev on ${DEP}..."
                   kubectl -n "${NAMESPACE}" patch deployment "${DEP}" \
