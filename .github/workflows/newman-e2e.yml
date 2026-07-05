@@ -226,6 +226,11 @@ jobs:
           # gen-tls-cert.sh writes the api-gateway-tls secret into namespace
           # kacho — create it first.
           kubectl create namespace kacho --dry-run=client -o yaml | kubectl apply -f -
+          # INFRA sec-hardening — Pod Security Admission (restricted, warn+audit).
+          kubectl label namespace kacho \
+            pod-security.kubernetes.io/warn=restricted pod-security.kubernetes.io/warn-version=latest \
+            pod-security.kubernetes.io/audit=restricted pod-security.kubernetes.io/audit-version=latest \
+            --overwrite
           ./scripts/gen-tls-cert.sh || true
           cd helm/umbrella
           helm dep update

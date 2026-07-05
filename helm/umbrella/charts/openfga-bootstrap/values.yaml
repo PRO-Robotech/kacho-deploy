@@ -30,6 +30,10 @@ openfgaBootstrap:
   storeName: kacho-store
   authorizationModelConfigMap: openfga-model-stub
   modelIdSecretName: openfga-model-id
+  # Store-id Secret the bootstrap Job creates/reads (STORE_SECRET_NAME in the Job).
+  # Together with modelIdSecretName these are the ONLY two secrets the Job touches;
+  # the Role's get/update/patch is scoped to them via resourceNames (least priv).
+  storeIdSecretName: kacho-iam-openfga-store
   clusterSingletonId: cluster_kacho_root
   # Opt-in `CREATE DATABASE kacho_openfga` Job. Off by default — the bitnami
   # pg-openfga chart auto-creates the DB from auth.username / auth.database.

@@ -46,9 +46,20 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation
 rules:
   # Phase 3: secrets — kacho-iam-openfga-store + openfga-model-id (create/update/annotate).
+  # INFRA sec-hardening (least privilege): the get/update/patch verbs are scoped
+  # with resourceNames to ONLY the two secrets the Job manages, so a compromised
+  # bootstrap SA cannot read namespace-wide secrets (DB creds, HSM PIN, JWKS enc
+  # key, Hydra hook token). `create` cannot be restricted by resourceName (K8s
+  # rejects resourceNames on create) → kept as a separate, create-only rule.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "get", "update", "patch"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "update", "patch"]
+    resourceNames:
+      - {{ .Values.openfgaBootstrap.storeIdSecretName | default "kacho-iam-openfga-store" | quote }}
+      - {{ .Values.openfgaBootstrap.modelIdSecretName | default "openfga-model-id" | quote }}
   # Phase 3: deployments — patch annotation `kacho.cloud/openfga-model-id-rev`
   # на consumer Deployments (P3.GWT-03 rolling-restart on model change).
   # Scope ограничен read+patch (никакого delete/create — Job не вправе создавать pod'ов).

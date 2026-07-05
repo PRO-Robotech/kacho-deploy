@@ -16,7 +16,34 @@
 name: kacho-geo
 replicas: 1
 image: docker.io/prorobotech/kacho-geo:main-latest
+# Optional immutable digest pin (sha256:...). When set, the trailing `:tag` of
+# `image` is stripped and the digest appended (`repository@sha256:...`) for
+# reproducible, tamper-evident deploys. Empty by default → tag-based reference.
+# Override per env via values.digests.example.yaml.
+imageDigest: ""
 imagePullPolicy: IfNotPresent
+
+# INFRA sec-hardening — pod- and per-container securityContext floor for the geo
+# workload (main + goose migrate init). runAsNonRoot + readOnlyRootFilesystem +
+# drop ALL caps + no privilege escalation + seccomp RuntimeDefault (CIS
+# Kubernetes 5.2 / PSS restricted). A writable emptyDir is mounted at /tmp so the
+# read-only rootfs does not break scratch writes.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
 
 ports:
   grpc: 9090

@@ -88,6 +88,32 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
       - run: make helm-manifest-test
 
+      # INFRA sec-hardening — Trivy IaC misconfig gate. Renders the kacho-*
+      # control-plane workloads we own (kacho-iam / kacho-geo / openfga-bootstrap)
+      # and fails the build on any HIGH/CRITICAL Kubernetes misconfiguration
+      # (e.g. a dropped securityContext, writable rootfs, over-broad RBAC).
+      # Scoped to our vendored templates — third-party sub-charts are out of
+      # scope for this gate. Pinned trivy version for reproducibility.
+      - name: install trivy
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sudo sh -s -- -b /usr/local/bin v0.64.1
+        working-directory: ${{ github.workspace }}
+      - name: trivy IaC misconfig scan (kacho-* workloads — gate HIGH,CRITICAL)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/rendered
+          cd helm/umbrella
+          for t in charts/kacho-iam/templates/deployment.yaml \
+                   charts/kacho-geo/templates/deployment.yaml \
+                   charts/openfga-bootstrap/templates/openfga-bootstrap-rbac.yaml; do
+            helm template kacho-umbrella . -f values.dev.yaml \
+              --set openfgaBootstrap.enabled=true --show-only "$t"
+            echo '---'
+          done > /tmp/rendered/kacho-workloads.yaml
+          trivy config --severity HIGH,CRITICAL --exit-code 1 \
+            --misconfig-scanners=kubernetes /tmp/rendered/kacho-workloads.yaml
+
   e2e-on-kind:
     runs-on: ubuntu-latest
     continue-on-error: true

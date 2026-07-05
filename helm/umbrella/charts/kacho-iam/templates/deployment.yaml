@@ -32,10 +32,17 @@ spec:
       # Гасим service-link-инъекцию: всё конфигурим из своих env / config.yaml.
       enableServiceLinks: false
       serviceAccountName: {{ include "kacho-iam.fullname" . }}
+      # INFRA sec-hardening — pod-level securityContext (runAsNonRoot + seccomp
+      # RuntimeDefault). Per-container floor is applied on each container below.
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       volumes:
         - name: config
           configMap:
             name: {{ include "kacho-iam.fullname" . }}-config
+        # Writable scratch for the read-only-rootfs main container.
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.mtls.enable }}
         # SEC-H mTLS — cert-manager internal-CA server secret (tls.crt/tls.key/ca.crt).
         # IAM is a leaf-owner: server-side only (both listeners), no client edge in scope.
@@ -59,8 +66,10 @@ spec:
         # (тот же image, отдельный entrypoint). DSN собирается мигратором из
         # KACHO_IAM_DB_* env (через config-fallback).
         - name: migrate
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ include "kacho-iam.image" . }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           command:
             {{- toYaml .Values.initContainer.migrator.command | nindent 12 }}
           volumeMounts:
@@ -87,6 +96,8 @@ spec:
         {{- if .Values.initContainer.waitForExtAuth.enabled }}
         - name: wait-for-openfga
           image: busybox:1.36
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           command:
             - sh
             - -c
@@ -104,8 +115,10 @@ spec:
         {{- end }}
       containers:
         - name: {{ include "kacho-iam.fullname" . }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ include "kacho-iam.image" . }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           command: ["/usr/local/bin/kacho-iam", "serve"]
           ports:
             - name: grpc
@@ -122,6 +135,8 @@ spec:
             - name: config
               mountPath: /etc/kacho-iam
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
             {{- if .Values.mtls.enable }}
             - name: mtls-server
               mountPath: {{ printf "%s/server" .Values.mtls.mountPath | quote }}
