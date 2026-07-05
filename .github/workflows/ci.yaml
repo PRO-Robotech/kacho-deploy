@@ -132,17 +132,31 @@ jobs:
           # Common --set flags to force the conditionally-rendered workloads on so
           # the gate actually sees them: openfga-bootstrap RBAC + the federation-in
           # trust-grants Job (needs a trusted issuer to render).
-          COMMON=( --set openfgaBootstrap.enabled=true
+          # INFRA sec-hardening r3 — force-on EVERY conditionally-gated umbrella
+          # Job/CronJob so the gate actually renders (and scans) them:
+          # openfga-bootstrap + its postgres-init Job, the kacho-iam jwks-rotator
+          # CronJob, the kacho-geo data-migration Job, and the federation-in
+          # trust-grants Job.
+          COMMON=( --set openfga-bootstrap.openfgaBootstrap.enabled=true
+                   --set openfga-bootstrap.openfgaBootstrap.initDatabase=true
+                   --set kacho-geo.dataMigration.enabled=true
                    --set kacho-iam.federationIn.enabled=true
                    --set kacho-iam.federationIn.trustedIssuers[0].issuer=https://idp.example.com
                    --set kacho-iam.federationIn.trustedIssuers[0].jwksUrl=https://idp.example.com/jwks
                    --set kacho-iam.federationIn.trustedIssuers[0].allowedSubjects[0]='*' )
-          # INFRA sec-hardening r2 — the auxiliary umbrella-owned workloads
-          # (kratos-selfservice-ui / minio-dev / hydra-trust-grants) are now in
-          # scope alongside the kacho-iam / kacho-geo / openfga workloads.
+          # INFRA sec-hardening r3 — enumerate ALL umbrella-owned pod-bearing
+          # templates (Deployments + Jobs + CronJobs). r2 only covered the
+          # long-running Deployments + a couple of hook Jobs, which is exactly why
+          # the openfga-bootstrap / openfga-postgres-init / jwks-rotator /
+          # geo-data-migration hardening could drift uncaught. Keep this list in
+          # sync with any new kacho-owned Job/CronJob/Deployment/StatefulSet.
           for t in charts/kacho-iam/templates/deployment.yaml \
+                   charts/kacho-iam/templates/jwks-rotator-cronjob.yaml \
                    charts/kacho-geo/templates/deployment.yaml \
+                   charts/kacho-geo/templates/geo-data-migration-job.yaml \
                    charts/openfga-bootstrap/templates/openfga-bootstrap-rbac.yaml \
+                   charts/openfga-bootstrap/templates/openfga-bootstrap-job.yaml \
+                   charts/openfga-bootstrap/templates/openfga-postgres-init-job.yaml \
                    charts/kratos-selfservice-ui/templates/deployment.yaml \
                    templates/minio-dev.yaml \
                    templates/hydra-trust-grants-job.yaml; do

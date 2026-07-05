@@ -49,9 +49,23 @@ spec:
         app: openfga-postgres-init
     spec:
       restartPolicy: OnFailure
+      # INFRA sec-hardening r3 — restricted pod floor (runAsNonRoot + seccomp).
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+        # Writable scratch for the read-only rootfs (psql history under HOME=/tmp).
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: postgres-init
           image: {{ .Values.openfgaBootstrap.dbAdmin.image | default "postgres:16-alpine" | quote }}
+          # INFRA sec-hardening r3 — restricted container floor (non-root,
+          # read-only rootfs, drop ALL caps, no priv-esc, seccomp RuntimeDefault).
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           command:
             - /bin/sh
             - -c
@@ -105,6 +119,9 @@ spec:
 
               echo "[postgres-init] OK"
           env:
+            # Read-only rootfs: psql writes ~/.psql_history on exit → HOME=/tmp.
+            - name: HOME
+              value: /tmp
             - name: PGHOST
               value: {{ .Values.openfgaBootstrap.dbAdmin.host | default "kacho-umbrella-pg-openfga" | quote }}
             - name: PGPORT

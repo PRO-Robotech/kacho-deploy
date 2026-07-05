@@ -69,6 +69,9 @@ spec:
     spec:
       restartPolicy: OnFailure
       serviceAccountName: openfga-bootstrap
+      # INFRA sec-hardening r3 — restricted pod floor (runAsNonRoot + seccomp).
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       volumes:
         # ConfigMap несёт ОБА ключа: model.fga (DSL, для sha256-idempotency)
         # и model.json (pre-transformed OpenFGA-JSON). KAC-127 deploy#38:
@@ -77,14 +80,24 @@ spec:
           configMap:
             name: {{ .Values.openfgaBootstrap.authorizationModelConfigMap }}
             defaultMode: 0444
+        # Writable scratch for the read-only rootfs: kubectl discovery/http cache
+        # lives under HOME=/tmp/.kube (see env below).
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: bootstrap
           image: {{ .Values.openfgaBootstrap.image | quote }}
           command: ["/bin/sh", "-c"]
+          # INFRA sec-hardening r3 — restricted container floor (non-root,
+          # read-only rootfs, drop ALL caps, no priv-esc, seccomp RuntimeDefault).
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
             - name: model
               mountPath: /etc/openfga-model
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
           args:
             - |
               set -eu
@@ -252,6 +265,10 @@ spec:
 
               echo "[bootstrap] OK"
           env:
+            # Read-only rootfs: kubectl caches discovery/http under $HOME/.kube →
+            # point HOME at the writable /tmp emptyDir.
+            - name: HOME
+              value: /tmp
             - name: OPENFGA_URL
               value: "http://kacho-umbrella-openfga:8080"
             - name: STORE_NAME

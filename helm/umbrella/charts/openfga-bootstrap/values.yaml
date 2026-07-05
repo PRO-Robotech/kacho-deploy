@@ -20,9 +20,34 @@ openfgaPdb:
   enabled: false
   minAvailable: 2
 
+# INFRA sec-hardening r3 — restricted PSS floor for the bootstrap + postgres-init
+# Jobs (CIS Kubernetes 5.2 / PSS restricted). Both are short-lived hook Jobs that
+# only run kubectl/curl/jq (bootstrap) or psql (postgres-init); neither needs root,
+# a writable rootfs, or any Linux capability. A writable emptyDir is mounted at
+# /tmp (HOME=/tmp) so the read-only rootfs does not break the kubectl discovery
+# cache / psql history. Overridable per profile.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
+
 openfgaBootstrap:
   enabled: false
-  # alpine/k8s ships kubectl+jq+curl+coreutils and runs root → no runtime apk add.
+  # alpine/k8s ships kubectl+jq+curl+coreutils. INFRA sec-hardening r3: the Job now
+  # runs non-root (uid 65532) with a read-only rootfs (see podSecurityContext /
+  # containerSecurityContext above); kubectl caches under HOME=/tmp (emptyDir).
   image: alpine/k8s:1.29.2
   # cliImage unused since the DSL→JSON transform moved to commit-time (the
   # openfga-model-stub ConfigMap carries both model.fga + model.json).
