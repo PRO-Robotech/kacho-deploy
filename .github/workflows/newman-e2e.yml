@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { path: kacho-deploy }
 
       # Resolve the ref for each sibling checkout. Default pins are the latest
@@ -108,31 +108,31 @@ jobs:
       # workspace repo. Pinned to latest fix branches per KAC-132 cross-repo CI;
       # revert to main after merges. A `repository_dispatch` from an authz repo
       # overrides exactly one sibling ref (see "resolve sibling refs" above).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-corelib, ref: "${{ env.REF_CORELIB }}", path: kacho-corelib }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-proto, ref: "${{ env.REF_PROTO }}", path: kacho-proto }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-vpc, ref: "${{ env.REF_VPC }}", path: kacho-vpc }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-compute, ref: "${{ env.REF_COMPUTE }}", path: kacho-compute }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-iam, ref: "${{ env.REF_IAM }}", path: kacho-iam }
       # kacho-geo leaf-service (Geography Region/Zone, extracted from compute):
       # helm dep (vendored sub-chart) + Dockerfile build context for kacho-geo:dev.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-geo, ref: "${{ env.REF_GEO }}", path: kacho-geo }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-api-gateway, ref: "${{ env.REF_API_GATEWAY }}", path: kacho-api-gateway }
       # KAC-NLB: kacho-nlb sibling (helm dep + Dockerfile build context).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-nlb, ref: "${{ env.REF_NLB }}", path: kacho-nlb }
       # kacho-workspace carries the shared authz-fixtures bootstrap
       # (tests/authz-fixtures/setup.sh + setup-jwt.py + patch-env.py).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-workspace, ref: "${{ env.REF_WORKSPACE }}", path: kacho-workspace }
       # kacho-ui is a private repo; best-effort checkout (parity with ci.yaml).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         continue-on-error: true
         with: { repository: PRO-Robotech/kacho-ui, ref: "${{ env.REF_UI }}", path: kacho-ui }
       - name: stub kacho-ui/deploy if checkout was skipped (private repo)
@@ -149,9 +149,9 @@ jobs:
             : >kacho-ui/deploy/values.yaml
           fi
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: '20' }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: '3.12' }
       - run: npm install -g newman
 
@@ -188,6 +188,41 @@ jobs:
             docker build -t kacho-ui:dev kacho-ui
           fi
 
+      # INFRA sec-hardening r2 — image vulnerability gate. The umbrella images we
+      # build from source (kacho-*:dev) are scanned for FIXABLE HIGH/CRITICAL CVEs
+      # BEFORE they are loaded into kind. --ignore-unfixed keeps the gate
+      # actionable (only CVEs with an available fix fail — a dependency bump in the
+      # owning service repo), so unfixed upstream base-image noise never blocks.
+      - name: install trivy (image scanner)
+        env:
+          TRIVY_VERSION: "0.64.1"
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"; cd "$tmp"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl -fsSLO "${base}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLO "${base}/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz\$" \
+            "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+          trivy --version
+      - name: trivy image scan (kacho-*:dev — gate fixable HIGH,CRITICAL)
+        run: |
+          set -euo pipefail
+          rc=0
+          for img in kacho-vpc:dev kacho-iam:dev kacho-compute:dev kacho-api-gateway:dev kacho-nlb:dev; do
+            echo "=== trivy image: $img ==="
+            trivy image --scanners vuln --ignore-unfixed \
+              --severity HIGH,CRITICAL --exit-code 1 --no-progress "$img" || rc=1
+          done
+          if [ -f "${GITHUB_WORKSPACE}/kacho-ui/Dockerfile" ] && docker image inspect kacho-ui:dev >/dev/null 2>&1; then
+            echo "=== trivy image: kacho-ui:dev ==="
+            trivy image --scanners vuln --ignore-unfixed \
+              --severity HIGH,CRITICAL --exit-code 1 --no-progress kacho-ui:dev || rc=1
+          fi
+          exit "$rc"
+
       # geo is consumed as a published OSS dependency — pull the known-good
       # image (the one running on the long-lived fe3455 stand) instead of
       # building :dev from the OSS source. Tag is centralised in the umbrella
@@ -199,7 +234,7 @@ jobs:
           echo "=== pull ${KACHO_GEO_IMAGE} ==="
           docker pull "${KACHO_GEO_IMAGE}"
 
-      - uses: helm/kind-action@v1
+      - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
         with:
           config: kacho-deploy/kind/kind-config.yaml
           cluster_name: kacho
@@ -217,7 +252,7 @@ jobs:
           docker image inspect kacho-ui:dev >/dev/null 2>&1 \
             && kind load docker-image kacho-ui:dev --name kacho || true
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
       - name: helm install umbrella
         working-directory: kacho-deploy
@@ -408,7 +443,7 @@ jobs:
           cat /tmp/api-gateway-pf.log 2>/dev/null || true
           cat /tmp/iam-internal-pf.log 2>/dev/null || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: newman-reports

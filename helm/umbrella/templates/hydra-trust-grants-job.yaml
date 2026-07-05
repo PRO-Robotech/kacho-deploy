@@ -30,10 +30,28 @@ spec:
         app.kubernetes.io/component: federation-in-bootstrap
     spec:
       restartPolicy: OnFailure
+      # INFRA sec-hardening r2 — restricted pod floor. The job only runs curl
+      # (writes /tmp/resp.json into the emptyDir /tmp); no root, no writable rootfs.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: trust-grants
           image: alpine/curl:8.10.1
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           env:
             - name: HYDRA_ADMIN_URL
               value: "http://kacho-umbrella-hydra-admin.{{ .Release.Namespace }}.svc.cluster.local:4445"
@@ -96,4 +114,10 @@ spec:
             limits:
               cpu: 100m
               memory: 64Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
 {{- end }}

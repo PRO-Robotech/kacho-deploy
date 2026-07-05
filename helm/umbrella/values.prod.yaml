@@ -43,6 +43,9 @@
 #   - kacho-iam: KACHO_IAM_HOOK_TOKEN  ← kacho.hooks.tokenHookSecretName
 #                KACHO_IAM_JWKS_ENC_KEY ← kacho.iam.jwks.encKeySecretName
 #   - per-service DB password           ← <svc>.db.passwordSecretName
+#   - kratos-selfservice-ui COOKIE_SECRET/CSRF_COOKIE_SECRET
+#                                       ← kratosSelfServiceUI.cookieSecret.existingSecret
+#     (render fails fast if unset — no git-committed cookie/CSRF signing key)
 # The operator MUST provision those Secrets out-of-band (or via external-secrets)
 # BEFORE rollout — kacho-iam Config.Validate fails fast in production if the hook
 # secret / JWKS encryption key are missing (defense-in-depth, fail-closed).
@@ -382,6 +385,22 @@ hydra:
 kratos-selfservice-ui:
   kratosSelfServiceUI:
     enabled: true
+    # Session + CSRF cookie signing secret — operator-provisioned Secret
+    # (mirrors the kacho-iam hook-token pattern). There is NO committed default:
+    # the sub-chart FAILS render if this is unset while enabled, so a bare prod
+    # install can never fall back to a git-known signing key (CWE-798). The
+    # operator MUST provision this Secret out-of-band (or via external-secrets)
+    # BEFORE rollout, e.g.:
+    #   kubectl -n kacho create secret generic kratos-selfservice-ui-cookie-secret \
+    #     --from-literal=cookieSecret="$(head -c24 /dev/urandom | base64)"
+    cookieSecret:
+      existingSecret: kratos-selfservice-ui-cookie-secret
+      existingSecretKey: cookieSecret
+    # Outbound TLS verification stays ON in production (dev-only skip flag not set
+    # here). The in-cluster kratos/hydra upstreams are addressed over plain http
+    # cluster-internal; if an https terminator is introduced, wire the internal-CA
+    # bundle via caCert.secretName instead of disabling verification.
+    insecureSkipTLSVerify: false
 
 # ─── Defense-in-depth pod-to-pod NetworkPolicy — ON in production ───────────
 # (the dev default keeps it OFF so :9091 port-forward debugging works).
