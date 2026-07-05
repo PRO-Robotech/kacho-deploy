@@ -46,14 +46,27 @@ spec:
           restartPolicy: OnFailure
           enableServiceLinks: false
           serviceAccountName: {{ include "kacho-iam.fullname" . }}
+          # INFRA sec-hardening r3 — the rotator runs the SAME kacho-iam image as
+          # the serve Deployment and handles the JWKS AES key + DB password; apply
+          # the identical restricted pod floor (runAsNonRoot + seccomp).
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
           volumes:
             - name: config
               configMap:
                 name: {{ include "kacho-iam.fullname" . }}-config
+            # Writable scratch for the read-only rootfs (mirrors the Deployment).
+            - name: tmp
+              emptyDir: {}
           containers:
             - name: jwks-rotator
               image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
+              # INFRA sec-hardening r3 — restricted container floor, mirroring
+              # charts/kacho-iam/templates/deployment.yaml (non-root, read-only
+              # rootfs, drop ALL caps, no priv-esc, seccomp RuntimeDefault).
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
               # Worker entrypoint — sub-command `jwks rotate` (acceptance §5.6).
               # Worker performs:
               #   1. pg_advisory_lock(jwks_lock_id) — HA-safety, blocks concurrent pods.
@@ -66,6 +79,8 @@ spec:
                 - name: config
                   mountPath: /etc/kacho-iam
                   readOnly: true
+                - name: tmp
+                  mountPath: /tmp
               env:
                 - name: KACHO_IAM_CONFIG_PATH
                   value: /etc/kacho-iam/config.yaml

@@ -16,6 +16,7 @@ isolation**, then assert structure with `yq`/`grep`.
 | `openfga-networkpolicy-test.sh` | SEC-F-12/14 | openfga ingress-from-iam-only `NetworkPolicy` with `app.kubernetes.io/name` selectors; absent when flag off |
 | `mtls-values-profile-test.sh` | SEC-F-05/06/07/14 | `mtls.enabled`/`mtls.edges.*` shape, `values.mtls.yaml` overlay flips on, `spiffe.namespace` single-source, NLB spire-registration aligned `kacho-nlb` |
 | `hydra-jwks-url-test.sh` | KAC-127 Phase 2 | api-gateway resolves a REACHABLE cluster-internal Hydra JWKS URL: sibling chart renders `KACHO_HYDRA_JWKS_URL` from `hydra.jwksUrl` (unset → no env, zero regression); umbrella `values.dev.yaml` + `values.prod.yaml` point the gateway pod at `kacho-umbrella-hydra-public:4444/.well-known/jwks.json` (never localhost / public ingress) |
+| `jobs-cronjobs-hardening-test.sh` | INFRA sec-hardening r3 | every umbrella-owned Job/CronJob (openfga-bootstrap, openfga-postgres-init, kacho-iam jwks-rotator, kacho-geo data-migration) carries the restricted PSS floor (pod + container: runAsNonRoot, readOnlyRootFilesystem, drop ALL caps, no priv-esc, seccomp RuntimeDefault); the public api-gateway ingress backends the EXTERNAL-marked `tls` listener with `backend-protocol: GRPCS` (never the internal-origin `cmux`/GRPC path that serves Internal\* REST) — see `docs/architecture/known-divergences.md` |
 
 ## Running
 

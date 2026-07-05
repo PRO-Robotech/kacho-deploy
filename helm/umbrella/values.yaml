@@ -263,6 +263,22 @@ kacho-geo:
 api-gateway:
   image: docker.io/prorobotech/kacho-api-gateway:main-fa9a8422
   imagePullPolicy: IfNotPresent
+  # INFRA sec-hardening r3 — the sub-chart's own ingress backends the plaintext
+  # `cmux` port, which is the CLUSTER-INTERNAL (unmarked) listener and therefore
+  # serves Internal* REST to any external caller. Disable it and let the umbrella
+  # render the public ingress (templates/api-gateway-ingress.yaml) pointing at the
+  # EXTERNAL-marked `tls` listener so listenerorigin.ExternalListener tags the edge
+  # and the REST dispatcher 404s Internal* paths. See docs/architecture/known-divergences.md.
+  ingress:
+    enabled: false
+
+# INFRA sec-hardening r3 — umbrella-owned public ingress for api-gateway. Replaces
+# the sub-chart ingress (disabled above). Routes the external edge through the
+# api-gateway pod's EXTERNAL-marked TLS listener (Service port `tls`, GRPCS) so
+# Internal* REST is never served on the public endpoint. host / tls.secretName /
+# proxyReadTimeout are inherited from the api-gateway sub-chart values.
+apiGatewayIngress:
+  enabled: true
 
 ui:
   image: docker.io/prorobotech/kacho-ui:main-dc395a2e

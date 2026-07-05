@@ -51,11 +51,29 @@ spec:
         kacho.cloud/job: geo-data-migration
     spec:
       restartPolicy: Never
+      # INFRA sec-hardening r3 — restricted pod floor, mirroring the kacho-geo
+      # Deployment (runAsNonRoot + seccomp).
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+        # Writable scratch for the read-only rootfs (psql history under HOME=/tmp).
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: copy
           image: "{{ $dm.image }}"
           imagePullPolicy: {{ $dm.imagePullPolicy }}
+          # INFRA sec-hardening r3 — restricted container floor (non-root,
+          # read-only rootfs, drop ALL caps, no priv-esc, seccomp RuntimeDefault).
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           env:
+            # Read-only rootfs: psql writes ~/.psql_history on exit → HOME=/tmp.
+            - name: HOME
+              value: /tmp
             # ── source: kacho_compute (Region/Zone live here pre-S7 contract) ──
             - name: SRC_HOST
               value: "{{ $src.host }}"
