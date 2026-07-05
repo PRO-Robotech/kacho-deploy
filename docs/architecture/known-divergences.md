@@ -72,7 +72,8 @@ long-running Deployments — enforces the restricted Pod Security Standards floo
 psql history.
 
 **Why.** These Jobs hold real blast-radius credentials — the bootstrap Job's
-ServiceAccount can create Secrets and patch Deployments namespace-wide; the
+ServiceAccount can create Secrets (get/update scoped to two named secrets) and
+patch a resourceName-scoped set of consumer Deployments; the
 jwks-rotator injects the JWKS AES encryption key + DB password; the postgres-init
 Job carries Postgres admin creds. A root, writable-rootfs, full-capability
 container maximises the damage from a compromised image or script. The restricted

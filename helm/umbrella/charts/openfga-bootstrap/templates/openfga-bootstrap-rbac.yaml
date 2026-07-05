@@ -63,9 +63,17 @@ rules:
   # Phase 3: deployments — patch annotation `kacho.cloud/openfga-model-id-rev`
   # на consumer Deployments (P3.GWT-03 rolling-restart on model change).
   # Scope ограничен read+patch (никакого delete/create — Job не вправе создавать pod'ов).
+  # INFRA sec-hardening (least privilege): get/patch is scoped with resourceNames to
+  # ONLY the consumer Deployments the Job bumps (same list the Job's Step-G loop uses),
+  # so a compromised bootstrap SA cannot patch arbitrary namespace Deployments (swap a
+  # service image, inject a secret-mounting sidecar, drop securityContext).
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "patch"]
+    resourceNames:
+      {{- range .Values.openfgaBootstrap.consumerDeployments }}
+      - {{ . | quote }}
+      {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

@@ -83,6 +83,16 @@ echo "$SCOPED" | grep -q "openfga-model-id" || fail "openfga-bootstrap Role: sec
 # No unrestricted get on all secrets: every rule granting `get` on secrets must carry resourceNames.
 UNSCOPED_GET=$(echo "$RBAC" | yq 'select(.kind == "Role") | .rules[] | select(.resources[] == "secrets") | select(.verbs[] == "get") | select(.resourceNames == null) | .verbs | join(",")' 2>/dev/null)
 [ -z "$UNSCOPED_GET" ] || fail "openfga-bootstrap Role: a secrets rule still grants get with no resourceNames"
+# The deployments get/patch rule is resourceName-scoped to ONLY the consumer
+# Deployments the Job bumps (no namespace-wide deployment patch → no lateral
+# image/sidecar swap on a compromised bootstrap SA).
+DEP_SCOPED=$(echo "$RBAC" | yq 'select(.kind == "Role") | .rules[] | select(.resources[] == "deployments") | select(.resourceNames != null) | .resourceNames | join(",")' 2>/dev/null | head -1)
+for d in kacho-iam api-gateway vpc compute loadbalancer; do
+  echo "$DEP_SCOPED" | grep -q "$d" || fail "openfga-bootstrap Role: deployments rule not scoped to $d via resourceNames"
+done
+# No deployments rule may grant patch/get without resourceNames.
+UNSCOPED_DEP=$(echo "$RBAC" | yq 'select(.kind == "Role") | .rules[] | select(.resources[] == "deployments") | select(.resourceNames == null) | .verbs | join(",")' 2>/dev/null)
+[ -z "$UNSCOPED_DEP" ] || fail "openfga-bootstrap Role: a deployments rule still grants $UNSCOPED_DEP with no resourceNames"
 ok
 
 # ── 5. Image digest-pin override (repository@sha256:...) ──────────────────────
