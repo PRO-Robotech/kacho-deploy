@@ -1,3 +1,21 @@
+# ┌───────────────────────────────────────────────────────────────────────────┐
+# │ SECURITY — throwaway DEV/CI credentials only.                              │
+# │                                                                           │
+# │ Every credential in this file (DB passwords `changeme-dev-*`, MinIO       │
+# │ `changeme-dev-minio-*`) is a NON-SECRET PLACEHOLDER for the ephemeral kind │
+# │ stand (`make dev-up`) and the newman CI cluster ONLY. They are committed   │
+# │ to git deliberately so the local stand is reproducible — they carry no    │
+# │ confidentiality and MUST NEVER be reused on a shared, staging or           │
+# │ production cluster.                                                        │
+# │                                                                           │
+# │ Production sources every credential from external-secrets / SealedSecret  │
+# │ (values.prod.yaml: minioDev.enabled=false, DB passwords via existingSecret │
+# │ + ssl-mode=require). The prod profile is fail-closed and guarded by        │
+# │ tests/helm/prod-profile-fail-closed-test.sh. Rotate/override these         │
+# │ placeholders before any non-dev use.                                      │
+# │ See docs/security/dev-credentials.md.                                     │
+# └───────────────────────────────────────────────────────────────────────────┘
+
 # yc CLI compatibility shim (kacho-yc-shim repo) — advertised endpoint that
 # yc CLI dials AFTER calling ApiEndpointService.List for service discovery.
 # In dev we use localhost:18443 because that is the port-forward to ingress-nginx
@@ -220,7 +238,7 @@ ingress-nginx:
 pg-vpc:
   auth:
     username: vpc
-    password: dev-vpc-password
+    password: changeme-dev-vpc
     database: kacho_vpc
   primary:
     persistence:
@@ -253,7 +271,7 @@ pg-vpc:
 pg-compute:
   auth:
     username: compute
-    password: dev-compute-password
+    password: changeme-dev-compute
     database: kacho_compute
   primary:
     persistence:
@@ -330,7 +348,7 @@ vpc:
 pg-iam:
   auth:
     username: iam
-    password: dev-iam-password
+    password: changeme-dev-iam
     database: kacho_iam
   primary:
     persistence:
@@ -360,7 +378,7 @@ pg-iam:
 pg-geo:
   auth:
     username: geo
-    password: dev-geo-password
+    password: changeme-dev-geo
     database: kacho_geo
   primary:
     persistence:
@@ -390,7 +408,7 @@ pg-openfga:
   enabled: true
   auth:
     username: openfga
-    password: dev-openfga-password
+    password: changeme-dev-openfga
     database: openfga
   primary:
     persistence:
@@ -417,7 +435,7 @@ pg-nlb:
   enabled: true
   auth:
     username: kacho_nlb
-    password: dev-nlb-password
+    password: changeme-dev-nlb
     database: kacho_nlb
   primary:
     persistence:
@@ -457,8 +475,8 @@ minioDev:
   # Dev-only root credentials — match `kacho-iam.compliance.s3.{accessKey,secretKey}`
   # below. Do NOT use in prod; values.prod.yaml has minioDev.enabled=false and the
   # service points at an external MinIO/S3 with secrets from Vault/SealedSecret.
-  rootUser: minioadmin
-  rootPassword: minioadmin
+  rootUser: changeme-dev-minio-access
+  rootPassword: changeme-dev-minio-secret
   # Must match `kacho-iam.compliance.s3.bucket` below — init Job creates it.
   bucket: kacho-compliance-reports
   image:
@@ -483,7 +501,7 @@ pg-kratos:
     tag: "16.4.0-debian-12-r0"
   auth:
     username: kratos
-    password: dev-kratos-password
+    password: changeme-dev-kratos
     database: kratos
   primary:
     persistence: { enabled: true, size: 1Gi }
@@ -501,7 +519,7 @@ pg-hydra:
     tag: "16.4.0-debian-12-r0"
   auth:
     username: hydra
-    password: dev-hydra-password
+    password: changeme-dev-hydra
     database: hydra
   primary:
     persistence: { enabled: true, size: 1Gi }
@@ -524,7 +542,7 @@ kratos:
       # миграцию как init-container Kratos-пода — отдельного hook-Job нет.
       type: initContainer
     config:
-      dsn: "postgres://kratos:dev-kratos-password@kacho-umbrella-pg-kratos:5432/kratos?sslmode=disable"
+      dsn: "postgres://kratos:changeme-dev-kratos@kacho-umbrella-pg-kratos:5432/kratos?sslmode=disable"
       serve:
         public:
           # Relative base_url — генерируемые links резолвятся к текущему origin
@@ -651,7 +669,7 @@ hydra:
       type: initContainer
     dev: true
     config:
-      dsn: "postgres://hydra:dev-hydra-password@kacho-umbrella-pg-hydra:5432/hydra?sslmode=disable"
+      dsn: "postgres://hydra:changeme-dev-hydra@kacho-umbrella-pg-hydra:5432/hydra?sslmode=disable"
       serve:
         public:
           cors:
@@ -866,7 +884,7 @@ openfga:
   replicaCount: 2
   datastore:
     engine: postgres
-    uri: postgres://openfga:dev-openfga-password@kacho-umbrella-pg-openfga:5432/openfga?sslmode=disable
+    uri: postgres://openfga:changeme-dev-openfga@kacho-umbrella-pg-openfga:5432/openfga?sslmode=disable
     # KAC-127: migrationType=initContainer вместо job. Дефолт sub-chart'а — `job` +
     # waitForMigrations=true: OpenFGA Deployment получает init-container
     # `wait-for-migration` (groundnuty/k8s-wait-for `job-wr`), который ждёт
@@ -976,8 +994,8 @@ kacho-iam:
     KACHO_IAM_COMPLIANCE__S3__ENDPOINT: "http://minio-dev:9000"
     KACHO_IAM_COMPLIANCE__S3__BUCKET: "kacho-compliance-reports"
     KACHO_IAM_COMPLIANCE__S3__PATH_STYLE: "true"
-    KACHO_IAM_COMPLIANCE__S3__ACCESS_KEY: "minioadmin"
-    KACHO_IAM_COMPLIANCE__S3__SECRET_KEY: "minioadmin"
+    KACHO_IAM_COMPLIANCE__S3__ACCESS_KEY: "changeme-dev-minio-access"
+    KACHO_IAM_COMPLIANCE__S3__SECRET_KEY: "changeme-dev-minio-secret"
     # Bug B fix: bootstrap cluster-admin. kacho-iam's startup reconciler grants
     # `system_admin@cluster_kacho_root` to this user and enqueues the FGA tuple
     # via the transactional fga_outbox (replacing the former setup.sh SQL-seed
@@ -1041,8 +1059,8 @@ kacho-iam:
       region: "us-east-1"
       bucket: "kacho-compliance-reports"
       pathStyle: true
-      accessKey: "minioadmin"
-      secretKey: "minioadmin"
+      accessKey: "changeme-dev-minio-access"
+      secretKey: "changeme-dev-minio-secret"
   # ─── Phase 3b — Federation IN (external IdP → kacho via Hydra jwt-bearer) ──
   # Hydra v26.2.0 does NOT load trusted issuers from `hydra.config.*` — they
   # are registered at runtime via the admin trust-grant API

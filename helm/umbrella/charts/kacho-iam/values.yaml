@@ -72,7 +72,35 @@ replicas: 1
 image:
   repository: kacho-iam
   tag: dev
+  # Optional immutable digest pin. When set (e.g. sha256:...) the container image
+  # is referenced as `repository@digest` and `tag` is ignored — reproducible,
+  # tamper-evident deploys (SLSA provenance). Override per env via
+  # values.digests.example.yaml. Empty by default → tag-based reference.
+  digest: ""
   pullPolicy: IfNotPresent
+
+# INFRA sec-hardening — pod- and per-container securityContext floor applied to
+# EVERY container of this workload (main + migrate/wait-for-openfga init), not
+# just the OPA sidecar. runAsNonRoot + readOnlyRootFilesystem + drop ALL caps +
+# no privilege escalation + seccomp RuntimeDefault (CIS Kubernetes 5.2 / PSS
+# restricted). Overridable per profile; a writable emptyDir is mounted at /tmp
+# so the read-only rootfs does not break scratch writes.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
 
 ports:
   grpc: 9090

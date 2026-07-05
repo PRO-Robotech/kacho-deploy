@@ -19,6 +19,14 @@
 # sub-chart'ов, которым нужны umbrella-значения, дублируем структуру в namespace'е
 # sub-chart'а (`kacho-iam.*`, `openfga-bootstrap.*`, `kratos-selfservice-ui.*`).
 
+# INFRA sec-hardening — optional Helm-owned Namespace carrying Pod Security
+# Admission labels (restricted, warn+audit). Default FALSE: the dev/CI flow
+# precreates the namespace (`kubectl create namespace` + `helm --create-namespace`)
+# and labels it there (Makefile dev-up / newman-e2e.yml). Set true for GitOps
+# installs where Helm owns the namespace object. See templates/namespace.yaml.
+namespace:
+  create: false
+
 kacho:
   # Корневой домен Kachō Cloud. Override per-cluster:
   #   helm upgrade … --set kacho.domain=test.example.com \

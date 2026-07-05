@@ -13,15 +13,24 @@ spec:
       labels:
         app: {{ .Values.name }}
     spec:
+      # INFRA sec-hardening — pod-level securityContext (runAsNonRoot + seccomp
+      # RuntimeDefault). Per-container floor applied on each container below.
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       initContainers:
         # goose migrator (separate binary, evgeniy §9 K.1 / AP-9) — applies the
         # kacho_geo schema (regions/zones FK RESTRICT + geo_outbox + seed) BEFORE
         # the API server starts. KACHO_GEO_DB_PASSWORD is required:true → the
         # migrator needs the same DB env as the server.
         - name: migrate
-          image: "{{ .Values.image }}"
+          image: "{{ include "kacho-geo.image" . }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           command: ["/usr/local/bin/kacho-migrator", "up"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           env:
             - name: KACHO_GEO_DB_HOST
               value: "{{ .Values.db.host }}"
@@ -40,8 +49,10 @@ spec:
                   key: {{ .Values.db.passwordSecretKey }}
       containers:
         - name: {{ .Values.name }}
-          image: "{{ .Values.image }}"
+          image: "{{ include "kacho-geo.image" . }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           command: ["/usr/local/bin/kacho-geo", "serve"]
           ports:
             - name: grpc
@@ -117,8 +128,11 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
-          {{- if .Values.mtls.enable }}
           volumeMounts:
+            # Writable scratch for the read-only-rootfs container.
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.mtls.enable }}
             # SEC-F mTLS — cert-manager internal-CA server + client secrets in
             # separate dirs. cert-manager writes tls.crt/tls.key/ca.crt.
             - name: mtls-server
@@ -127,7 +141,7 @@ spec:
             - name: mtls-client
               mountPath: {{ printf "%s/client" .Values.mtls.mountPath | quote }}
               readOnly: true
-          {{- end }}
+            {{- end }}
           resources:
             requests:
               cpu: {{ .Values.resources.requests.cpu }}
@@ -145,8 +159,11 @@ spec:
               port: grpc
             initialDelaySeconds: 10
             periodSeconds: 30
-      {{- if .Values.mtls.enable }}
       volumes:
+        # Writable scratch for the read-only-rootfs container.
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.mtls.enable }}
         # SEC-F mTLS — cert-manager internal-CA secrets (server + client).
         - name: mtls-server
           secret:
@@ -154,4 +171,4 @@ spec:
         - name: mtls-client
           secret:
             secretName: {{ .Values.mtls.clientSecretName | quote }}
-      {{- end }}
+        {{- end }}

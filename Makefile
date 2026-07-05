@@ -48,6 +48,10 @@ dev-up: preflight
 	kind get clusters | grep -q "^$(CLUSTER_NAME)$$" || ./kind/create-cluster.sh; \
 	kubectl config use-context kind-$(CLUSTER_NAME); \
 	kubectl create namespace kacho --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
+	kubectl label namespace kacho \
+	  pod-security.kubernetes.io/warn=restricted pod-security.kubernetes.io/warn-version=latest \
+	  pod-security.kubernetes.io/audit=restricted pod-security.kubernetes.io/audit-version=latest \
+	  --overwrite >/dev/null; \
 	$(MAKE) build-ui; \
 	$(MAKE) build-services; \
 	./scripts/gen-tls-cert.sh; \
