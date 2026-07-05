@@ -85,3 +85,81 @@ floor contains it identically to the serve pods (CIS Kubernetes 5.2 / CWE-250).
   enumerates **all** kacho-owned Job/CronJob/Deployment templates (r2 only
   covered the Deployments + two hook Jobs), so a future hardening regression on
   any of them fails the build.
+
+## 3. Image references default to mutable tags; digest-pinning is opt-in
+
+**Decision.** The umbrella `values.yaml` / `values.dev.yaml` / `values.prod.yaml`
+reference every workload image by a **mutable registry tag** (`:main-<sha>`, and
+for the not-yet-published `kacho-geo` a `:main-latest` placeholder) with
+`imagePullPolicy: IfNotPresent`. Immutable `@sha256:` digest pinning exists but is
+an **opt-in values override** (`kacho-iam.image.digest`, `kacho-geo.imageDigest`,
+`values.digests.example.yaml`, `docs/security/image-digest-pinning.md`), not the
+committed default.
+
+**Why (not a defect).**
+- **Digests are a release-pipeline artifact, not a source-committed constant.** A
+  real `sha256` is only known after CI builds and pushes the image, and it changes
+  on every rebuild. Committing *fabricated* digest defaults would be worse than a
+  tag (unverifiable, and they rot on the next build). The example overlay ships
+  `sha256:REPLACE_WITH_REAL_DIGEST` on purpose — it is a template, layered last
+  (`-f values.digests.yaml`) by the deploy pipeline that resolves the real digests.
+- **`imagePullPolicy: IfNotPresent` is required for the kind dev target.** `make
+  dev-up` builds `:dev` images and `kind load docker-image`s them into the node;
+  `Always` would force a registry pull of a tag that does not exist there and break
+  the offline dev/CI flow.
+- **`kacho-geo:main-latest`** is a documented placeholder — the geo image is not
+  yet pushed to the registry (epic kacho-geo); the real `:main-<sha>` tag + pull
+  secret are provisioned at deploy time per-cluster (`values.yaml` block comment).
+
+Making digest pinning the *committed default* would either bake in placeholder
+(non-deployable) values or couple every source commit to a specific build hash —
+both churn without adding provenance the release pipeline does not already own.
+
+**Guardrails.**
+- `tests/helm/sec-hardening-test.sh` §5 asserts the digest-pin override is honoured
+  for `kacho-iam` and `kacho-geo` (`repository@sha256:...`), so the opt-in path
+  stays live and is not dead template code.
+- `docs/security/image-digest-pinning.md` documents the resolve → pin → layer-last
+  procedure the release pipeline follows for reproducible / provenance-pinned rollouts.
+
+## 4. NetworkPolicy hardening is opt-in prod-layer; umbrella owns datastore + internal-port allowlists, not a namespace default-deny
+
+**Decision.** Every NetworkPolicy this chart ships is **default-off** and enabled
+per-cluster:
+- `templates/networkpolicy-vpc-internal.yaml` — vpc :9091 internal-port allowlist
+  (`vpc.networkPolicy.enabled`).
+- `templates/networkpolicy-authz.yaml` — OpenFGA / OPA-bundle / OPA-sidecar-egress
+  allowlists (`opaSidecar.networkPolicy.enabled`).
+- `templates/networkpolicy-datastore.yaml` — **per-datastore Postgres :5432 ingress
+  allowlist** (`networkPolicy.datastore.enabled`, added r5b). Each backing pg pod
+  (bitnami sub-chart, label `app.kubernetes.io/name=pg-<svc>`) gets an explicit
+  allowlist; being selected by an ingress policy, it then implicitly **denies** all
+  other ingress — closing lateral movement to DB credentials (CIS Kubernetes 5.3.2
+  / OWASP A05:2021) without a namespace-wide default-deny.
+
+**Why default-off.** The dev target (kind + kindnet) does **not** enforce
+NetworkPolicy, so the policies are inert there, and a namespace-wide restriction
+would break `:5432` / `:9091` port-forward debugging in dev. Prod clusters run a
+NetworkPolicy-enforcing CNI and flip the flags.
+
+**Why per-datastore allowlists rather than a single namespace `default-deny-all`.**
+A correct namespace default-deny requires an allow rule for **every** legitimate
+path in the namespace — including cross-namespace ingress from the
+`ingress-nginx` controller to api-gateway, DNS egress, and each Ory
+(kratos/hydra) sub-chart's multi-component (courier/maester/migration) wiring —
+whose selectors are **cluster-specific** (ingress-controller namespace/labels,
+CNI). An incomplete default-deny silently blackholes the stack. The per-pod
+datastore allowlist is **self-contained** (it selects only its own pg pod, so it
+can never break non-datastore traffic) and delivers the same implicit-deny
+guarantee for the credential-bearing DB listeners — the highest-value targets.
+A full serving-pod default-deny across api-gateway / geo / minio-dev /
+kratos-selfservice-ui belongs to the **cluster platform NetworkPolicy layer**
+(per-cluster ingress-controller + CNI wiring), not the portable umbrella; the
+third-party Ory stores (pg-kratos / pg-hydra) are likewise left to the Ory
+sub-charts' own NetworkPolicy support (add umbrella entries per cluster if
+preferred — the datastore list is data-driven, no template change needed).
+
+**Guardrails.**
+- `tests/helm/networkpolicy-datastore-test.sh` asserts the datastore policies are
+  default-off, and — when enabled — render one Ingress-only policy per pg instance
+  scoped to that pg pod on :5432 with the declared consumer selectors.
