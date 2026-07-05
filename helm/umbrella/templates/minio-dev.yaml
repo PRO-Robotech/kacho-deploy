@@ -48,10 +48,29 @@ spec:
       labels:
         app: minio-dev
     spec:
+      # INFRA sec-hardening r2 — restricted pod floor. MinIO runs fine as a
+      # non-root UID with a read-only rootfs (state lives under the /data
+      # emptyDir, config too); fsGroup makes the emptyDir group-writable.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.minioDev.runAsUser | default 1000 }}
+        runAsGroup: {{ .Values.minioDev.runAsUser | default 1000 }}
+        fsGroup: {{ .Values.minioDev.runAsUser | default 1000 }}
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: minio
           image: "{{ .Values.minioDev.image.repository }}:{{ .Values.minioDev.image.tag }}"
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: {{ .Values.minioDev.runAsUser | default 1000 }}
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           args:
             - server
             - /data
@@ -59,9 +78,15 @@ spec:
             - ":9001"
           env:
             - name: MINIO_ROOT_USER
-              value: {{ .Values.minioDev.rootUser | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minioDev.existingSecret | default "minio-dev-root" }}
+                  key: {{ .Values.minioDev.existingSecretUserKey | default "rootUser" }}
             - name: MINIO_ROOT_PASSWORD
-              value: {{ .Values.minioDev.rootPassword | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minioDev.existingSecret | default "minio-dev-root" }}
+                  key: {{ .Values.minioDev.existingSecretPasswordKey | default "rootPassword" }}
           ports:
             - name: s3
               containerPort: 9000
@@ -82,11 +107,15 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits:   { cpu: 500m, memory: 1Gi }
       volumes:
         - name: data
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
 ---
 apiVersion: v1
@@ -140,10 +169,29 @@ spec:
         app: minio-dev-init-bucket
     spec:
       restartPolicy: OnFailure
+      # INFRA sec-hardening r2 — restricted pod floor. mc needs a writable HOME
+      # (~/.mc config); HOME is redirected to the emptyDir /tmp so the rootfs
+      # stays read-only.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.minioDev.runAsUser | default 1000 }}
+        runAsGroup: {{ .Values.minioDev.runAsUser | default 1000 }}
+        fsGroup: {{ .Values.minioDev.runAsUser | default 1000 }}
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mc
           image: "{{ .Values.minioDev.mcImage.repository }}:{{ .Values.minioDev.mcImage.tag }}"
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: {{ .Values.minioDev.runAsUser | default 1000 }}
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           env:
             # KAC-187: order matters — MINIO_ROOT_{USER,PASSWORD} must be
             # defined BEFORE MC_HOST_minio if we relied on K8s $(VAR) expansion
@@ -152,9 +200,19 @@ spec:
             # version and is fragile). MC_HOST_minio is constructed in the
             # command script with proper `${VAR}` shell expansion.
             - name: MINIO_ROOT_USER
-              value: {{ .Values.minioDev.rootUser | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minioDev.existingSecret | default "minio-dev-root" }}
+                  key: {{ .Values.minioDev.existingSecretUserKey | default "rootUser" }}
             - name: MINIO_ROOT_PASSWORD
-              value: {{ .Values.minioDev.rootPassword | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minioDev.existingSecret | default "minio-dev-root" }}
+                  key: {{ .Values.minioDev.existingSecretPasswordKey | default "rootPassword" }}
+            # readOnlyRootFilesystem — mc writes its config to $HOME/.mc; point
+            # HOME at the emptyDir /tmp.
+            - name: HOME
+              value: /tmp
             - name: BUCKET
               value: {{ .Values.minioDev.bucket | quote }}
           command:
@@ -199,4 +257,10 @@ spec:
           resources:
             requests: { cpu: 20m, memory: 64Mi }
             limits:   { cpu: 200m, memory: 128Mi }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
 {{- end }}

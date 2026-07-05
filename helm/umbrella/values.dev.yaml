@@ -475,6 +475,10 @@ minioDev:
   # Dev-only root credentials — match `kacho-iam.compliance.s3.{accessKey,secretKey}`
   # below. Do NOT use in prod; values.prod.yaml has minioDev.enabled=false and the
   # service points at an external MinIO/S3 with secrets from Vault/SealedSecret.
+  # INFRA sec-hardening r2: these are materialised into a Secret (minio-dev-root)
+  # and consumed via secretKeyRef — never inline plaintext env in the pod specs
+  # (templates/minio-dev-secret.yaml). An operator may instead point the pods at
+  # a pre-provisioned Secret via `minioDev.existingSecret`.
   rootUser: changeme-dev-minio-access
   rootPassword: changeme-dev-minio-secret
   # Must match `kacho-iam.compliance.s3.bucket` below — init Job creates it.
@@ -862,7 +866,13 @@ kratos-selfservice-ui:
     kratosBrowserUrl: "http://localhost:28080/.ory/kratos/public"
     kratosPublicUrl: "http://kacho-umbrella-kratos-public:80"
     hydraAdminUrl: "http://kacho-umbrella-hydra-admin:4445"
-    cookieSecret: "please-change-this-32-bytes-A1Bx"
+    # Dev-only throwaway signing secret (kind stand). Prod sources it from an
+    # operator-provisioned Secret via cookieSecret.existingSecret (values.prod.yaml).
+    cookieSecret:
+      value: "dev-only-throwaway-32-bytes-A1Bx"
+    # Dev stand talks plain-http to kratos/hydra upstreams → opt into skipping
+    # Node's outbound TLS verification. Production leaves this OFF (verify on).
+    insecureSkipTLSVerify: true
 
 # KAC-127: zitadelOidcBootstrap удалён — identity/OIDC tier перешёл на Ory
 # Kratos + Hydra (см. секции pg-kratos / pg-hydra выше).

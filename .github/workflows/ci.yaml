@@ -24,20 +24,20 @@ jobs:
   helm-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { path: kacho-deploy }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: PRO-Robotech/kacho-vpc
           ref: main
           path: kacho-vpc
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: PRO-Robotech/kacho-compute
           ref: main
           path: kacho-compute
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: PRO-Robotech/kacho-api-gateway
           ref: main
@@ -45,7 +45,7 @@ jobs:
       # KAC-NLB: kacho-nlb sub-chart is referenced from umbrella via
       # `file://../../../kacho-nlb/deploy` — checkout required for helm dep
       # resolution. Default ref `main` (mirrors vpc/compute pin policy).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: PRO-Robotech/kacho-nlb
           ref: main
@@ -54,7 +54,7 @@ jobs:
       # (Not Found - https://docs.github.com/rest/repos/repos#get-a-repository).
       # Best-effort checkout: continue on failure and create a stub chart below so
       # the umbrella's `file://../../../kacho-ui/deploy` dependency resolves for lint.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         continue-on-error: true
         with:
           repository: PRO-Robotech/kacho-ui
@@ -73,7 +73,7 @@ jobs:
           fi
         working-directory: ${{ github.workspace }}
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
       - run: cd helm/umbrella && helm dep update && helm lint . -f values.dev.yaml
       # values.prod.yaml — the fail-closed production profile. Lint + assert it
       # renders AND carries production-mode (NOT dev) + ssl-mode != disable for
@@ -82,33 +82,72 @@ jobs:
       # newman/dev stand is unaffected.
       - run: cd helm/umbrella && helm lint . -f values.prod.yaml
       - name: install yq (manifest-assertion harness)
+        env:
+          # Pinned version + published SHA256 (mikefarah/yq v4.44.3,
+          # yq_linux_amd64). No `latest` mutable URL, no unverified download.
+          YQ_VERSION: "4.44.3"
+          YQ_SHA256: "a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7"
         run: |
-          sudo curl -fsSL -o /usr/local/bin/yq \
-            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          curl -fsSL -o "$tmp/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  $tmp/yq" | sha256sum -c -
+          sudo install -m 0755 "$tmp/yq" /usr/local/bin/yq
+          yq --version
       - run: make helm-manifest-test
 
-      # INFRA sec-hardening — Trivy IaC misconfig gate. Renders the kacho-*
-      # control-plane workloads we own (kacho-iam / kacho-geo / openfga-bootstrap)
-      # and fails the build on any HIGH/CRITICAL Kubernetes misconfiguration
-      # (e.g. a dropped securityContext, writable rootfs, over-broad RBAC).
-      # Scoped to our vendored templates — third-party sub-charts are out of
-      # scope for this gate. Pinned trivy version for reproducibility.
+      # INFRA sec-hardening — Trivy IaC misconfig gate. Renders the umbrella-owned
+      # workloads (kacho-iam / kacho-geo / openfga-bootstrap + the auxiliary
+      # kratos-selfservice-ui / minio-dev / hydra-trust-grants pods, r2) and fails
+      # the build on any HIGH/CRITICAL Kubernetes misconfiguration (e.g. a dropped
+      # securityContext, writable rootfs, over-broad RBAC). Scoped to templates we
+      # own — upstream third-party sub-charts stay out of scope. Pinned trivy
+      # version for reproducibility.
       - name: install trivy
+        env:
+          # Version-pinned release binary + integrity check against the
+          # version-pinned checksums file. Replaces `curl … main/install.sh |
+          # sudo sh` — no root exec of a mutable-branch script (SLSA/CWE-494).
+          TRIVY_VERSION: "0.64.1"
         run: |
-          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin v0.64.1
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          cd "$tmp"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl -fsSLO "${base}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLO "${base}/trivy_${TRIVY_VERSION}_checksums.txt"
+          # Verify the archive against trivy's published (version-pinned) checksum.
+          grep " trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz\$" \
+            "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+          trivy --version
         working-directory: ${{ github.workspace }}
       - name: trivy IaC misconfig scan (kacho-* workloads — gate HIGH,CRITICAL)
         run: |
           set -euo pipefail
           mkdir -p /tmp/rendered
           cd helm/umbrella
+          # Common --set flags to force the conditionally-rendered workloads on so
+          # the gate actually sees them: openfga-bootstrap RBAC + the federation-in
+          # trust-grants Job (needs a trusted issuer to render).
+          COMMON=( --set openfgaBootstrap.enabled=true
+                   --set kacho-iam.federationIn.enabled=true
+                   --set kacho-iam.federationIn.trustedIssuers[0].issuer=https://idp.example.com
+                   --set kacho-iam.federationIn.trustedIssuers[0].jwksUrl=https://idp.example.com/jwks
+                   --set kacho-iam.federationIn.trustedIssuers[0].allowedSubjects[0]='*' )
+          # INFRA sec-hardening r2 — the auxiliary umbrella-owned workloads
+          # (kratos-selfservice-ui / minio-dev / hydra-trust-grants) are now in
+          # scope alongside the kacho-iam / kacho-geo / openfga workloads.
           for t in charts/kacho-iam/templates/deployment.yaml \
                    charts/kacho-geo/templates/deployment.yaml \
-                   charts/openfga-bootstrap/templates/openfga-bootstrap-rbac.yaml; do
+                   charts/openfga-bootstrap/templates/openfga-bootstrap-rbac.yaml \
+                   charts/kratos-selfservice-ui/templates/deployment.yaml \
+                   templates/minio-dev.yaml \
+                   templates/hydra-trust-grants-job.yaml; do
             helm template kacho-umbrella . -f values.dev.yaml \
-              --set openfgaBootstrap.enabled=true --show-only "$t"
+              "${COMMON[@]}" --show-only "$t"
             echo '---'
           done > /tmp/rendered/kacho-workloads.yaml
           trivy config --severity HIGH,CRITICAL --exit-code 1 \
@@ -119,20 +158,20 @@ jobs:
     continue-on-error: true
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { path: kacho-deploy }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-vpc, ref: main, path: kacho-vpc }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-compute, ref: main, path: kacho-compute }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-api-gateway, ref: main, path: kacho-api-gateway }
       # KAC-NLB: same checkout pattern as helm-lint job above.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-nlb, ref: main, path: kacho-nlb }
       # kacho-ui is a private repo; best-effort checkout (see helm-lint job).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         continue-on-error: true
         with: { repository: PRO-Robotech/kacho-ui, path: kacho-ui }
       - name: stub kacho-ui/deploy if checkout was skipped (private repo)
@@ -149,11 +188,11 @@ jobs:
           fi
         working-directory: ${{ github.workspace }}
 
-      - uses: helm/kind-action@v1
+      - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
         with:
           config: kacho-deploy/kind/kind-config.yaml
           cluster_name: kacho
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
       - name: /etc/hosts override for api.kacho.local
         run: sudo bash -c 'echo "127.0.0.1 api.kacho.local kacho.local" >> /etc/hosts'
       - name: run non-destructive E* scenarios (skip F1 — needs port 80 squatter)
