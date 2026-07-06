@@ -111,6 +111,14 @@ committed default.
 - **`kacho-geo:main-latest`** is a documented placeholder — the geo image is not
   yet pushed to the registry (epic kacho-geo); the real `:main-<sha>` tag + pull
   secret are provisioned at deploy time per-cluster (`values.yaml` block comment).
+  The prod image-tag overlay `values.prorobotech.yaml` therefore **intentionally has
+  no `kacho-geo` entry** while it pins every other service (vpc/compute/api-gateway/
+  ui/iam/nlb) to an immutable `:main-<sha>`: there is no published geo image to pin
+  to yet. This is not an accidental omission — until the geo image ships, geo is not
+  deployable from that overlay at all. **Obligation on publish:** when the geo image
+  is first pushed, add a `kacho-geo` entry to `values.prorobotech.yaml` pinned to the
+  immutable `:main-<sha>` (or a `sha256:` digest), same as every other service, so the
+  production overlay never resolves geo through the mutable `main-latest` tag.
 
 Making digest pinning the *committed default* would either bake in placeholder
 (non-deployable) values or couple every source commit to a specific build hash —
@@ -138,10 +146,15 @@ per-cluster:
   other ingress — closing lateral movement to DB credentials (CIS Kubernetes 5.3.2
   / OWASP A05:2021) without a namespace-wide default-deny.
 
-**Why default-off.** The dev target (kind + kindnet) does **not** enforce
-NetworkPolicy, so the policies are inert there, and a namespace-wide restriction
-would break `:5432` / `:9091` port-forward debugging in dev. Prod clusters run a
-NetworkPolicy-enforcing CNI and flip the flags.
+**Why default-off (chart default) vs on (prod profile).** The chart *default*
+(`values.yaml`) leaves all three flags off: the dev target (kind + kindnet) does
+**not** enforce NetworkPolicy, so the policies are inert there, and a namespace-wide
+restriction would break `:5432` / `:9091` port-forward debugging in dev. The
+**production profile** (`values.prod.yaml`) runs on a NetworkPolicy-enforcing CNI and
+flips **all three** on — `vpc.networkPolicy.enabled`, `opaSidecar.networkPolicy.enabled`,
+**and** `networkPolicy.datastore.enabled` (the last added r9b; before it, the prod
+profile enabled the first two but silently left every pg-<svc>:5432 reachable
+namespace-wide — an oversight, now closed and guarded).
 
 **Why per-datastore allowlists rather than a single namespace `default-deny-all`.**
 A correct namespace default-deny requires an allow rule for **every** legitimate
@@ -164,3 +177,46 @@ preferred — the datastore list is data-driven, no template change needed).
 - `tests/helm/networkpolicy-datastore-test.sh` asserts the datastore policies are
   default-off, and — when enabled — render one Ingress-only policy per pg instance
   scoped to that pg pod on :5432 with the declared consumer selectors.
+- `tests/helm/prod-profile-fail-closed-test.sh` §9 asserts the **production profile**
+  actually renders the per-datastore policies (`≥6`, one per kacho-owned pg-<svc>), so
+  a regression that drops `networkPolicy.datastore.enabled` from `values.prod.yaml`
+  fails the build.
+
+## 5. The chart default is the insecure DEV posture; production is an explicit opt-in profile
+
+**Decision.** A bare `helm install kacho-umbrella ./helm/umbrella` (no `-f`) lands on
+the **dev** posture: `authn.mode: dev` (anonymous → full access), Postgres
+`ssl-mode: disable`, mTLS toggled for black-box REST, and the git-committed
+`changeme-dev-*` / `kacho-dev-jwt-secret-2026` / `please-change-this-32-bytes-*`
+placeholder credentials from `values.dev.yaml`/`values.yaml`. Hardened production is
+**not** the default — it is reached only by explicitly layering
+`-f values.prod.yaml` (auth `production`/`production-strict`, `ssl-mode: require`,
+mTLS ON, fail-closed authz, and **zero** secret material — every credential via
+`existingSecret`/`secretKeyRef`).
+
+**Why default-dev rather than fail-closed-by-default.** This repo's primary artifact
+is the **kind dev stand** (`make dev-up`) + the newman CI cluster, which must come up
+reproducibly and offline with no external IdP / secret store. Making the *chart
+default* fail-closed would break `make dev-up` and the CI stand (the exact flows that
+consume the default), and a fail-closed default still could not run without a
+provisioned IdP + secret store — infra the dev stand does not have. The deliberate
+split is: **dev = convenient default (throwaway, world-readable placeholders,
+never network-reachable); prod = explicit hardened profile.** The committed dev
+credentials are labelled `changeme-dev-*` and carry no confidentiality (full policy:
+`docs/security/dev-credentials.md`; banner atop `values.dev.yaml`).
+
+**Residual risk (accepted).** An operator who runs a bare `helm install` against a
+shared/staging cluster — forgetting `-f values.prod.yaml` — gets the insecure posture
+with git-known credentials. This is mitigated by, not eliminated by, documentation:
+the `values.prod.yaml` header, the `values.dev.yaml` security banner, and
+`docs/security/dev-credentials.md` all state the rule loudly. Promoting a fail-closed
+default is a deliberate future option (would require a dev opt-in flag + a dev
+secret-gen path) — tracked as an enhancement, not a silent default flip here.
+
+**Guardrails.**
+- `tests/helm/prod-profile-fail-closed-test.sh` §7 asserts `values.prod.yaml` contains
+  **no** plaintext `password:` and **no** `devSecret:` — the production profile can
+  never regress to a git-committed secret; §1–5 assert the full fail-closed posture.
+- The Ory `kratos-selfservice-ui` cookie/CSRF signing secret has **no committed
+  default** at all — the sub-chart `fail`s render in production if it is unset, so a
+  prod install can never fall back to a git-known signing key (§ values.prod.yaml).

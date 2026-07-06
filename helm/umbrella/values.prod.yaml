@@ -407,3 +407,15 @@ kratos-selfservice-ui:
 opaSidecar:
   networkPolicy:
     enabled: true
+
+# Per-datastore Postgres :5432 ingress allowlist (templates/networkpolicy-datastore.yaml,
+# r5b). Default-off in the chart (kind/kindnet does not enforce NetworkPolicy; :5432
+# port-forward debugging in dev would break). Production runs a NetworkPolicy-enforcing
+# CNI and MUST flip it ON: once selected by this ingress policy each pg-<svc> pod
+# implicitly denies all other ingress, closing lateral movement to the credential-bearing
+# DB listeners (CIS Kubernetes 5.3.2 / OWASP A05:2021). The consumer `from` selectors
+# live in values.yaml (networkPolicy.datastore.instances). pg-kratos/pg-hydra are left
+# to the Ory sub-charts' own NetworkPolicy (docs/architecture/known-divergences.md §4).
+networkPolicy:
+  datastore:
+    enabled: true
