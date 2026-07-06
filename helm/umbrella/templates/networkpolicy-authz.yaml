@@ -182,8 +182,13 @@ spec:
       ports:
         - protocol: TCP
           port: 9091
-    # OpenFGA (only if Phase 3 OPA sidecar ever directly queries FGA — currently
-    # NO, but reserved for Phase 4 ListObjects integration if OPA does the dual-check).
+    # OpenFGA gRPC :8081 — REQUIRED (not reserved). NetworkPolicy is pod-scoped, so
+    # this egress governs the MAIN container of every opa-sidecar-labeled pod, not
+    # just its OPA sidecar. kacho-iam carries `kacho.cloud/opa-sidecar=true` and is
+    # the primary FGA client (Write tuples via outbox-worker, Check, bundle-build
+    # queries); any other opa-sidecar-labeled backend/gateway pod runs the per-RPC
+    # Check against OpenFGA too (mirror of Policy 1's ingress allowlist). Dropping
+    # this rule fail-closes iam's FGA writes/reads on a NetworkPolicy-enforcing CNI.
     - to:
         - podSelector:
             {{- toYaml .Values.opaSidecar.networkPolicy.openfgaPodSelector | nindent 14 }}
