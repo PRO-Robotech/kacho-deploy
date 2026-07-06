@@ -121,4 +121,13 @@ DEV_AGW="$(env_val KACHO_API_GATEWAY_AUTHN_MODE "$(render_only "$DEV" charts/api
 [ "$DEV_VPC" = "dev" ] || fail "values.dev.yaml kacho-vpc authn.mode=$DEV_VPC (expected dev — dev stand changed!)"
 [ "$DEV_AGW" = "dev" ] || fail "values.dev.yaml api-gateway AUTHN_MODE=$DEV_AGW (expected dev — dev stand changed!)"; ok
 
+# ── 9. Per-datastore Postgres NetworkPolicy — ENABLED in production ───────────
+# The credential-bearing pg-<svc>:5432 listeners must be ingress-restricted to
+# their declared consumers in prod. templates/networkpolicy-datastore.yaml is
+# default-off (dev/kind does not enforce NetworkPolicy); the production profile
+# MUST flip networkPolicy.datastore.enabled=true, else every pg-* is reachable
+# namespace-wide (lateral movement to DB credentials — CIS Kubernetes 5.3.2).
+DS_POLICIES="$(echo "$FULL" | yq ea 'select(.kind=="NetworkPolicy" and .metadata.labels."kacho.cloud/component"=="datastore-netpol") | .metadata.name' - | grep -c . || true)"
+[ "$DS_POLICIES" -ge 6 ] || fail "production render has only $DS_POLICIES datastore NetworkPolicies (networkPolicy.datastore.enabled not set in values.prod.yaml — every pg-*:5432 stays reachable namespace-wide)"; ok
+
 echo "PASS: $SCRIPT ($N assertions)"
