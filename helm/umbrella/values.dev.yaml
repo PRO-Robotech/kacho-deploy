@@ -1205,6 +1205,16 @@ kacho-nlb:
   enabled: true
   name: kacho-nlb
   replicas: 1
+  # Dev kind stack: nlb already sets db.sslmode=disable below (dev pg-nlb serves
+  # no TLS), but the nlb chart defaults config.mode=production, whose
+  # config.Validate (audit SEC #1) REJECTS sslmode ∈ disable/allow/prefer — a
+  # production stand MUST use a TLS DB channel. production + sslmode=disable =
+  # refuse-to-start (migrate + serve) → Init:CrashLoopBackOff. So the dev profile
+  # must also flip config.mode=dev (same triplet the compute chart documents:
+  # mode=dev + mtls off + sslmode=disable). Ephemeral CI stand only; prod keeps
+  # production (values.prod.yaml).
+  config:
+    mode: dev
   # mTLS: server (gateway dials here) + client (nlb→iam, nlb→vpc, nlb→compute, nlb→geo).
   mtls:
     enable: true
