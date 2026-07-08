@@ -60,8 +60,13 @@ api-gateway:
   # dev profile runs authn.mode=dev + devSecret intentionally, so it MUST label the env as
   # dev-class here — otherwise the gateway refuses to boot. Emitted via the subchart's
   # generic extraEnv passthrough (the fixed env block does not template APP_ENV).
+  #
+  # The var name is KACHO_APP_ENV (domain-LESS): config.go binds it via
+  # `envconfig:"KACHO_APP_ENV"` — a cross-cutting deployment-env label, NOT the
+  # per-domain KACHO_<DOMAIN>_<NAME> scheme. The earlier KACHO_API_GATEWAY_APP_ENV
+  # was read by nothing → cfg.AppEnv stayed "" → prod-guard fired anyway.
   extraEnv:
-    KACHO_API_GATEWAY_APP_ENV: dev
+    KACHO_APP_ENV: dev
   # mTLS: backend-dial client to every backend (cert + per-edge env). Hybrid
   # external listener (cert-or-JWT). Cert config (issuer/spiffe/secret) — chart values.
   mtls:
