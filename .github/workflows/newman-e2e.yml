@@ -175,13 +175,17 @@ jobs:
       # from the OSS HEAD produced a runtime-broken image (geo-read 503 →
       # cascading compute newman failures); the umbrella pulls the known-good
       # published tag instead (see "pull published kacho-geo image" below).
+      # Single-repo builds: each Dockerfile is `COPY . .` + `go mod download`
+      # (versioned GitHub deps from the public proxy), so the build context is the
+      # service's OWN checkout dir (`kacho-$svc`), NOT the workspace root — a
+      # rootless workspace-root context fails `go mod download` (no go.mod).
       - name: build service images
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           for svc in vpc iam compute api-gateway nlb; do
             echo "=== build kacho-$svc:dev ==="
-            docker build -f "kacho-$svc/Dockerfile" -t "kacho-$svc:dev" .
+            docker build -f "kacho-$svc/Dockerfile" -t "kacho-$svc:dev" "kacho-$svc"
           done
           if [ -f kacho-ui/Dockerfile ]; then
             echo "=== build kacho-ui:dev ==="

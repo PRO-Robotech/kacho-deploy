@@ -109,7 +109,7 @@ jobs:
           # Version-pinned release binary + integrity check against the
           # version-pinned checksums file. Replaces `curl … main/install.sh |
           # sudo sh` — no root exec of a mutable-branch script (SLSA/CWE-494).
-          TRIVY_VERSION: "0.64.1"
+          TRIVY_VERSION: "0.72.0"
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
@@ -175,6 +175,11 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { path: kacho-deploy }
 
+      # kacho-iam source is built into kacho-iam:dev by `make dev-up`
+      # (build-services SERVICES list) — its checkout is REQUIRED (the iam chart
+      # itself is vendored under helm/umbrella/charts, but the IMAGE is built).
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with: { repository: PRO-Robotech/kacho-iam, ref: main, path: kacho-iam }
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-vpc, ref: main, path: kacho-vpc }
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

@@ -19,13 +19,15 @@ build-ui:
 # reference local `kacho-<svc>:dev` images (values.dev.yaml), which kind cannot
 # pull from a registry → they MUST be built locally before helm install, else
 # pods sit in ImagePullBackOff and `helm --wait` times out (which also skips the
-# openfga-bootstrap RBAC, breaking fga-bootstrap). Build context = parent dir
-# (Dockerfiles COPY ../kacho-corelib + ../kacho-proto).
+# openfga-bootstrap RBAC, breaking fga-bootstrap). Single-repo builds: each
+# Dockerfile is `COPY . .` + `go mod download` (versioned GitHub deps), so the
+# build context is the service's OWN dir (kacho-$svc), NOT the parent — a
+# workspace-root context would `COPY . .` a rootless tree → `go: no modules`.
 SERVICES := iam vpc compute api-gateway nlb
 build-services:
 	@for svc in $(SERVICES); do \
 	  echo "=== build kacho-$$svc:dev ==="; \
-	  ( cd .. && docker build -f kacho-$$svc/Dockerfile -t kacho-$$svc:dev . ) || exit 1; \
+	  ( cd .. && docker build -f kacho-$$svc/Dockerfile -t kacho-$$svc:dev kacho-$$svc ) || exit 1; \
 	  kind load docker-image kacho-$$svc:dev --name $(CLUSTER_NAME) || exit 1; \
 	done
 
@@ -120,7 +122,7 @@ endif
 	if [ "$(SVC)" = "ui" ]; then \
 		docker build -t kacho-ui:dev ../kacho-ui; \
 	else \
-		cd .. && docker build -f kacho-$(SVC)/Dockerfile -t kacho-$(SVC):dev .; \
+		cd .. && docker build -f kacho-$(SVC)/Dockerfile -t kacho-$(SVC):dev kacho-$(SVC); \
 	fi && \
 	kind load docker-image kacho-$(SVC):dev --name $(CLUSTER_NAME) && \
 	kubectl rollout restart -n kacho deployment/$$DEPLOY_NAME
