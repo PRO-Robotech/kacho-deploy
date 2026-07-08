@@ -159,3 +159,17 @@ minioDev:
 # ── no ingress controller on this cluster ──
 ingress-nginx:
   enabled: false
+
+# ── identity: point the Ory self-service UI at the stand's EXTERNAL origin ──
+# Users reach this stand at http://kacho.in-cloud.io (external proxy → in-cluster
+# ui nginx → /.ory/kratos|hydra). The Node self-service UI hands the browser an
+# ABSOLUTE Kratos URL for the login/registration form actions; the dev default is
+# the local port-forward (localhost:28080), which on a remote stand points at the
+# USER's own machine → registration/login POSTs never reach Kratos (no identity
+# created, "invalid credentials"). Kratos' own server config is already origin-
+# relative (serve.public.base_url: /.ory/kratos/public/), so only this one browser
+# URL needs the external origin. Hydra issuer stays as-is (JWT `iss` identity only,
+# never navigated; password flow doesn't use the Hydra OAuth path).
+kratos-selfservice-ui:
+  kratosSelfServiceUI:
+    kratosBrowserUrl: "http://kacho.in-cloud.io/.ory/kratos/public"
