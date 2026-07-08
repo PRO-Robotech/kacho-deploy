@@ -416,7 +416,13 @@ jobs:
           kubectl -n kacho get events --sort-by=.lastTimestamp | tail -40 || true
           for d in api-gateway kacho-iam vpc compute kacho-geo; do
             echo "=== logs: $d ==="
-            kubectl -n kacho logs "deploy/$d" --tail=200 || true
+            # --all-containers + --prefix so init-container (migrate) crashes are
+            # captured too — a crashlooping init leaves the pod PodInitializing and
+            # its stderr is the ONLY signal (the main container never starts).
+            kubectl -n kacho logs "deploy/$d" --all-containers=true --prefix --tail=200 || true
+            # Previous-crash logs of the init container (current attempt may be
+            # mid-restart with no fresh output).
+            kubectl -n kacho logs "deploy/$d" -c migrate --previous --tail=100 2>/dev/null || true
             echo "=== describe: $d ==="
             kubectl -n kacho describe deploy "$d" | tail -40 || true
           done
