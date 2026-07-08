@@ -54,6 +54,14 @@ api-gateway:
   advertisedEndpoint: localhost:18443
   image: kacho-api-gateway:dev
   imagePullPolicy: IfNotPresent
+  # sec-hardening (r8): the composition-root prod-guard (validateProductionAuthzConfig)
+  # treats an EMPTY KACHO_APP_ENV as production-class and fails closed when authn.mode=dev
+  # or the dev HMAC secret is set (CWE-347 symmetric-key principal forgery, CWE-1188). The
+  # dev profile runs authn.mode=dev + devSecret intentionally, so it MUST label the env as
+  # dev-class here — otherwise the gateway refuses to boot. Emitted via the subchart's
+  # generic extraEnv passthrough (the fixed env block does not template APP_ENV).
+  extraEnv:
+    KACHO_API_GATEWAY_APP_ENV: dev
   # mTLS: backend-dial client to every backend (cert + per-edge env). Hybrid
   # external listener (cert-or-JWT). Cert config (issuer/spiffe/secret) — chart values.
   mtls:
