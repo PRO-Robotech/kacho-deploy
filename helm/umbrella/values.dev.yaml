@@ -156,6 +156,15 @@ api-gateway:
 compute:
   image: kacho-compute:dev
   imagePullPolicy: IfNotPresent
+  # Dev kind stack: pg-compute (bitnami postgres) serves NO TLS, so the migrator
+  # + serve DB channel must be sslmode=disable. The compute chart DEFAULTS to
+  # `require` (stricter than vpc/iam, which default to disable), which here fails
+  # with "server refused TLS connection" → the migrate init container
+  # CrashLoopBackOff (pod stuck PodInitializing). Service→service mTLS stays on
+  # (mtls.enable=true below); only the ephemeral in-cluster DB channel is
+  # plaintext — exactly like vpc/iam in this dev profile.
+  db:
+    sslMode: disable
   # mTLS: server (gateway/vpc/nlb dial here) + client (compute→iam, compute→vpc, compute→geo).
   mtls:
     enable: true
