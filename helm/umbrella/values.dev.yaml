@@ -165,6 +165,18 @@ compute:
   # plaintext — exactly like vpc/iam in this dev profile.
   db:
     sslMode: disable
+  # Dev kind stack runs auth.mode=dev (like kacho-geo + vpc/iam): the umbrella
+  # helm install disables server-mTLS for every service (--set
+  # compute.mtls.enable=false), but the compute chart DEFAULTS auth.mode=
+  # production, whose boot-guard REQUIRES server-mTLS on both listeners
+  # (forwarded principal trusted on plaintext → subject spoofing) AND a non-empty
+  # trusted-forwarder list. production + mtls-off = refuse-to-start
+  # CrashLoopBackOff. The chart's deployment.yaml itself notes "dev stand
+  # overrides auth.mode=dev + mtls.enable=false + db.sslMode=disable" — this
+  # supplies the missing auth.mode override (ephemeral CI stand only; prod keeps
+  # production, see values.prod.yaml).
+  auth:
+    mode: dev
   # mTLS: server (gateway/vpc/nlb dial here) + client (compute→iam, compute→vpc, compute→geo).
   mtls:
     enable: true
