@@ -216,6 +216,12 @@ api-gateway:
     KACHO_API_GATEWAY_INTERNAL_GRPC_TLS_CERT_FILE: /etc/api-gateway/tls/tls.crt
     KACHO_API_GATEWAY_INTERNAL_GRPC_TLS_KEY_FILE: /etc/api-gateway/tls/tls.key
     KACHO_API_GATEWAY_INTERNAL_GRPC_ALLOWED_SPIFFE: spiffe://kacho.cloud/ns/kacho/sa/kacho-iam
+  # gateway→geo backend dial must be mTLS: geo's :9090 runs public_mtls=true, but
+  # values.prod's mtls.edges predate the geo cutover (only vpc/compute/iam/nlb) → the
+  # gateway dialed geo plaintext → 503 on /geo/v1/regions|zones (region/zone admin).
+  mtls:
+    edges:
+      geo: true
 
 # ── kacho-registry (OCI control-plane) + zot + pg-registry — Stage 1 (epic #129) ──
 # Integrates the previously-orphaned registry into the umbrella. Production posture
