@@ -74,6 +74,20 @@ dependencies:
     version: ">= 0.0.0"
     repository: file://../../../kacho-ui/deploy
     condition: ui.enabled
+  # Federated ui-future console (host + dashboard/vpc/iam/nlb/registry/system
+  # Module-Federation remotes). Same chart name (`ui`) as the legacy dep above, so
+  # it is ALIASED to `uif` — its values live under `uif:` and its resources are named
+  # from those values (name/dashboard.name/… → uif, uif-dashboard, …), matching the
+  # standalone `uif` release this consolidates. Condition-gated (`uif.enabled`);
+  # default OFF. Enabling it on a cluster that already runs the standalone `uif`
+  # release requires a one-time `helm upgrade … --take-ownership` to adopt the existing
+  # uif-* resources in place (the hand-applied uif-lb LoadBalancer is out-of-band and
+  # untouched → its Beget IP is preserved). See epic #129 / kacho-deploy#161.
+  - name: ui
+    alias: uif
+    version: ">= 0.0.0"
+    repository: file://../../../kacho-ui-future/deploy
+    condition: uif.enabled
   # kacho-registry — OCI registry control-plane (gRPC + data-plane :8080) + zot
   # StatefulSet (OCI blob backend). Condition-gated; own Postgres (pg-registry).
   - name: registry

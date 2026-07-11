@@ -86,6 +86,8 @@ jobs:
           echo "REF_NLB=main"              >> "$GITHUB_ENV"
           # kacho-registry sibling for helm dep (file://../../../kacho-registry/deploy).
           echo "REF_REGISTRY=main"         >> "$GITHUB_ENV"
+          # kacho-ui-future sibling (aliased `uif`) for helm dep (file://../../../kacho-ui-future/deploy).
+          echo "REF_UIFUTURE=main"         >> "$GITHUB_ENV"
           if [ -n "${DISPATCH_REPO:-}" ] && [ -n "${DISPATCH_REF:-}" ]; then
             # client_payload.repo may arrive as "PRO-Robotech/kacho-vpc" or
             # bare "kacho-vpc" — normalise to the kacho-<name> short form.
@@ -132,6 +134,9 @@ jobs:
       # kacho-registry sibling for helm dep (file://../../../kacho-registry/deploy).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-registry, ref: "${{ env.REF_REGISTRY }}", path: kacho-registry }
+      # kacho-ui-future sibling (aliased `uif`) for helm dep (file://../../../kacho-ui-future/deploy).
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with: { repository: PRO-Robotech/kacho-ui-future, ref: "${{ env.REF_UIFUTURE }}", path: kacho-ui-future }
       # kacho-workspace carries the shared authz-fixtures bootstrap
       # (tests/authz-fixtures/setup.sh + setup-jwt.py + patch-env.py).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
