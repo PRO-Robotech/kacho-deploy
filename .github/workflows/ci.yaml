@@ -75,7 +75,7 @@ jobs:
             mkdir -p kacho-ui-future/deploy/templates
             cat >kacho-ui-future/deploy/Chart.yaml <<'EOF'
           apiVersion: v2
-          name: ui
+          name: uif
           version: 2.0.0
           description: stub for CI (real chart in PRO-Robotech/kacho-ui-future)
           EOF
@@ -234,7 +234,7 @@ jobs:
             mkdir -p kacho-ui-future/deploy/templates
             cat >kacho-ui-future/deploy/Chart.yaml <<'EOF'
           apiVersion: v2
-          name: ui
+          name: uif
           version: 2.0.0
           description: stub for CI (real chart in PRO-Robotech/kacho-ui-future)
           EOF
