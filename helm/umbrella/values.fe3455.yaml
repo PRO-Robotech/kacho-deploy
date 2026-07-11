@@ -67,6 +67,42 @@ ui:
   enabled: false
   image: docker.io/prorobotech/kacho-ui:main-09feff2e
   imagePullPolicy: IfNotPresent
+
+# Federated ui-future console (aliased `uif` sub-chart) — reproduces the resources
+# the standalone `uif` release runs today, so a one-time `helm upgrade … --set
+# uif.enabled=true --take-ownership` adopts them in place (names are values-driven
+# → identical → adopted, not recreated). Images are the live docker.io tags (no new
+# master build exists — kacho-ui-future#12 blocks image CI). `uif.enabled` stays
+# false here until the take-ownership cutover; flip to true in a follow-up once the
+# umbrella owns the resources. The hand-applied uif-lb LoadBalancer is out-of-band
+# (not in the chart) → untouched by the upgrade → Beget IP 45.153.188.119 preserved.
+uif:
+  enabled: false
+  name: uif
+  image: docker.io/prorobotech/kacho-uifut-host:admin-mf2-0711
+  imagePullPolicy: Always
+  ingress:
+    enabled: false          # no ingress controller on fe3455 (LB-only exposure)
+  autoscaling:
+    enabled: false          # match the standalone release (no host HPA)
+  dashboard:
+    name: uif-dashboard
+    image: docker.io/prorobotech/kacho-uifut-dashboard:fut-1783073280
+  vpc:
+    name: uif-vpc
+    image: docker.io/prorobotech/kacho-uifut-vpc:ui-merged-0710
+  iam:
+    name: uif-iam
+    image: docker.io/prorobotech/kacho-uifut-iam:admin-mf-0711
+  nlb:
+    name: uif-nlb
+    image: docker.io/prorobotech/kacho-uifut-nlb:ui-merged-0710
+  registry:
+    name: uif-registry
+    image: docker.io/prorobotech/kacho-uifut-registry:ui-merged-0710
+  system:
+    name: ui-system
+    image: docker.io/prorobotech/kacho-uifut-system:admin-mf-0711
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
