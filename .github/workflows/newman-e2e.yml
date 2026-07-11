@@ -86,8 +86,6 @@ jobs:
           echo "REF_NLB=main"              >> "$GITHUB_ENV"
           # kacho-registry sibling for helm dep (file://../../../kacho-registry/deploy).
           echo "REF_REGISTRY=main"         >> "$GITHUB_ENV"
-          # kacho-ui-future sibling (aliased `uif`) for helm dep (file://../../../kacho-ui-future/deploy).
-          echo "REF_UIFUTURE=main"         >> "$GITHUB_ENV"
           if [ -n "${DISPATCH_REPO:-}" ] && [ -n "${DISPATCH_REF:-}" ]; then
             # client_payload.repo may arrive as "PRO-Robotech/kacho-vpc" or
             # bare "kacho-vpc" — normalise to the kacho-<name> short form.
@@ -134,9 +132,25 @@ jobs:
       # kacho-registry sibling for helm dep (file://../../../kacho-registry/deploy).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-registry, ref: "${{ env.REF_REGISTRY }}", path: kacho-registry }
-      # kacho-ui-future sibling (aliased `uif`) for helm dep (file://../../../kacho-ui-future/deploy).
+      # kacho-ui-future sibling (aliased `uif`) — best-effort + stub (default token
+      # can't reach it cross-repo); enough for `helm dep update` (uif.enabled=false in
+      # the newman/dev stack, so the stub is never rendered).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with: { repository: PRO-Robotech/kacho-ui-future, ref: "${{ env.REF_UIFUTURE }}", path: kacho-ui-future }
+        continue-on-error: true
+        with: { repository: PRO-Robotech/kacho-ui-future, path: kacho-ui-future }
+      - name: stub kacho-ui-future/deploy if checkout was skipped
+        run: |
+          if [ ! -f kacho-ui-future/deploy/Chart.yaml ]; then
+            mkdir -p kacho-ui-future/deploy/templates
+            cat >kacho-ui-future/deploy/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: ui
+          version: 2.0.0
+          description: stub for CI (real chart in PRO-Robotech/kacho-ui-future)
+          EOF
+            : >kacho-ui-future/deploy/values.yaml
+          fi
+        working-directory: ${{ github.workspace }}
       # kacho-workspace carries the shared authz-fixtures bootstrap
       # (tests/authz-fixtures/setup.sh + setup-jwt.py + patch-env.py).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
