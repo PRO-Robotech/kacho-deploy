@@ -84,6 +84,8 @@ jobs:
           # KAC-NLB: kacho-nlb sibling for helm dep (file://../../../kacho-nlb/deploy)
           # and Dockerfile build context (COPY ../kacho-nlb when ci-images target runs).
           echo "REF_NLB=main"              >> "$GITHUB_ENV"
+          # kacho-registry sibling for helm dep (file://../../../kacho-registry/deploy).
+          echo "REF_REGISTRY=main"         >> "$GITHUB_ENV"
           if [ -n "${DISPATCH_REPO:-}" ] && [ -n "${DISPATCH_REF:-}" ]; then
             # client_payload.repo may arrive as "PRO-Robotech/kacho-vpc" or
             # bare "kacho-vpc" — normalise to the kacho-<name> short form.
@@ -127,6 +129,9 @@ jobs:
       # KAC-NLB: kacho-nlb sibling (helm dep + Dockerfile build context).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-nlb, ref: "${{ env.REF_NLB }}", path: kacho-nlb }
+      # kacho-registry sibling for helm dep (file://../../../kacho-registry/deploy).
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with: { repository: PRO-Robotech/kacho-registry, ref: "${{ env.REF_REGISTRY }}", path: kacho-registry }
       # kacho-workspace carries the shared authz-fixtures bootstrap
       # (tests/authz-fixtures/setup.sh + setup-jwt.py + patch-env.py).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

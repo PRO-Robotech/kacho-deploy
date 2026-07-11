@@ -58,11 +58,13 @@ api-gateway:
   image: docker.io/prorobotech/kacho-api-gateway:main-b96a48f9
   imagePullPolicy: IfNotPresent
 ui:
-  # main-b097ff35: sub-phase H (RulesEditor scalar module + labels gating #1) + #2 roles-list
-  # (accountId scope + auto-default + pageSize=1000) + invite fix: InviteUserPage/AccessPage
-  # single-account auto-default + guard so inviting without a selected Account-pill no longer
-  # sends empty account_id → authz `account:*` deny. All LIVE-verified in browser (roles
-  # «Кастомные» shows custom; invite 200 with pill unselected). G base: backend-driven catalog.
+  # Legacy monolithic console — RETIRED on fe3455. This cluster serves the federated
+  # ui-future console (host + dashboard/vpc/iam/registry/system remotes) as the `uif`
+  # release, reached via kacho.in-cloud.io → uif-lb (45.153.188.119). Disabling the
+  # legacy chart here keeps a bare `helm upgrade kacho-umbrella` from reinstating the
+  # old monolith (Chart.yaml gates it on `ui.enabled`). The image pin is left for
+  # reference / other overlays; it is inert while disabled.
+  enabled: false
   image: docker.io/prorobotech/kacho-ui:main-09feff2e
   imagePullPolicy: IfNotPresent
 kacho-iam:
