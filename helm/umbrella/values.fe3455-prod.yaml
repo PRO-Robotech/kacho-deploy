@@ -244,8 +244,22 @@ registry:
   service:
     dataplaneLB:
       enabled: true
+      # Beget LB controller annotations (same as ui-lb/uif-lb) — required for the
+      # provider to actually provision an external VIP; without them the Service
+      # stays <pending>.
+      annotations:
+        lb.beget.com/type: external
+        lb.beget.com/algorithm: round_robin
+        lb.beget.com/healthcheck-interval-seconds: "60"
+        lb.beget.com/healthcheck-timeout-seconds: "5"
   hydra:
-    jwksUrl: http://kacho-umbrella-hydra-public.kacho.svc:4444/.well-known/jwks.json
+    # production requireSecureJWKSURL enforces https scheme (stricter than the
+    # api-gateway which tolerates in-cluster http). The stand's hydra-public is
+    # http-only, so this URL is not yet fetchable in-cluster — the data-plane
+    # docker-token JWT verification needs a reachable https JWKS (hydra-https /
+    # JWKS terminator) as a FOLLOW-UP. The control-plane (mTLS gRPC + iam authz)
+    # and the pod itself come up on the https scheme.
+    jwksUrl: https://hydra.api.kacho.cloud/.well-known/jwks.json
     issuer: https://hydra.api.kacho.cloud
   dataplaneTLSTerminatedExternally: true
   mtls:
