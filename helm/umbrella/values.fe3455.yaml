@@ -78,7 +78,7 @@ ui:
 uif:
   enabled: true
   name: uif
-  image: docker.io/prorobotech/kacho-uifut-host:admin-mf2-0711
+  image: docker.io/prorobotech/kacho-ui-future-host:master-9f2bb45a
   imagePullPolicy: Always
   ingress:
     enabled: false          # no ingress controller on fe3455 (LB-only exposure)
@@ -86,22 +86,22 @@ uif:
     enabled: false          # match the standalone release (no host HPA)
   dashboard:
     name: uif-dashboard
-    image: docker.io/prorobotech/kacho-uifut-dashboard:fut-1783073280
+    image: docker.io/prorobotech/kacho-ui-future-dashboard:master-9f2bb45a
   vpc:
     name: uif-vpc
-    image: docker.io/prorobotech/kacho-uifut-vpc:ui-merged-0710
+    image: docker.io/prorobotech/kacho-ui-future-vpc:master-9f2bb45a
   iam:
     name: uif-iam
-    image: docker.io/prorobotech/kacho-uifut-iam:admin-mf-0711
+    image: docker.io/prorobotech/kacho-ui-future-iam:master-9f2bb45a
   nlb:
     name: uif-nlb
-    image: docker.io/prorobotech/kacho-uifut-nlb:ui-merged-0710
+    image: docker.io/prorobotech/kacho-ui-future-nlb:master-9f2bb45a
   registry:
     name: uif-registry
-    image: docker.io/prorobotech/kacho-uifut-registry:ui-merged-0710
+    image: docker.io/prorobotech/kacho-ui-future-registry:master-9f2bb45a
   system:
     name: ui-system
-    image: docker.io/prorobotech/kacho-uifut-system:admin-mf-0711
+    image: docker.io/prorobotech/kacho-ui-future-system:master-9f2bb45a
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
