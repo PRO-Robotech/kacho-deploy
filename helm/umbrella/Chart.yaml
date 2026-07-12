@@ -100,6 +100,21 @@ dependencies:
     repository: https://charts.bitnami.com/bitnami
     condition: pg-registry.enabled
 
+  # kacho-storage — Storage control-plane (Volume/VolumeAttachment/Snapshot/DiskType,
+  # gRPC public :9090 + cluster-internal :9091). Condition-gated; own Postgres
+  # (pg-storage, schema kacho_storage). Runtime edges storage→geo (zone_id) +
+  # storage→iam (ProjectService.Get + per-RPC Check); consumed by compute→storage
+  # (InternalVolumeService attach/detach).
+  - name: storage
+    version: ">= 0.0.0"
+    repository: file://../../../kacho-storage/deploy
+    condition: storage.enabled
+  - name: postgresql
+    alias: pg-storage
+    version: 13.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: pg-storage.enabled
+
   # kacho-iam — vendored sub-chart (Account/Project/User/SA/Group/Role/AccessBinding
   # + OPA sidecar pipeline + Kratos config). Lives under charts/ (file:// relative).
   - name: kacho-iam
