@@ -285,6 +285,13 @@ spec:
               value: {{ .Values.kacho.domain | quote }}
             - name: KACHO_IAM_HYDRA_ISSUER
               value: {{ printf "https://%s.%s" .Values.kacho.subdomains.hydra .Values.kacho.domain | quote }}
+            # SA-key / User-token issuance calls Hydra Admin CreateOAuthClient.
+            # Without this override ResolveHydraAdminURL derives hydra-admin.<domain>
+            # from the issuer — an external host that is NXDOMAIN in-cluster, so the
+            # Issue Operation fails (empty response, no PEM). Point at the internal
+            # Hydra admin Service, mirroring jwks-rotator-cronjob.yaml.
+            - name: KACHO_IAM_HYDRA_ADMIN_URL
+              value: {{ printf "http://kacho-umbrella-hydra-admin.%s.svc.cluster.local:4445" .Release.Namespace | quote }}
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
