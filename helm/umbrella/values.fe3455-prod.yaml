@@ -44,7 +44,7 @@
 mtls:
   pgTls:
     enabled: true
-    services: [vpc, compute, iam, geo, nlb]
+    services: [vpc, compute, iam, geo, nlb, storage]
 
 # ── greenfield image provisioning: bitnami PGs from docker.io/bitnamilegacy ──
 # values.yaml pins global.imageRegistry=docker.io/prorobotech (the kacho-* mirror,
@@ -172,6 +172,19 @@ compute:
   mtls:
     edges:
       geo: true
+  # compute→storage edge (InternalVolumeService attach/detach + Volume mirror, :9091).
+  # The compute sub-chart has no dedicated storage-edge template, so wire it via the
+  # generic env map. mTLS reuses compute's already-mounted client leaf
+  # (kacho-compute-client-tls at /etc/kacho-compute/tls/client) — storage's internal
+  # :9091 is RequireAndVerifyClientCert. serverName kacho-storage.<ns>.svc.cluster.local
+  # ∈ the storage server-cert SAN (storage.mtls.serverHosts=["kacho-storage"]).
+  env:
+    KACHO_COMPUTE_STORAGE_INTERNAL_GRPC_ADDR: kacho-storage.kacho.svc.cluster.local:9091
+    KACHO_COMPUTE_STORAGE_MTLS_ENABLE: "true"
+    KACHO_COMPUTE_STORAGE_MTLS_CERTFILE: /etc/kacho-compute/tls/client/tls.crt
+    KACHO_COMPUTE_STORAGE_MTLS_KEYFILE: /etc/kacho-compute/tls/client/tls.key
+    KACHO_COMPUTE_STORAGE_MTLS_CAFILES: /etc/kacho-compute/tls/client/ca.crt
+    KACHO_COMPUTE_STORAGE_MTLS_SERVERNAME: kacho-storage.kacho.svc.cluster.local
 kacho-geo:
   image: docker.io/prorobotech/kacho-geo:main-fc2d945c
   # hardened geo defaults AUTH_MODE=production → validateSecurityConfig requires a
@@ -280,6 +293,52 @@ pg-registry:
   image: { registry: docker.io, repository: bitnamilegacy/postgresql }
   volumePermissions: { image: { registry: docker.io, repository: bitnamilegacy/os-shell } }
   auth: { existingSecret: kacho-umbrella-pg-registry, username: registry, database: kacho_registry }
+  primary:
+    persistence:
+      enabled: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
+
+# ── kacho-storage — Storage control-plane (Volume/VolumeAttachment/Snapshot/DiskType) ──
+# gRPC public :9090 + cluster-internal :9091 + diagnostic /healthz. server-mTLS on
+# both listeners; per-edge client-mTLS storage→{geo,iam}. DB channel over TLS
+# (sslmode=require; pg server cert issued via mtls.pgTls.services above). Peer edges:
+# storage→geo (zone_id), storage→iam PUBLIC (ProjectService.Get) + INTERNAL (Check).
+storage:
+  enabled: true
+  image:
+    tag: main-latest          # PLACEHOLDER — override with the built kacho-storage tag
+  config:
+    authMode: production
+    geoGrpcAddr: kacho-geo.kacho.svc.cluster.local:9090
+    iamGrpcAddr: kacho-iam.kacho.svc.cluster.local:9090
+    authzIamGrpcAddr: kacho-iam-internal.kacho.svc.cluster.local:9091
+  db:
+    host: kacho-umbrella-pg-storage
+    sslMode: require
+    # operator-/bitnami-provisioned Secret (pg-storage.auth.existingSecret below);
+    # the storage chart references it (renders no Secret of its own).
+    passwordSecretName: kacho-umbrella-pg-storage
+    passwordSecretKey: password
+  mtls:
+    enable: true
+    edges:
+      geo: true
+      iam: true
+
+# pg-storage — greenfield bitnamilegacy image + operator secret + cert-manager TLS
+# (server cert kacho-umbrella-pg-storage-server-tls issued via mtls.pgTls.services).
+pg-storage:
+  enabled: true
+  image: { registry: docker.io, repository: bitnamilegacy/postgresql }
+  volumePermissions: { image: { registry: docker.io, repository: bitnamilegacy/os-shell } }
+  auth: { existingSecret: kacho-umbrella-pg-storage, username: storage, database: kacho_storage }
+  tls:
+    enabled: true
+    certificatesSecret: kacho-umbrella-pg-storage-server-tls
+    certFilename: tls.crt
+    certKeyFilename: tls.key
   primary:
     persistence:
       enabled: false

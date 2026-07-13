@@ -359,6 +359,19 @@ kacho-nlb:
 pg-nlb:
   enabled: false
 
+# ─── kacho-storage — disabled in base values ───────────────────────────────
+# Storage control-plane (Volume/VolumeAttachment/Snapshot/DiskType) + its backing
+# Postgres are condition-gated. Base keeps them OFF so an existing cluster does not
+# implicitly start a new Deployment + StatefulSet on the next `helm upgrade`; the
+# fe3455-prod overlay flips both true. Image is a placeholder overridden per env.
+storage:
+  enabled: false
+  image:
+    repository: docker.io/prorobotech/kacho-storage
+    tag: main-latest
+pg-storage:
+  enabled: false
+
 # ─── security.txt (RFC 9116) — served at /.well-known/security.txt via api-gateway
 # ingress; runtime-configurable per cluster.
 security:
