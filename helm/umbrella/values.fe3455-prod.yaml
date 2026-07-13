@@ -195,6 +195,12 @@ kacho-geo:
 kacho-iam:
   image:
     tag: main-a7b37ac9
+  # In-cluster Hydra token endpoint для registry `/iam/token` shim (client_credentials
+  # exchange). Без него ResolveHydraTokenURL() падает на внешний issuer-URL, недостижимый
+  # изнутри кластера → docker push/pull ломается на этапе брокеринга токена.
+  kacho:
+    iam:
+      hydraTokenURL: http://kacho-umbrella-hydra-public.kacho.svc:4444/oauth2/token
 kacho-nlb:
   image:
     tag: main-2c87cac9
