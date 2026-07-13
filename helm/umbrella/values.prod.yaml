@@ -367,6 +367,20 @@ hydra:
           secretKeyRef:
             name: kacho-iam-hook-token
             key: token
+      # Ory Hydra НЕ интерполирует ${KACHO_IAM_HOOK_TOKEN} в config-YAML — плейсхолдер
+      # уехал бы в X-Kacho-Hook-Token как литерал и HMAC-верификация hook'а падала бы.
+      # Значение auth-токена задаём через Ory env-override имена (config-путь
+      # oauth2.{token,refresh_token}_hook.auth.config.value), которые перекрывают YAML.
+      - name: OAUTH2_TOKEN_HOOK_AUTH_CONFIG_VALUE
+        valueFrom:
+          secretKeyRef:
+            name: kacho-iam-hook-token
+            key: token
+      - name: OAUTH2_REFRESH_TOKEN_HOOK_AUTH_CONFIG_VALUE
+        valueFrom:
+          secretKeyRef:
+            name: kacho-iam-hook-token
+            key: token
       - name: SSL_CERT_FILE
         value: /etc/kacho-iam-ca/ca.crt
     extraVolumes:
