@@ -246,10 +246,12 @@ api-gateway:
 registry:
   enabled: true
   image:
-    # main-9a8073bc — #33 Defect A (docker push 'unknown blob'): serveBlob reveals
-    # just-uploaded blobs via registry_pending_blob (migration 0003), REG-37 preserved.
-    # Supersedes the WIP feat-registry-create-authz image (main already carries #31).
-    tag: main-9a8073bc
+    # main-32f6917d — #33 Defect A (unknown blob) + Defect B (new-repo push deadlock):
+    # serveBlob reveals just-uploaded blobs (registry_pending_blob, migration 0003) AND
+    # a push-context authz fallback breaks the v_get / register-on-first-push deadlock so
+    # a brand-new repo can be pushed end-to-end. REG-37 preserved. Supersedes the WIP
+    # feat-registry-create-authz image (main carries #31 + #35 + #37).
+    tag: main-32f6917d
   authMode: production
   db:
     sslmode: disable
@@ -257,16 +259,33 @@ registry:
     iamGrpcAddr: kacho-iam-internal.kacho.svc.cluster.local:9091
     iamProjectGrpcAddr: kacho-iam.kacho.svc.cluster.local:9090
   zot:
+    # v2.1.18 — carries http.compat + the s3 storageDriver + redirectBlobURL. The
+    # fe3455 `:latest` tag already resolves to this sha (sha256:34f18f78…); pin it so a
+    # future re-pull can't drift to a build without these config keys.
     image:
-      tag: latest
-    # NOTE: docker2s2 compat (Docker schema2 manifest acceptance) is NOT set here.
-    # The running zot :latest (sha256:34f18f78…) rejects a top-level `compat` key
-    # ('config.Config' has invalid keys: compat) and crash-loops. Enabling docker2s2
-    # needs a zot version whose config schema carries `compat` (verified v2.1.18) —
-    # pin zot.image.tag to that version FIRST, then add compat. Tracked separately;
-    # only needed if a client pushes Docker schema2 (not OCI) manifests.
+      tag: v2.1.18
+    # docker2s2 → rendered under http.compat (zot rejects a TOP-LEVEL compat key). Lets
+    # clients push the Docker schema2 manifests `docker push` emits (else 415 on manifest).
+    compat:
+      - docker2s2
     storage:
-      persistence: false     # fe3455 has no dynamic StorageClass → ephemeral emptyDir
+      persistence: false     # fe3455 has no dynamic StorageClass → local dir is ephemeral
+      dedupe: false          # s3 dedup needs a remote cache DB (dynamodb) — unavailable
+      # blob GET → 307 to an S3 presigned URL; clients pull blobs DIRECTLY from Beget
+      # object storage (offloads zot; post-authz — the data-plane enforces v_get first).
+      redirectBlobURL: true
+      # Remote S3 backend (Beget) → blobs PERSIST across zot restarts (the emptyDir is
+      # only a local staging dir now). region/endpoint/bucket are operational config; the
+      # ACCESS/SECRET keys live ONLY in the `zot-s3-creds` Secret (env), never in git.
+      s3:
+        enabled: true
+        region: ru1
+        regionEndpoint: https://s3.ru1.storage.beget.cloud
+        bucket: c90bf04ae9a8-transformative-cillian
+        rootDirectory: /zot
+        secure: true
+        forcePathStyle: true
+        existingSecret: zot-s3-creds
   # dedicated external VIP for the OCI data-plane (docker login/push/pull), separate
   # from the console — Beget/Cilium LB-IPAM assigns its own external IP (like ui-lb/uif-lb).
   service:
