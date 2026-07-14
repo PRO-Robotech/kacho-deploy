@@ -259,11 +259,12 @@ registry:
   zot:
     image:
       tag: latest
-    # docker2s2: accept Docker Image Manifest V2 Schema 2 (the media type `docker
-    # push` of a Docker-format image emits) — else zot 415s the manifest after the
-    # blobs push. See kacho-registry deploy/values.yaml.
-    compat:
-      - docker2s2
+    # NOTE: docker2s2 compat (Docker schema2 manifest acceptance) is NOT set here.
+    # The running zot :latest (sha256:34f18f78…) rejects a top-level `compat` key
+    # ('config.Config' has invalid keys: compat) and crash-loops. Enabling docker2s2
+    # needs a zot version whose config schema carries `compat` (verified v2.1.18) —
+    # pin zot.image.tag to that version FIRST, then add compat. Tracked separately;
+    # only needed if a client pushes Docker schema2 (not OCI) manifests.
     storage:
       persistence: false     # fe3455 has no dynamic StorageClass → ephemeral emptyDir
   # dedicated external VIP for the OCI data-plane (docker login/push/pull), separate
