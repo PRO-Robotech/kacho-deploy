@@ -246,7 +246,10 @@ api-gateway:
 registry:
   enabled: true
   image:
-    tag: main-12beffe4
+    # main-9a8073bc — #33 Defect A (docker push 'unknown blob'): serveBlob reveals
+    # just-uploaded blobs via registry_pending_blob (migration 0003), REG-37 preserved.
+    # Supersedes the WIP feat-registry-create-authz image (main already carries #31).
+    tag: main-9a8073bc
   authMode: production
   db:
     sslmode: disable
@@ -256,6 +259,11 @@ registry:
   zot:
     image:
       tag: latest
+    # docker2s2: accept Docker Image Manifest V2 Schema 2 (the media type `docker
+    # push` of a Docker-format image emits) — else zot 415s the manifest after the
+    # blobs push. See kacho-registry deploy/values.yaml.
+    compat:
+      - docker2s2
     storage:
       persistence: false     # fe3455 has no dynamic StorageClass → ephemeral emptyDir
   # dedicated external VIP for the OCI data-plane (docker login/push/pull), separate
@@ -308,7 +316,7 @@ pg-registry:
 storage:
   enabled: true
   image:
-    tag: main-latest          # PLACEHOLDER — override with the built kacho-storage tag
+    tag: main-e6d67c8d
   config:
     authMode: production
     geoGrpcAddr: kacho-geo.kacho.svc.cluster.local:9090
