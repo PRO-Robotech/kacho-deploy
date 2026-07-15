@@ -218,6 +218,34 @@ kacho-iam:
     #    a strict forward over the live build on BOTH halves. Do not repin below this tag —
     #    cutover-fe3455.sh preflight denylists the broken main-b3d23769.
     tag: main-c744f956
+  # ─── Docker Registry v2 token shim (`/iam/token`, :9096) ─────────────────────
+  # ОБЯЗАТЕЛЬНО на развёрнутом окружении: без этого работает built-in дефолт
+  # `service: registry.kacho.local`, и `docker login` падает с `unauthorized`.
+  #
+  # Почему: `service` уходит не только в fallback для `?service=`, но и в
+  # issueUC.RegistryAudience (#321) → whitelist'ится как audience в Hydra-клиенте
+  # КАЖДОГО выпускаемого SA-ключа. docker шлёт `?service=registry.in-cloud.io`, iam
+  # просит у Hydra этот audience, а в клиенте лежит дефолтный registry.kacho.local →
+  #   Hydra: "Requested audience 'registry.in-cloud.io' has not been whitelisted
+  #           by the OAuth 2.0 Client" (400) → shim отдаёт 401.
+  # Диагностика 2026-07-15: падали и старый, и свежевыпущенный ключ; в логах iam —
+  # тишина (все причины схлопнуты в ErrUnauthenticated без лога), реальную причину
+  # назвала Hydra. Требует kacho-iam#… (чарт научился рендерить эту секцию).
+  #
+  # `issuer` = realm в WWW-Authenticate; совпадает с KACHO_REGISTRY_TOKEN_REALM
+  # data-plane'а (registry.dataplane ниже).
+  #
+  # ⚠ audience фиксируется в Hydra-клиенте В МОМЕНТ выпуска ключа → SA-ключи,
+  # выпущенные ДО этой правки, надо ПЕРЕВЫПУСТИТЬ (задним числом allowlist не появится).
+  #
+  # NB: umbrella вендорит iam-чарт из ./charts/kacho-iam (копия ВНУТРИ kacho-deploy),
+  # а НЕ из ../kacho-iam/deploy — у копии values вложены под `config`. Правка нужна в
+  # обеих (kacho-iam#… — sibling-копия, чтобы standalone-чарт не отстал).
+  config:
+    apiServer:
+      registryToken:
+        issuer: https://registry.in-cloud.io/iam/token
+        service: registry.in-cloud.io
   # In-cluster Hydra token endpoint для registry `/iam/token` shim (client_credentials
   # exchange). Без него ResolveHydraTokenURL() падает на внешний issuer-URL, недостижимый
   # изнутри кластера → docker push/pull ломается на этапе брокеринга токена. (#168)
