@@ -26,36 +26,35 @@ mtls:
     caNamespace: beget-cert-manager   # cert-manager --cluster-resource-namespace
 
 # ── images: prorobotech registry ──
-# Rolled out to fe3455 2026-06-22 (RBAC rules-model 2026 sub-phase H — Rule.module
-# scalar + #1 labelSelectable gating; on top of G cleanup). Tags = current LIVE
-# images (kubectl set image applied + verified: rollout green, iam migration 0033
-# applied → roles rewritten modules:[x]→module:x for 64 roles, catalog labelSelectable
-# live). Source-of-truth so a future `helm upgrade -f values.fe3455.yaml` does not revert.
+# Reconciled to CURRENTLY-LIVE fe3455 images 2026-07-15 (kubectl get deploy,statefulset
+# -n kacho, verified working). NOTE ON LAYER PRECEDENCE: for the 6 core control-plane
+# services (vpc/compute/kacho-geo/api-gateway/kacho-iam/kacho-nlb) the EFFECTIVE image
+# override is carried by values.fe3455-prod.yaml, which layers AFTER this file
+# (-f values.prod -f values.fe3455 -f values.fe3455-prod -f values.fe3455-ory). The
+# pins BELOW are kept in sync with the live tags too so this file is not a stale
+# landmine, but values.fe3455-prod.yaml is authoritative for the render. The `uif:`
+# block (below) is carried ONLY here — no later file overrides it.
 vpc:
-  # main-4987b56e: routeTable/address/gateway/networkInterface Create+Update feed labels +
-  # parent to the IAM mirror (RegisterItems(ProjectHierarchyItem)) so label-scoped grants
-  # materialize for all 7 VPC types — fixes under-show of the 4 residual types.
-  image: docker.io/prorobotech/kacho-vpc:main-978f6e0f
+  # main-6fe9c386 — LIVE on fe3455 (kubectl-verified 2026-07-15). Effective override:
+  # values.fe3455-prod.yaml (same tag).
+  image: docker.io/prorobotech/kacho-vpc:main-6fe9c386
   imagePullPolicy: IfNotPresent
 compute:
-  # main-e5634e60: List filter resolves the FGA subject from operations.PrincipalFromContext
-  # (x-kacho-principal-*) and fail-closes on empty subject — fixes the public-List over-show
-  # leak (previously read a never-sent x-kacho-subject* header → bypassed list-authz).
-  image: docker.io/prorobotech/kacho-compute:main-9c740077
+  # main-1678f62c — LIVE on fe3455 (kubectl-verified 2026-07-15). Effective override:
+  # values.fe3455-prod.yaml (same tag).
+  image: docker.io/prorobotech/kacho-compute:main-1678f62c
   imagePullPolicy: IfNotPresent
 # kacho-geo image: CI-built+pushed. mTLS inherited ON from values.dev. dataMigration
-# OFF (S7): geo serves its own seed (compute no longer owns geography). Unchanged this cut.
+# OFF (S7): geo serves its own seed (compute no longer owns geography).
 kacho-geo:
-  image: docker.io/prorobotech/kacho-geo:main-84d9d68f
+  # main-fc2d945c — LIVE on fe3455 (kubectl-verified 2026-07-15). Effective override:
+  # values.fe3455-prod.yaml (same tag).
+  image: docker.io/prorobotech/kacho-geo:main-fc2d945c
   imagePullPolicy: IfNotPresent
 api-gateway:
-  # main-cbaa8bc1: permission-catalog sync — ProjectService.List + GroupService.List → <exempt>
-  # (parity with User/SA/Role List): gateway drops the account#v_list call-gate + acr=2 step-up
-  # on these List RPCs; the IAM handler's viewer ∪ v_list scope-filter is the authoritative gate
-  # (200+filtered, never 403; anon→401). Fixes non-member List 403→200+empty + by-label
-  # see-in-selector discovery (#255). On the main-93d16dfa base (UserService.Update + BUG-2
-  # hide-existence read-deny + Design-B v_* catalog).
-  image: docker.io/prorobotech/kacho-api-gateway:main-b96a48f9
+  # main-a7c82963 — LIVE on fe3455 (kubectl-verified 2026-07-15). Effective override:
+  # values.fe3455-prod.yaml (same tag).
+  image: docker.io/prorobotech/kacho-api-gateway:main-a7c82963
   imagePullPolicy: IfNotPresent
 ui:
   # Legacy monolithic console — RETIRED on fe3455. This cluster serves the federated
@@ -68,17 +67,27 @@ ui:
   image: docker.io/prorobotech/kacho-ui:main-09feff2e
   imagePullPolicy: IfNotPresent
 
-# Federated ui-future console (`uif` sub-chart). ENABLED — the umbrella now owns
-# the console on fe3455 (adopted in place via `helm upgrade … --take-ownership` on
-# 2026-07-12, umbrella rev 16; the standalone `uif` release was dropped). Keep this
-# `true` so a routine `helm upgrade kacho-umbrella` does NOT delete the live console.
-# Images are the live docker.io tags (no new master build exists — kacho-ui-future#12
-# blocks image CI). The hand-applied uif-lb LoadBalancer is out-of-band (not in the
-# chart) → untouched by upgrades → Beget IP 45.153.188.119 preserved.
+# Federated ui-future console (`uif` sub-chart). ENABLED — the umbrella owns the
+# console on fe3455 (adopted in place via `helm upgrade … --take-ownership` on
+# 2026-07-12, umbrella rev 16). Keep this `true` so a routine `helm upgrade
+# kacho-umbrella` does NOT delete the live console. The hand-applied uif-lb
+# LoadBalancer is out-of-band (not in the chart) → untouched by upgrades → Beget IP
+# 45.153.188.119 preserved.
+#
+# IMAGES reconciled to LIVE 2026-07-15 (kubectl-verified): every host+remote runs
+# docker.io/prorobotech/kacho-ui-future-<remote>:master-e6001c77 (the current merged
+# master build — supersedes the earlier abbreviated kacho-uifut-* / per-remote tags).
+# RESOURCE NAMES are pinned to the live deploy names so the upgrade converges with
+# ZERO rename churn: host=uif, remotes=uif-dashboard/uif-vpc/uif-iam/uif-nlb/
+# uif-registry/uif-compute/uif-storage — EXCEPT `system`, whose live Deployment is
+# `ui-system` (NOT uif-system); keep it as-is or the upgrade would orphan the running
+# one. compute+storage remotes ADDED (new live remotes; the uif sub-chart renders
+# them unconditionally and derives per-remote images, but they are pinned explicitly
+# here for clarity + name-match).
 uif:
   enabled: true
   name: uif
-  image: docker.io/prorobotech/kacho-uifut-host:admin-mf2-0711
+  image: docker.io/prorobotech/kacho-ui-future-host:master-e6001c77
   imagePullPolicy: Always
   ingress:
     enabled: false          # no ingress controller on fe3455 (LB-only exposure)
@@ -86,39 +95,44 @@ uif:
     enabled: false          # match the standalone release (no host HPA)
   dashboard:
     name: uif-dashboard
-    image: docker.io/prorobotech/kacho-uifut-dashboard:fut-1783073280
+    image: docker.io/prorobotech/kacho-ui-future-dashboard:master-e6001c77
   vpc:
     name: uif-vpc
-    image: docker.io/prorobotech/kacho-uifut-vpc:ui-merged-0710
+    image: docker.io/prorobotech/kacho-ui-future-vpc:master-e6001c77
   iam:
     name: uif-iam
-    image: docker.io/prorobotech/kacho-uifut-iam:admin-mf-0711
+    image: docker.io/prorobotech/kacho-ui-future-iam:master-e6001c77
   nlb:
     name: uif-nlb
-    image: docker.io/prorobotech/kacho-uifut-nlb:ui-merged-0710
+    image: docker.io/prorobotech/kacho-ui-future-nlb:master-e6001c77
   registry:
     name: uif-registry
-    image: docker.io/prorobotech/kacho-uifut-registry:ui-merged-0710
+    image: docker.io/prorobotech/kacho-ui-future-registry:master-e6001c77
   system:
+    # LIVE Deployment is `ui-system` (verified kubectl 2026-07-15) — do NOT rename to
+    # uif-system; a rename would create a new Deployment and orphan the running one.
     name: ui-system
-    image: docker.io/prorobotech/kacho-uifut-system:admin-mf-0711
+    image: docker.io/prorobotech/kacho-ui-future-system:master-e6001c77
+  compute:
+    name: uif-compute
+    image: docker.io/prorobotech/kacho-ui-future-compute:master-e6001c77
+  storage:
+    name: uif-storage
+    image: docker.io/prorobotech/kacho-ui-future-storage:master-e6001c77
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # main-7cede3e0: latency-complete iam — self-floor #259 + Group.List filter #261
-    # + label-clear #262 + reconcile drain 2s→150ms #263 + AccessBinding.Delete sync
-    # tuple-removal #266 (revoke 845→61ms) + reconcile_outbox LISTEN/NOTIFY #267
-    # (migration 0042 trigger; label-grant 1951→307ms). All grant/revoke paths ≤500ms
-    # SLO, grant+revoke in the 50-200ms ideal band. On the unify-IAM-label-scope base.
-    tag: main-b4164e0f
+    # KAC-registry-docker-auth-c3000530 — LIVE on fe3455 (kubectl-verified 2026-07-15;
+    # feature-branch tag, not main-*). Effective override: values.fe3455-prod.yaml (same tag).
+    tag: KAC-registry-docker-auth-c3000530
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
   image:
-    # main-3cf783e5: T3.1 (#113) — listener Create+Update emit RegisterResource(labels)
-    # on label-change (double-bug closed; cross-service ARM_LABELS revoke).
+    # main-2c87cac9 — LIVE on fe3455 (kubectl-verified 2026-07-15). Effective override:
+    # values.fe3455-prod.yaml (same tag).
     repository: docker.io/prorobotech/kacho-nlb
-    tag: main-0edc9a5f
+    tag: main-2c87cac9
     pullPolicy: IfNotPresent
 
 # ── no dynamic storage → every Postgres emptyDir (ephemeral) ──
