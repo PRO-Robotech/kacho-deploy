@@ -194,11 +194,29 @@ kacho-geo:
     KACHO_GEO_AUTHZ_TRUSTED_FORWARDER_SANS: "spiffe://kacho.cloud/ns/kacho/sa/kacho-api-gateway"
 kacho-iam:
   image:
-    # KAC-registry-docker-auth-c3000530 — LIVE image on fe3455 (kubectl-verified
-    # 2026-07-15): registry docker-auth iam build currently serving prod. This is a
-    # feature-branch tag (NOT main-*); pinned so a bare `helm upgrade` converges to
-    # the running image instead of reverting to a stale main-* pin.
-    tag: KAC-registry-docker-auth-c3000530
+    # ── FORWARD ROLL: main-b3d23769 (kacho-iam origin/main HEAD, Docker Hub-verified
+    #    2026-07-15T14:33) supersedes the live feature build KAC-registry-docker-auth-
+    #    c3000530. Carries: #321 SA-key registry-audience union (the audience bug this
+    #    cutover fixes), #319 token name/labels, #322/#323 cluster-internal Hydra-JWKS
+    #    proxy listener (:9097) — REQUIRED so registry.iam.jwksUrl below is coherent —
+    #    and #325 RG-1 anon-token + registry RPC catalog entries (418-catalog, must
+    #    match api-gateway c7dce40d + registry af0eacae). The tag drives BOTH the main
+    #    container AND the kacho-migrator init (chart helper "kacho-iam.image").
+    #
+    # ⚠⚠ BLOCKER — DOCKER-LOGIN REGRESSION (resolve before running the cutover): ⚠⚠
+    #    main-b3d23769 does NOT contain kacho-iam commit c300053 ("registry-token:
+    #    issued_at as RFC3339 string, Docker v2 token spec"), which the LIVE feature
+    #    build DOES carry. That commit changed the /iam/token (:9096) JSON body field
+    #    `issued_at` from an int64 number to an RFC3339 string; the docker client parses
+    #    it via time.Time.UnmarshalJSON (accepts ONLY a JSON string). Rolling iam to a
+    #    main-* image WITHOUT this fix breaks `docker login` with
+    #    "unable to decode token response: Time.UnmarshalJSON: input is not a JSON string"
+    #    → the registry data-plane can never mint a bearer token → all docker pull/push
+    #    401/fail. RESOLUTION: cherry-pick c300053 onto kacho-iam main → let CI rebuild a
+    #    new main-<sha> → repin the tag below to that image → then run the cutover. The
+    #    cutover-fe3455.sh preflight HARD-BLOCKS on the bare main-b3d23769 tag until the
+    #    operator repins or explicitly overrides (ACK_IAM_ISSUED_AT_REVERT=1).
+    tag: main-b3d23769
   # In-cluster Hydra token endpoint для registry `/iam/token` shim (client_credentials
   # exchange). Без него ResolveHydraTokenURL() падает на внешний issuer-URL, недостижимый
   # изнутри кластера → docker push/pull ломается на этапе брокеринга токена. (#168)
@@ -231,9 +249,14 @@ kacho-nlb:
       trustedForwarderSANs:
         - spiffe://kacho.cloud/ns/kacho/sa/kacho-api-gateway
 api-gateway:
-  # main-a7c82963 — LIVE image on fe3455 (kubectl-verified 2026-07-15). Pinned so a
-  # bare `helm upgrade` converges to the running gateway instead of reverting.
-  image: docker.io/prorobotech/kacho-api-gateway:main-a7c82963
+  # FORWARD ROLL: main-c7dce40d (kacho-api-gateway origin/main HEAD, Docker Hub-verified
+  # 2026-07-15T14:02) — strict forward from the live main-a7c82963 (a7c82963 IS an
+  # ancestor of c7dce40d, no revert). Adds RG-1 #145: registers the 6 public Repository
+  # RPCs + syncs the embedded permission-catalog to 418 entries. COUPLED to iam
+  # main-b3d23769 (#325, also 418-catalog) — a gateway at 418 with an iam below 418 would
+  # AUTHZ_DENY the new registry RPCs ("catalog: no entry for method"); rolling both
+  # together keeps iam(418)/gateway(418)/registry(af0eacae) catalog-coherent.
+  image: docker.io/prorobotech/kacho-api-gateway:main-c7dce40d
   # Internal :9091 listener hosts InternalAuthzCacheService.InvalidateSubject and
   # (production invariant, security.md) MUST run mTLS + a caller allow-list — the
   # hardened binary fail-fasts otherwise. Reuse the already-mounted cert-manager
@@ -263,12 +286,15 @@ api-gateway:
 registry:
   enabled: true
   image:
-    # main-32f6917d — #33 Defect A (unknown blob) + Defect B (new-repo push deadlock):
-    # serveBlob reveals just-uploaded blobs (registry_pending_blob, migration 0003) AND
-    # a push-context authz fallback breaks the v_get / register-on-first-push deadlock so
-    # a brand-new repo can be pushed end-to-end. REG-37 preserved. Supersedes the WIP
-    # feat-registry-create-authz image (main carries #31 + #35 + #37).
-    tag: main-5eb21d25
+    # FORWARD ROLL: main-af0eacae (kacho-registry origin/main HEAD, Docker Hub-verified
+    # 2026-07-15T14:00) — STRICT forward from the live main-5eb21d25 (5eb21d25 IS an
+    # ancestor of af0eacae, verified: no revert of any live functionality). Live already
+    # carries #35 Defect-A (unknown blob) + #37 Defect-B (new-repo push deadlock) + #38
+    # zot S3/redirectBlobURL + #34 authz-TTL + #40 push-grant revoke-safety (delete-on-
+    # materialized + 60s TTL) + push-deny 403. af0eacae adds ONLY RG-1 #43 (Repository
+    # config-overlay persistence: migration + domain + repo, DB-level invariants) on top.
+    # Consistent with the iam(#325)/gateway(#145) 418-catalog + anon-recognition roll.
+    tag: main-af0eacae
   authMode: production
   db:
     sslmode: disable
@@ -366,6 +392,23 @@ pg-registry:
 storage:
   enabled: true
   image:
+    # main-e6d67c8d — the ONLY built+pushed kacho-storage image on Docker Hub (2026-07-14).
+    # This is a FRESH install (kacho-storage is NOT yet on the cluster), so it neither
+    # reverts nor disrupts any live workload; --wait installs it as the storage-split's
+    # first rollout. repository comes qualified from the umbrella base values.yaml
+    # (docker.io/prorobotech/kacho-storage); the tag drives storage + kacho-migrator both.
+    #
+    # ⚠ FOLLOW-UP (does NOT block this cutover — storage is isolated from the registry):
+    #   1. CS-1 image gap — kacho-storage origin/main is a185fa07 ("[CS-1] storage
+    #      network-disk — attach zone/project split, auto-device retry, listauthz gate,
+    #      snapshot name", #4), but NO main-a185fa07 image is built (only #1 e6d67c8d,
+    #      deps-only). So the installed storage lacks the CS-1 network-disk functionality.
+    #      Build a185fa07 → repin here to roll CS-1 forward.
+    #   2. fga-register drainer — the storage deploy chart wires NO storage→iam
+    #      RegisterResource (fgaproxy owner-tuple outbox drainer) edge, and there is no
+    #      storage-SA `fga_writer` ReBAC tuple seed. Owner-tuples for storage resources
+    #      won't be written to FGA until both land — track as a fail-open-durable
+    #      follow-up (SEC-A parity with vpc/compute).
     tag: main-e6d67c8d
   config:
     authMode: production
