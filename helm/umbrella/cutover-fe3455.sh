@@ -12,7 +12,7 @@
 #     kacho-iam     KAC-registry-docker-auth-c3000530       main-c744f956     #321 audience + :9097 JWKS + #325 RG-1 418-catalog + #326 issued_at
 #     api-gateway   main-a7c82963                            main-c7dce40d     #145 RG-1 6 routes + 418-catalog
 #     registry      main-5eb21d25                            main-af0eacae     #43 RG-1 Repository persistence (strict fwd; 5eb21d25 ∈ af0eacae)
-#     kacho-storage (not on cluster)                         main-e6d67c8d     storage-split fresh install (isolated from registry)
+#     kacho-storage (not on cluster)                         main-a185fa07     storage-split fresh install, CS-1 network-disk (isolated from registry)
 #
 #   COHERENCE (verified via `helm template` of the 4-overlay stack, 0 stderr, diff
 #   vs live shows ONLY these image lines change):
@@ -28,9 +28,10 @@
 #
 #   STORAGE (fresh install, isolated — cannot break the live registry): installs
 #   kacho-storage + pg-storage (Secret pre-provisioned) and adds the compute->storage
-#   edge env (compute pod restarts, SAME image). NOTE the storage image is main-e6d67c8d
-#   (the only built tag) — it predates CS-1 network-disk (#4, main a185fa07 NOT built) and
-#   the chart wires no fga-register drainer; both are follow-ups (see values.fe3455-prod.yaml).
+#   edge env (compute pod restarts, SAME image). The storage image is main-a185fa07 —
+#   kacho-storage main HEAD, i.e. CS-1 network-disk (#4) IS included. The chart still wires
+#   no fga-register drainer and iam carries no storage-SA fga_writer seed — the remaining
+#   follow-up (see values.fe3455-prod.yaml).
 #   For a PURE control-plane-only cutover set storage.enabled=false + pg-storage.enabled=false.
 #
 # DOCKER-LOGIN issued_at BLOCKER — RESOLVED (2026-07-15), guard retained as a denylist.

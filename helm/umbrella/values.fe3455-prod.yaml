@@ -393,24 +393,34 @@ pg-registry:
 storage:
   enabled: true
   image:
-    # main-e6d67c8d — the ONLY built+pushed kacho-storage image on Docker Hub (2026-07-14).
+    # main-a185fa07 — kacho-storage origin/main HEAD ("[CS-1] storage network-disk —
+    # attach zone/project split, auto-device retry, listauthz gate, snapshot name", #4),
+    # multiarch (amd64+arm64), Docker Hub-verified 2026-07-15T17:41. Supersedes
+    # main-e6d67c8d (2026-07-14, deps-only, amd64-only, PRE-CS-1) — installing that tag
+    # would have shipped storage WITHOUT any CS-1 network-disk functionality.
+    #
     # This is a FRESH install (kacho-storage is NOT yet on the cluster), so it neither
     # reverts nor disrupts any live workload; --wait installs it as the storage-split's
     # first rollout. repository comes qualified from the umbrella base values.yaml
     # (docker.io/prorobotech/kacho-storage); the tag drives storage + kacho-migrator both.
     #
+    # Why the image was missing until now: every kacho-storage docker-build run had failed
+    # with `invalid tag "/kacho-storage:main-a185fa07": invalid reference format` — the
+    # workflow interpolated an EMPTY secrets.DOCKERHUB_USERNAME (kacho-storage was private
+    # and thus outside the org secrets' visibility). Making the repo public restored the
+    # secrets → rerun of run 29417934635 published the image. kacho-storage#5 additionally
+    # hardens the workflow so an unset secret yields a green build-only run instead of a
+    # hard failure.
+    #
     # ⚠ FOLLOW-UP (does NOT block this cutover — storage is isolated from the registry):
-    #   1. CS-1 image gap — kacho-storage origin/main is a185fa07 ("[CS-1] storage
-    #      network-disk — attach zone/project split, auto-device retry, listauthz gate,
-    #      snapshot name", #4), but NO main-a185fa07 image is built (only #1 e6d67c8d,
-    #      deps-only). So the installed storage lacks the CS-1 network-disk functionality.
-    #      Build a185fa07 → repin here to roll CS-1 forward.
-    #   2. fga-register drainer — the storage deploy chart wires NO storage→iam
-    #      RegisterResource (fgaproxy owner-tuple outbox drainer) edge, and there is no
-    #      storage-SA `fga_writer` ReBAC tuple seed. Owner-tuples for storage resources
-    #      won't be written to FGA until both land — track as a fail-open-durable
-    #      follow-up (SEC-A parity with vpc/compute).
-    tag: main-e6d67c8d
+    #   fga-register drainer — the storage deploy chart wires NO storage→iam
+    #   RegisterResource (fgaproxy owner-tuple outbox drainer) edge, and kacho-iam carries
+    #   no storage-SA `fga_writer` ReBAC tuple seed (highest iam migration is 0052; the
+    #   pattern to mirror is 0044_registry_sa_least_priv.sql). Until both land, owner-tuples
+    #   for storage resources are not written to FGA, so the gateway scope_extractors
+    #   {storage_volume,volume_id}/{storage_snapshot,snapshot_id} cannot resolve
+    #   target→project. Track as SEC-A parity with vpc/compute.
+    tag: main-a185fa07
   config:
     authMode: production
     geoGrpcAddr: kacho-geo.kacho.svc.cluster.local:9090
