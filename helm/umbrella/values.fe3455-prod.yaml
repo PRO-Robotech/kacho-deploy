@@ -194,10 +194,14 @@ kacho-geo:
     KACHO_GEO_AUTHZ_TRUSTED_FORWARDER_SANS: "spiffe://kacho.cloud/ns/kacho/sa/kacho-api-gateway"
 kacho-iam:
   image:
-    tag: main-a7b37ac9
+    # KAC-registry-docker-auth-c3000530 — LIVE image on fe3455 (kubectl-verified
+    # 2026-07-15): registry docker-auth iam build currently serving prod. This is a
+    # feature-branch tag (NOT main-*); pinned so a bare `helm upgrade` converges to
+    # the running image instead of reverting to a stale main-* pin.
+    tag: KAC-registry-docker-auth-c3000530
   # In-cluster Hydra token endpoint для registry `/iam/token` shim (client_credentials
   # exchange). Без него ResolveHydraTokenURL() падает на внешний issuer-URL, недостижимый
-  # изнутри кластера → docker push/pull ломается на этапе брокеринга токена.
+  # изнутри кластера → docker push/pull ломается на этапе брокеринга токена. (#168)
   kacho:
     iam:
       hydraTokenURL: http://kacho-umbrella-hydra-public.kacho.svc:4444/oauth2/token
@@ -227,7 +231,9 @@ kacho-nlb:
       trustedForwarderSANs:
         - spiffe://kacho.cloud/ns/kacho/sa/kacho-api-gateway
 api-gateway:
-  image: docker.io/prorobotech/kacho-api-gateway:main-1167e8dd
+  # main-a7c82963 — LIVE image on fe3455 (kubectl-verified 2026-07-15). Pinned so a
+  # bare `helm upgrade` converges to the running gateway instead of reverting.
+  image: docker.io/prorobotech/kacho-api-gateway:main-a7c82963
   # Internal :9091 listener hosts InternalAuthzCacheService.InvalidateSubject and
   # (production invariant, security.md) MUST run mTLS + a caller allow-list — the
   # hardened binary fail-fasts otherwise. Reuse the already-mounted cert-manager
@@ -257,7 +263,12 @@ api-gateway:
 registry:
   enabled: true
   image:
-    tag: main-12beffe4
+    # main-32f6917d — #33 Defect A (unknown blob) + Defect B (new-repo push deadlock):
+    # serveBlob reveals just-uploaded blobs (registry_pending_blob, migration 0003) AND
+    # a push-context authz fallback breaks the v_get / register-on-first-push deadlock so
+    # a brand-new repo can be pushed end-to-end. REG-37 preserved. Supersedes the WIP
+    # feat-registry-create-authz image (main carries #31 + #35 + #37).
+    tag: main-5eb21d25
   authMode: production
   db:
     sslmode: disable
@@ -265,10 +276,33 @@ registry:
     iamGrpcAddr: kacho-iam-internal.kacho.svc.cluster.local:9091
     iamProjectGrpcAddr: kacho-iam.kacho.svc.cluster.local:9090
   zot:
+    # v2.1.18 — carries http.compat + the s3 storageDriver + redirectBlobURL. The
+    # fe3455 `:latest` tag already resolves to this sha (sha256:34f18f78…); pin it so a
+    # future re-pull can't drift to a build without these config keys.
     image:
-      tag: latest
+      tag: v2.1.18
+    # docker2s2 → rendered under http.compat (zot rejects a TOP-LEVEL compat key). Lets
+    # clients push the Docker schema2 manifests `docker push` emits (else 415 on manifest).
+    compat:
+      - docker2s2
     storage:
-      persistence: false     # fe3455 has no dynamic StorageClass → ephemeral emptyDir
+      persistence: false     # fe3455 has no dynamic StorageClass → local dir is ephemeral
+      dedupe: false          # s3 dedup needs a remote cache DB (dynamodb) — unavailable
+      # blob GET → 307 to an S3 presigned URL; clients pull blobs DIRECTLY from Beget
+      # object storage (offloads zot; post-authz — the data-plane enforces v_get first).
+      redirectBlobURL: true
+      # Remote S3 backend (Beget) → blobs PERSIST across zot restarts (the emptyDir is
+      # only a local staging dir now). region/endpoint/bucket are operational config; the
+      # ACCESS/SECRET keys live ONLY in the `zot-s3-creds` Secret (env), never in git.
+      s3:
+        enabled: true
+        region: ru1
+        regionEndpoint: https://s3.ru1.storage.beget.cloud
+        bucket: c90bf04ae9a8-transformative-cillian
+        rootDirectory: /zot
+        secure: true
+        forcePathStyle: true
+        existingSecret: zot-s3-creds
   # dedicated external VIP for the OCI data-plane (docker login/push/pull), separate
   # from the console — Beget/Cilium LB-IPAM assigns its own external IP (like ui-lb/uif-lb).
   service:
@@ -332,7 +366,7 @@ pg-registry:
 storage:
   enabled: true
   image:
-    tag: main-latest          # PLACEHOLDER — override with the built kacho-storage tag
+    tag: main-e6d67c8d
   config:
     authMode: production
     geoGrpcAddr: kacho-geo.kacho.svc.cluster.local:9090
