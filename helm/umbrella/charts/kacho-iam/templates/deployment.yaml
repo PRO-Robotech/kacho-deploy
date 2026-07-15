@@ -137,6 +137,12 @@ spec:
             # и metrics (:9095). Публикуется как Service-порт registry-token.
             - name: registry-token
               containerPort: {{ .Values.ports.registryToken | default 9096 }}
+            # registry-iam-jwks-unify — cluster-INTERNAL Hydra-JWKS proxy listener
+            # (GET /.well-known/jwks.json), one-way server-TLS. The registry data-plane
+            # fetches docker-Bearer verification keys here (Hydra stays signer/issuer).
+            # Exposed ONLY on kacho-iam-internal (never external, ban #6).
+            - name: http-jwks
+              containerPort: {{ .Values.ports.jwksProxy | default 9097 }}
           volumeMounts:
             - name: config
               mountPath: /etc/kacho-iam
@@ -222,6 +228,25 @@ spec:
               value: {{ printf "%s/tls.key" $srv | quote }}
             - name: KACHO_IAM_METRICS_SERVER_MTLS_CLIENTCAFILES
               value: {{ printf "%s/ca.crt" $srv | quote }}
+            # registry-iam-jwks-unify — server-TLS for the cluster-INTERNAL Hydra-JWKS
+            # proxy listener (:9097, GET /.well-known/jwks.json). Reuses the SAME SEC-F
+            # internal-CA server cert-trio mounted above (no new PKI). ONE-WAY
+            # (server-tls-only) ON PURPOSE: the route serves PUBLIC OIDC verification
+            # keys and is unauthenticated-by-design — the registry data-plane verifier
+            # fetches it with a plain https client presenting NO client cert, so
+            # RequireAndVerifyClientCert would reject the handshake. Registry trusts
+            # this leaf via the internal-CA it already mounts (SSL_CERT_DIR). Gated on
+            # mtls.httpListeners (same as hooks/metrics) → dev stays plaintext :9097.
+            - name: KACHO_IAM_JWKSPROXY_SERVER_MTLS_ENABLE
+              value: "true"
+            - name: KACHO_IAM_JWKSPROXY_SERVER_MTLS_CLIENTAUTHMODE
+              value: {{ .Values.mtls.jwksProxyClientAuthMode | default "server-tls-only" | quote }}
+            - name: KACHO_IAM_JWKSPROXY_SERVER_MTLS_CERTFILE
+              value: {{ printf "%s/tls.crt" $srv | quote }}
+            - name: KACHO_IAM_JWKSPROXY_SERVER_MTLS_KEYFILE
+              value: {{ printf "%s/tls.key" $srv | quote }}
+            - name: KACHO_IAM_JWKSPROXY_SERVER_MTLS_CLIENTCAFILES
+              value: {{ printf "%s/ca.crt" $srv | quote }}
             {{- end }}
             {{- end }}
             # OpenFGA store-id создаётся bootstrap-job'ом, см. umbrella/templates/openfga-bootstrap-job.yaml.
@@ -297,6 +322,16 @@ spec:
             # внешний issuer-URL, недостижимый изнутри кластера. Пусто → не эмитится
             # (dev/local сохраняет прежний fallback).
             - name: KACHO_IAM_HYDRA_TOKEN_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.kacho.iam.hydraJwksUrl }}
+            # registry-iam-jwks-unify — upstream Hydra PUBLIC JWKS URL that the
+            # cluster-INTERNAL jwks-proxy listener (:9097) mirrors byte-for-byte.
+            # Empty → not emitted → iam falls back to
+            # ResolveHydraIssuer()+"/.well-known/jwks.json" (dev/local unchanged).
+            # Prod sets the in-cluster hydra-public base so the iam→Hydra fetch stays
+            # inside the cluster. Hydra remains the signer/issuer — iam only proxies.
+            - name: KACHO_IAM_HYDRA_JWKS_URL
               value: {{ . | quote }}
             {{- end }}
             {{- range $k, $v := .Values.env }}
