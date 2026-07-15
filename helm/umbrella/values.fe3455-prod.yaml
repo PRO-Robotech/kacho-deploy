@@ -251,7 +251,7 @@ registry:
     # a push-context authz fallback breaks the v_get / register-on-first-push deadlock so
     # a brand-new repo can be pushed end-to-end. REG-37 preserved. Supersedes the WIP
     # feat-registry-create-authz image (main carries #31 + #35 + #37).
-    tag: main-32f6917d
+    tag: main-5eb21d25
   authMode: production
   db:
     sslmode: disable
