@@ -58,6 +58,30 @@ jobs:
           repository: PRO-Robotech/kacho-registry
           ref: main
           path: kacho-registry
+      # kacho-storage sub-chart (Storage control-plane) is referenced from umbrella via
+      # `file://../../../kacho-storage/deploy` — checkout required for helm dep
+      # resolution. Best-effort checkout + stub below (cross-repo GITHUB_TOKEN may not
+      # reach it); `storage.enabled` defaults false in values.dev, so the stub is never
+      # templated for lint.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        continue-on-error: true
+        with:
+          repository: PRO-Robotech/kacho-storage
+          ref: main
+          path: kacho-storage
+      - name: stub kacho-storage/deploy if checkout was skipped
+        run: |
+          if [ ! -f kacho-storage/deploy/Chart.yaml ]; then
+            mkdir -p kacho-storage/deploy/templates
+            cat >kacho-storage/deploy/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: storage
+          version: 0.1.0
+          description: stub for CI (real chart in PRO-Robotech/kacho-storage)
+          EOF
+            : >kacho-storage/deploy/values.yaml
+          fi
+        working-directory: ${{ github.workspace }}
       # kacho-ui-future sub-chart (aliased `uif`) is referenced from umbrella via
       # `file://../../../kacho-ui-future/deploy`. The default GITHUB_TOKEN cannot
       # reach it from this repo's Actions (cross-repo access not granted), so this is
@@ -224,6 +248,24 @@ jobs:
       # kacho-registry sub-chart — same checkout pattern as helm-lint job above.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { repository: PRO-Robotech/kacho-registry, ref: main, path: kacho-registry }
+      # kacho-storage sub-chart — best-effort + stub (see helm-lint job). Required for
+      # `helm dep update`; storage.enabled defaults false so the stub is never templated.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        continue-on-error: true
+        with: { repository: PRO-Robotech/kacho-storage, ref: main, path: kacho-storage }
+      - name: stub kacho-storage/deploy if checkout was skipped
+        run: |
+          if [ ! -f kacho-storage/deploy/Chart.yaml ]; then
+            mkdir -p kacho-storage/deploy/templates
+            cat >kacho-storage/deploy/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: storage
+          version: 0.1.0
+          description: stub for CI (real chart in PRO-Robotech/kacho-storage)
+          EOF
+            : >kacho-storage/deploy/values.yaml
+          fi
+        working-directory: ${{ github.workspace }}
       # kacho-ui-future sub-chart (aliased `uif`) — best-effort + stub (see helm-lint job).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         continue-on-error: true
