@@ -131,6 +131,12 @@ spec:
             # over HTTP and cannot reach the gRPC :9091 mux. Cluster-internal.
             - name: http-hooks
               containerPort: {{ .Values.ports.hooksHttp | default 9092 }}
+            # Docker Registry v2 `/iam/token` auth-server HTTP listener — отдельный,
+            # external-reachable порт (:9096), куда data-plane реестра проксирует
+            # docker-обмен SA-key/user-token → identity-JWT. Отличается от hooks (:9092)
+            # и metrics (:9095). Публикуется как Service-порт registry-token.
+            - name: registry-token
+              containerPort: {{ .Values.ports.registryToken | default 9096 }}
           volumeMounts:
             - name: config
               mountPath: /etc/kacho-iam
@@ -285,6 +291,14 @@ spec:
               value: {{ .Values.kacho.domain | quote }}
             - name: KACHO_IAM_HYDRA_ISSUER
               value: {{ printf "https://%s.%s" .Values.kacho.subdomains.hydra .Values.kacho.domain | quote }}
+            {{- with .Values.kacho.iam.hydraTokenURL }}
+            # In-cluster Hydra token-эндпоинт для client_credentials-обмена в
+            # registry `/iam/token` shim. Без него ResolveHydraTokenURL() падает на
+            # внешний issuer-URL, недостижимый изнутри кластера. Пусто → не эмитится
+            # (dev/local сохраняет прежний fallback).
+            - name: KACHO_IAM_HYDRA_TOKEN_URL
+              value: {{ . | quote }}
+            {{- end }}
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}

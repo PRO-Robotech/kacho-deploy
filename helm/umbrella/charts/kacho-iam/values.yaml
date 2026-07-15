@@ -14,6 +14,10 @@ kacho:
     kratos: kratos
     api: ""
   iam:
+    # In-cluster Hydra token-эндпоинт (POST /oauth2/token) для client_credentials-обмена
+    # в registry `/iam/token` shim. Пусто → env не эмитится, сервис падает на внешний
+    # issuer-URL (недостижимый в кластере). Prod-профиль ставит cluster-internal Service.
+    hydraTokenURL: ""
     jwks:
       enabled: true
       schedule: "0 2 * * *"
@@ -108,6 +112,10 @@ ports:
   # KAC-127 Phase 2 — HTTP webhook listener (Hydra hooks + CAEP ingress).
   # KAC-127 deploy#39 — also serves the OPA policy bundle over HTTP.
   hooksHttp: 9092
+  # Docker Registry v2 `/iam/token` auth-server HTTP listener — external-reachable
+  # (TLS terminated externally), distinct from hooks (:9092) / metrics (:9095). The
+  # registry data-plane TLS-sidecar proxies docker token exchange here.
+  registryToken: 9096
 
 service:
   public:
