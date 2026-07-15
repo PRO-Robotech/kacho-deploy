@@ -18,6 +18,12 @@ kacho:
     # в registry `/iam/token` shim. Пусто → env не эмитится, сервис падает на внешний
     # issuer-URL (недостижимый в кластере). Prod-профиль ставит cluster-internal Service.
     hydraTokenURL: ""
+    # Upstream Hydra PUBLIC JWKS URL that the cluster-INTERNAL jwks-proxy listener
+    # (:9097) mirrors byte-for-byte (env KACHO_IAM_HYDRA_JWKS_URL). Empty → iam falls
+    # back to ResolveHydraIssuer()+"/.well-known/jwks.json". Prod sets the in-cluster
+    # hydra-public base so the iam→Hydra fetch stays inside the cluster. Hydra remains
+    # the token signer/issuer — iam only proxies its JWKS (the served kids are Hydra's).
+    hydraJwksUrl: ""
     jwks:
       enabled: true
       schedule: "0 2 * * *"
@@ -116,6 +122,12 @@ ports:
   # (TLS terminated externally), distinct from hooks (:9092) / metrics (:9095). The
   # registry data-plane TLS-sidecar proxies docker token exchange here.
   registryToken: 9096
+  # Cluster-INTERNAL Hydra-JWKS proxy HTTP listener (GET /.well-known/jwks.json) — a
+  # short-TTL caching reverse-proxy of Hydra's PUBLIC JWKS. The registry data-plane
+  # fetches its docker-Bearer verification keys from iam HERE instead of dialing Hydra
+  # directly (Hydra stays signer/issuer; served kids are Hydra's). ONE-WAY server-TLS,
+  # exposed ONLY on the kacho-iam-internal Service (never external, ban #6).
+  jwksProxy: 9097
 
 service:
   public:
@@ -127,6 +139,10 @@ service:
     # KAC-127 deploy#39 — HTTP hooks/OPA-bundle port exposed on the internal
     # Service (cluster-internal only, запрет #6).
     hooksHttpPort: 9092
+    # Cluster-INTERNAL Hydra-JWKS proxy port (GET /.well-known/jwks.json), exposed
+    # ONLY on kacho-iam-internal (never the public Service, ban #6). Consumed by
+    # service-internal.yaml — the registry data-plane fetches JWKS from here.
+    jwksProxyPort: 9097
 
 db:
   host: kacho-umbrella-pg-iam
@@ -231,10 +247,20 @@ mtls:
   # provisioned (e.g. an internal-CA Prometheus scrape client for metrics).
   hooksClientAuthMode: server-tls-only
   metricsClientAuthMode: server-tls-only
+  # jwks-proxy (:9097) HTTP listener ClientAuth mode. ONE-WAY server-tls-only ON
+  # PURPOSE: the JWKS route serves PUBLIC OIDC verification keys and is
+  # unauthenticated-by-design (a documented exception to authN-on-every-listener,
+  # security.md) — the registry data-plane verifier fetches it with a plain https
+  # client that presents NO client cert; RequireAndVerifyClientCert would reject the
+  # handshake. Encryption + server-auth via the internal-CA leaf; internal-only surface.
+  jwksProxyClientAuthMode: server-tls-only
   # ─── internal-CA leaf-cert issuance (this chart owns its Certificate, rule #1) ─
   # kacho-iam is the authz authority itself → SERVER cert only (no client cert,
   # no IAM grant needed — it does not dial peers in SEC-H scope). Server-cert SAN
-  # covers both Services (public kacho-iam :9090 + internal kacho-iam-internal :9091).
+  # covers both Services (public kacho-iam :9090 + internal kacho-iam-internal :9091)
+  # AND the internal Hydra-JWKS proxy :9097, which shares the kacho-iam-internal DNS
+  # name — SANs are host-based/port-agnostic, so this same leaf terminates the :9097
+  # one-way server-TLS the registry data-plane trusts (registry-iam-jwks-unify).
   issuer:
     name: kacho-internal-ca
     kind: ClusterIssuer   # ClusterIssuer (cluster-scoped), NOT namespaced Issuer
