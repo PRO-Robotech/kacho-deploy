@@ -190,25 +190,34 @@ fi
 #    Server-TLS (internal-CA leaf), no client cert → curl -k. Port-forward to reach the
 #    ClusterIP service from the operator host.
 log "smoke: iam :9097 JWKS proxy (GET /.well-known/jwks.json — expect 200 with keys)…"
-pf_pid=""
-if kubectl -n "$NS" port-forward svc/kacho-iam-internal 19097:9097 >/dev/null 2>&1 & then
+# THIS upgrade rolls the iam pod, so probe only once it is actually Ready. A port-forward
+# established against a terminating pod stays broken for the rest of the probe → false
+# negative. That is exactly what the 2026-07-15 run hit: the smoke warned "did NOT return
+# a keys set" while the endpoint served 200 with Hydra kids moments later. Hence: wait for
+# the rollout, then re-establish a FRESH forward per attempt (one dead tunnel must not
+# doom the whole check).
+kubectl -n "$NS" rollout status deploy/kacho-iam --timeout=120s >/dev/null 2>&1 \
+  || warn "kacho-iam rollout not complete — the JWKS probe below may be unreliable."
+
+jwks=""
+for _attempt in 1 2 3 4 5; do
+  kubectl -n "$NS" port-forward svc/kacho-iam-internal 19097:9097 >/dev/null 2>&1 &
   pf_pid=$!
-  # give the forward a moment to bind (bounded — no long waits)
   for _ in 1 2 3 4 5 6; do
-    kubectl -n "$NS" get svc kacho-iam-internal >/dev/null 2>&1 && \
-      curl -sk --max-time 3 https://127.0.0.1:19097/.well-known/jwks.json >/dev/null 2>&1 && break
+    curl -sk --max-time 3 https://127.0.0.1:19097/.well-known/jwks.json >/dev/null 2>&1 && break
     sleep 1
   done
   jwks="$(curl -sk --max-time 5 https://127.0.0.1:19097/.well-known/jwks.json 2>/dev/null || true)"
-  if printf '%s' "$jwks" | grep -q '"keys"'; then
-    log "iam :9097 JWKS OK (serves a keys set — JWKS-flip is coherent)."
-  else
-    warn "iam :9097 JWKS did NOT return a keys set — registry token-verify will 401. Check kacho-iam is on main-c744f956 (serves :9097, #323) and the jwks-proxy listener."
-    rc=1
-  fi
   kill "$pf_pid" >/dev/null 2>&1 || true
+  wait "$pf_pid" 2>/dev/null || true
+  printf '%s' "$jwks" | grep -q '"keys"' && break
+  sleep 2
+done
+if printf '%s' "$jwks" | grep -q '"keys"'; then
+  log "iam :9097 JWKS OK (serves a keys set — JWKS-flip is coherent)."
 else
-  warn "could not port-forward svc/kacho-iam-internal:9097 — skipped JWKS smoke (verify manually)."
+  warn "iam :9097 JWKS did NOT return a keys set — registry token-verify will 401. Check kacho-iam is on main-c744f956 (serves :9097, #323) and the jwks-proxy listener."
+  rc=1
 fi
 
 log "smoke: curl https://registry.in-cloud.io/v2/ (expect HTTP 401 token-auth challenge)…"
