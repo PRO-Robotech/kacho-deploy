@@ -12,7 +12,12 @@
 #     kacho-iam     KAC-registry-docker-auth-c3000530       main-c744f956     #321 audience + :9097 JWKS + #325 RG-1 418-catalog + #326 issued_at
 #     api-gateway   main-a7c82963                            main-c7dce40d     #145 RG-1 6 routes + 418-catalog
 #     registry      main-5eb21d25                            main-af0eacae     #43 RG-1 Repository persistence (strict fwd; 5eb21d25 ∈ af0eacae)
-#     kacho-storage (not on cluster)                         main-a185fa07     storage-split fresh install, CS-1 network-disk (isolated from registry)
+#     kacho-storage — NOT installed (storage.enabled=false): the kacho-storage chart is
+#                     not integrated with the umbrella (values keys diverge + no
+#                     existingSecret for the DB password), so its fresh install never came
+#                     up and its 15m --wait failed the WHOLE cutover. Pure control-plane
+#                     roll until that chart lands. Image main-a185fa07 (CS-1) is built and
+#                     waiting. See values.fe3455-prod.yaml (storage block).
 #
 #   COHERENCE (verified via `helm template` of the 4-overlay stack, 0 stderr, diff
 #   vs live shows ONLY these image lines change):
@@ -26,12 +31,22 @@
 #       nlb main-2c87cac9, zot v2.1.18, every uif remote master-e6001c77, every Postgres
 #       (16.1.0-debian-11-r25 / pg-hydra 16.4.0-debian-12-r0) — emptyDir, tags NOT bumped.
 #
-#   STORAGE (fresh install, isolated — cannot break the live registry): installs
-#   kacho-storage + pg-storage (Secret pre-provisioned) and adds the compute->storage
-#   edge env (compute pod restarts, SAME image). The storage image is main-a185fa07 —
-#   kacho-storage main HEAD, i.e. CS-1 network-disk (#4) IS included. The chart still wires
-#   no fga-register drainer and iam carries no storage-SA fga_writer seed — the remaining
-#   follow-up (see values.fe3455-prod.yaml).
+#   REGISTRY data-plane TLS: the overlay now sets registry.service.dataplaneLB.tlsSidecar
+#   (enabled + LE cert), so the chart — not a hand-applied kubectl patch — owns the public
+#   TLS termination (443 -> dp-tls, Let's Encrypt). This closes the drift that broke
+#   `docker login` on the 2026-07-15 run: --take-ownership adopted the hand-patched Service
+#   and re-rendered it from the chart default (443 -> plaintext). The rendered LE Certificate
+#   is byte-identical to the live object, so helm ADOPTS it without a re-issue (LE
+#   duplicate-limit 5/week).
+#
+#   STORAGE: NOT installed on this cutover (storage.enabled=false + pg-storage.enabled=false).
+#   The kacho-storage chart is not integrated with the umbrella — the overlay's storage.db.*
+#   keys do not exist in it (it reads config.dbHost/…), and it has no existingSecret support
+#   for the DB password, so it rendered its own Secret with the "changeme" placeholder. The
+#   fresh install never became Ready and its 15m --wait failed the whole cutover. Image
+#   main-a185fa07 (CS-1) is built and waiting; see values.fe3455-prod.yaml (storage block)
+#   for the re-enable checklist. Remaining CS-1 follow-up either way: fga-register drainer +
+#   storage-SA fga_writer seed in iam.
 #   For a PURE control-plane-only cutover set storage.enabled=false + pg-storage.enabled=false.
 #
 # DOCKER-LOGIN issued_at BLOCKER — RESOLVED (2026-07-15), guard retained as a denylist.
@@ -160,9 +175,14 @@ log "smoke: rollout status (registry, api-gateway, uif host)…"
 for d in registry api-gateway uif; do
   kubectl -n "$NS" rollout status deploy/"$d" --timeout=120s || { warn "rollout deploy/$d not complete"; rc=1; }
 done
-# storage is a fresh install on this cutover — surface its status too (non-fatal).
-kubectl -n "$NS" rollout status deploy/kacho-umbrella-storage --timeout=120s \
-  || warn "kacho-umbrella-storage not Ready yet (new storage-split install — check its logs)"
+# storage: only when the overlay enables it (currently OFF — the kacho-storage chart is
+# not integrated with the umbrella; see values.fe3455-prod.yaml). Non-fatal either way.
+if kubectl -n "$NS" get deploy kacho-umbrella-storage >/dev/null 2>&1; then
+  kubectl -n "$NS" rollout status deploy/kacho-umbrella-storage --timeout=120s \
+    || warn "kacho-umbrella-storage not Ready yet (storage-split install — check its logs)"
+else
+  log "storage not installed (storage.enabled=false) — skipping its rollout check."
+fi
 
 # ── smoke: iam :9097 cluster-internal JWKS proxy (the JWKS-flip source of truth) ──
 #    The registry Bearer verifier now trusts iam's :9097 mirror (registry.iam.jwksUrl).

@@ -343,6 +343,35 @@ registry:
         lb.beget.com/algorithm: round_robin
         lb.beget.com/healthcheck-interval-seconds: "60"
         lb.beget.com/healthcheck-timeout-seconds: "5"
+      # ─── TLS-терминация публичного OCI data-plane (docker login/push/pull) ───
+      # БЕЗ этого блока чарт рендерит 443→dataplane (plaintext) и docker падает с
+      # «http: server gave HTTP response to HTTPS client». Ровно это и произошло
+      # 2026-07-15: TLS-стек data-plane был наложен руками (LE-серт + kubectl-patch
+      # Service 443→dp-tls) и не жил в values → `helm upgrade --take-ownership`
+      # усыновил Service, перерендерил дефолтом и уронил HTTPS реестра. Блок ниже
+      # делает живое состояние выразимым чартом — дрейф закрыт.
+      tlsSidecar:
+        enabled: true
+        cert:
+          # Имена СОВПАДАЮТ с уже выпущенным в кластере Certificate/секретом →
+          # helm усыновляет их без перевыпуска (LE duplicate-limit 5/нед).
+          name: registry-dataplane-letsencrypt
+          secretName: registry-dataplane-le-tls
+          issuerRef:
+            # Публично-доверенный issuer обязателен: серт предъявляется docker-клиенту,
+            # а internal-CA он отвергает (x509: unknown authority). Trust к iam :9097 не
+            # страдает — при mtls.enable=true ca.crt берётся из mtls.serverSecretName.
+            name: letsencrypt-prod
+            kind: ClusterIssuer
+          # Публичный CA не подписывает CN/loopback-IP и навязывает свою keyalg-политику;
+          # любое лишнее поле в spec'е = перевыпуск. Пусто → шаблон их опускает, и рендер
+          # выходит байт-в-байт равным живому объекту (сверено против кластера).
+          commonName: ""
+          ipAddresses: []
+          usages: []
+          privateKey:
+            algorithm: ""
+            size: ""
   # registry-iam-jwks-unify — the data-plane docker-Bearer verifier now fetches JWKS
   # from the cluster-INTERNAL kacho-iam JWKS proxy (:9097) instead of dialing Hydra.
   # iam serves a byte-for-byte mirror of Hydra's PUBLIC JWKS over one-way server-TLS
@@ -391,7 +420,32 @@ pg-registry:
 # (sslmode=require; pg server cert issued via mtls.pgTls.services above). Peer edges:
 # storage→geo (zone_id), storage→iam PUBLIC (ProjectService.Get) + INTERNAL (Check).
 storage:
-  enabled: true
+  # ⛔ ВЫКЛЮЧЕН (2026-07-15) — чарт kacho-storage НЕ ИНТЕГРИРОВАН с umbrella: fresh install
+  # никогда не поднимался и заваливал ВЕСЬ cutover — `helm upgrade --wait` висел 15m на
+  # неготовом storage → `UPGRADE FAILED: context deadline exceeded`. Контроль-плейн не
+  # должен быть заложником неработавшего fresh install → pure control-plane cutover
+  # (режим, штатно описанный в cutover-fe3455.sh).
+  #
+  # Что именно сломано (диагностика по живому кластеру, не по догадке):
+  #   1. Ключи values РАСХОДЯТСЯ с чартом. Ниже пишется `storage.db.{host,sslMode,
+  #      passwordSecretName,passwordSecretKey}`, а чарт читает `config.{dbHost,dbPort,dbUser,
+  #      dbName,dbSslMode,dbPassword}` (deploy/templates/configmap.yaml). Неизвестные ключи
+  #      helm молча игнорирует → применялся ДЕФОЛТ `dbHost: kacho-storage-postgres`. Живой CM
+  #      это подтверждал (KACHO_STORAGE_DB_HOST=kacho-storage-postgres), migrator падал
+  #      `lookup kacho-storage-postgres: no such host` (реальный Service — kacho-umbrella-pg-storage).
+  #   2. Пароль БД. `passwordSecretName` в чарте НЕ СУЩЕСТВУЕТ: secret.yaml рендерит СВОЙ
+  #      Secret из `config.dbPassword | default "changeme"` → даже с верным хостом storage шёл
+  #      бы в БД с плейсхолдером. Комментарий ниже про «renders no Secret of its own» неверен:
+  #      живой kacho-umbrella-storage-secret отрендерил именно чарт.
+  #
+  # Почему не чинится здесь: класть пароль в `config.dbPassword` нельзя (values в git) → чарту
+  # нужна поддержка existingSecret (ссылка на bitnami-provisioned kacho-umbrella-pg-storage,
+  # ключ password), как у остальных сервисов. Это PR в kacho-storage/deploy, не строчка в оверлее.
+  #
+  # Включить обратно: (1) PR в kacho-storage — existingSecret + сверка ключей с чартом;
+  # (2) переписать блок ниже на реальные ключи; (3) enabled: true + pg-storage.enabled: true.
+  # Образ CS-1 уже собран и ждёт: main-a185fa07 (multiarch).
+  enabled: false
   image:
     # main-a185fa07 — kacho-storage origin/main HEAD ("[CS-1] storage network-disk —
     # attach zone/project split, auto-device retry, listauthz gate, snapshot name", #4),
@@ -442,7 +496,9 @@ storage:
 # pg-storage — greenfield bitnamilegacy image + operator secret + cert-manager TLS
 # (server cert kacho-umbrella-pg-storage-server-tls issued via mtls.pgTls.services).
 pg-storage:
-  enabled: true
+  # ⛔ Выключен вместе со `storage` (см. блок storage выше) — БД без потребителя не нужна.
+  # Включать ОДНОВРЕМЕННО со storage.enabled после интеграции чарта.
+  enabled: false
   image: { registry: docker.io, repository: bitnamilegacy/postgresql }
   volumePermissions: { image: { registry: docker.io, repository: bitnamilegacy/os-shell } }
   auth: { existingSecret: kacho-umbrella-pg-storage, username: storage, database: kacho_storage }
