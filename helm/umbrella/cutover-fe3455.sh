@@ -9,7 +9,7 @@
 #
 #     workload      old (live)                              new (forward)     why
 #     ───────────   ─────────────────────────────────────  ────────────────  ─────────────────────────
-#     kacho-iam     KAC-registry-docker-auth-c3000530       main-b3d23769     #321 audience + :9097 JWKS + #325 RG-1 418-catalog
+#     kacho-iam     KAC-registry-docker-auth-c3000530       main-c744f956     #321 audience + :9097 JWKS + #325 RG-1 418-catalog + #326 issued_at
 #     api-gateway   main-a7c82963                            main-c7dce40d     #145 RG-1 6 routes + 418-catalog
 #     registry      main-5eb21d25                            main-af0eacae     #43 RG-1 Repository persistence (strict fwd; 5eb21d25 ∈ af0eacae)
 #     kacho-storage (not on cluster)                         main-e6d67c8d     storage-split fresh install (isolated from registry)
@@ -33,19 +33,16 @@
 #   the chart wires no fga-register drainer; both are follow-ups (see values.fe3455-prod.yaml).
 #   For a PURE control-plane-only cutover set storage.enabled=false + pg-storage.enabled=false.
 #
-# ═════════════════════════════════════════════════════════════════════════════
-# ⚠⚠  BLOCKER — RESOLVE BEFORE RUNNING (docker-login regression on iam main)  ⚠⚠
-#   main-b3d23769 does NOT carry kacho-iam commit c300053 ("registry-token: issued_at
-#   as RFC3339 string, Docker v2 token spec"), which the LIVE feature build DOES. That
-#   commit made iam's /iam/token (:9096) body emit `issued_at` as an RFC3339 STRING;
-#   the docker client parses it via time.Time.UnmarshalJSON (JSON string only). Rolling
-#   iam to a main-* image without the fix breaks `docker login`
-#   ("Time.UnmarshalJSON: input is not a JSON string") → no bearer token → all docker
-#   pull/push 401. FIX FIRST: cherry-pick c300053 onto kacho-iam main → CI rebuilds a new
-#   main-<sha> → repin kacho-iam.image.tag (values.fe3455.yaml + values.fe3455-prod.yaml)
-#   to it → re-run. The preflight below HARD-BLOCKS on the bare main-b3d23769 tag unless
-#   you export ACK_IAM_ISSUED_AT_REVERT=1 (which knowingly ships the docker-login break).
-# ═════════════════════════════════════════════════════════════════════════════
+# DOCKER-LOGIN issued_at BLOCKER — RESOLVED (2026-07-15), guard retained as a denylist.
+#   iam's /iam/token (:9096) must emit `issued_at` as an RFC3339 STRING: the docker client
+#   parses it via time.Time.UnmarshalJSON, which accepts ONLY a JSON string — a bare Unix
+#   number breaks `docker login` ("Time.UnmarshalJSON: input is not a JSON string") → no
+#   bearer → all pull/push 401. The earlier forward target main-b3d23769 REVERTED that fix
+#   (kacho-iam c300053), so it was a hard blocker. kacho-iam#326 re-applied c300053 onto
+#   main (+ a wire-shape regression test locking the string) → main c744f95 → CI published
+#   main-c744f956, the tag pinned above. The preflight below stays as a KNOWN-BAD-TAG
+#   denylist: main-b3d23769 remains a broken image, so repinning back to it must not be
+#   silent (override: ACK_IAM_ISSUED_AT_REVERT=1).
 #
 # WHY A SCRIPT (not run by the coding agent): the auto-mode classifier blocks `helm`
 #   against the fe3455 context, so the agent cannot run the upgrade. You run this.
@@ -84,18 +81,19 @@ case "$CTX" in
   *) warn "context '$CTX' does not look like fe3455 — Ctrl-C within 5s if this is the wrong cluster"; sleep 5 ;;
 esac
 
-# ── 0b. BLOCKER GUARD: iam docker-login issued_at RFC3339 fix must be on the image ─
+# ── 0b. KNOWN-BAD-TAG GUARD: the iam image must carry the issued_at RFC3339 fix ────
 #    main-b3d23769 reverts kacho-iam c300053 (issued_at RFC3339 string) → `docker login`
-#    breaks. Refuse to proceed on the bare main-b3d23769 pin unless the operator either
-#    repins iam to a rebuilt image carrying the fix, or knowingly overrides.
+#    breaks. The current pin (main-c744f956, kacho-iam#326) carries the fix, so this guard
+#    is a denylist against a silent repin BACK to the broken image.
 if grep -qE '^\s*tag:\s*main-b3d23769\s*$' "$CHART_DIR/values.fe3455-prod.yaml" 2>/dev/null; then
   if [ "${ACK_IAM_ISSUED_AT_REVERT:-0}" != "1" ]; then
     die "BLOCKER: kacho-iam pinned to main-b3d23769, which REVERTS the docker-login
        issued_at RFC3339 fix (kacho-iam commit c300053). Rolling iam to this image breaks
        'docker login' (Time.UnmarshalJSON: input is not a JSON string) → the registry
        data-plane cannot mint a bearer token → all docker pull/push 401.
-       RESOLUTION: cherry-pick c300053 onto kacho-iam main → let CI rebuild main-<sha> →
-       repin kacho-iam.image.tag (values.fe3455.yaml + values.fe3455-prod.yaml) → re-run.
+       RESOLUTION: pin kacho-iam.image.tag to main-c744f956 or later (main c744f95 carries
+       c300053 re-applied via kacho-iam#326) in BOTH values.fe3455.yaml and
+       values.fe3455-prod.yaml → re-run.
        To knowingly ship the docker-login break anyway: ACK_IAM_ISSUED_AT_REVERT=1 $0"
   fi
   warn "ACK_IAM_ISSUED_AT_REVERT=1 set — proceeding with main-b3d23769; 'docker login' WILL break until c300053 is on the iam image."
@@ -184,7 +182,7 @@ if kubectl -n "$NS" port-forward svc/kacho-iam-internal 19097:9097 >/dev/null 2>
   if printf '%s' "$jwks" | grep -q '"keys"'; then
     log "iam :9097 JWKS OK (serves a keys set — JWKS-flip is coherent)."
   else
-    warn "iam :9097 JWKS did NOT return a keys set — registry token-verify will 401. Check kacho-iam is on main-b3d23769 (serves :9097) and the jwks-proxy listener."
+    warn "iam :9097 JWKS did NOT return a keys set — registry token-verify will 401. Check kacho-iam is on main-c744f956 (serves :9097, #323) and the jwks-proxy listener."
     rc=1
   fi
   kill "$pf_pid" >/dev/null 2>&1 || true

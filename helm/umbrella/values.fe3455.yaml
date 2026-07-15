@@ -123,11 +123,15 @@ uif:
 kacho-iam:
   image:
     repository: docker.io/prorobotech/kacho-iam
-    # FORWARD ROLL: main-b3d23769 (#321 audience-union + #323 :9097 JWKS + #325 RG-1
-    # 418-catalog). Kept in sync with the authoritative override in values.fe3455-prod.yaml
-    # (layers AFTER this file). ⚠ See that file for the docker-login issued_at (c300053)
-    # BLOCKER that must be resolved before the cutover — the same tag applies here.
-    tag: main-b3d23769
+    # FORWARD ROLL: main-c744f956 (#321 audience-union + #323 :9097 JWKS + #325 RG-1
+    # 418-catalog + #326 docker-login issued_at). Kept in sync with the authoritative
+    # override in values.fe3455-prod.yaml (layers AFTER this file).
+    # The earlier main-b3d23769 pin was BLOCKED: that build reverted c300053, so
+    # `issued_at` went back to a bare Unix number and `docker login` broke
+    # («Time.UnmarshalJSON: input is not a JSON string»). kacho-iam#326 re-applied it
+    # onto main (wire-shape regression test locks the RFC3339 STRING) → main c744f95 →
+    # CI published main-c744f956. Blocker resolved; this tag is the forward target.
+    tag: main-c744f956
     pullPolicy: IfNotPresent
 kacho-nlb:
   enabled: true
